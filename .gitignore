@@ -7,3 +7,32 @@ __pycache__/
 
 # VS Code
 .vscode/
+
+# Conda envs
+.env/
+.envs/
+
+# ONNX/CoreML artifacts
+*.onnx
+*.mlmodel
+
+# Virtual environment folders
+venv/
+
+# MacOS metadata
+.DS_Store
+
+# Logs and outputs
+*.log
+outputs/
+
+# backup
+finbert_trader_backup_*/
+
+# data_cache
+data_cache/
+
+# notebooks
+notebooks/
+.ipynb_checkpoints
+

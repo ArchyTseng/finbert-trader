@@ -6,17 +6,13 @@ version = "0.1.0"
 description = "Starter Pixi project template"
 authors = [{name = "Shicheng Zeng", email = "archyz.studio@gmail.com"}]
 requires-python = ">=3.11"
-dependencies = []  # PyPI 依赖：可用 `pixi add --pypi PACKAGE` 添加
+dependencies = ["yfinance==0.2.65", "stable-baselines3>=2.6.0,<3", "logging>=0.4.9.6,<0.5"]
 
 # ========================= Pixi Config ================================
 
-[tool.pixi.project]
+[tool.pixi.workspace]
 channels = ["conda-forge"]
-platforms = [
-    "linux-64",
-    "osx-arm64",
-    "win-64"
-]
+platforms = ["osx-arm64"]    
 
 [tool.pixi.dependencies]
 python-dotenv = "*"
@@ -37,9 +33,18 @@ wandb = "*"
 # 系统兼容
 tqdm = "*"
 
-# 以下由脚本动态添加
-# [tool.pixi.pypi-dependencies]
-# my_project = { path = ".", editable = true }
+polygon-api-client = ">=1.12.8,<2"
+alpha_vantage = ">=3.0.0,<4"
+websockets = ">=13.0,<16"
+transformers = ">=4.53.2,<5"
+ta-lib = ">=0.5.1,<0.6"
+datasets = ">=3.6.0,<4"
+# yfinance = "0.2.65"
+# curl-cffi = ">=0.7"
+
+[tool.pixi.pypi-dependencies]
+finbert_trader = { path = ".", editable = true }
+torch = ">=2.2.0,<3"
 
 # ========================= Build System ==============================
 
@@ -49,7 +54,6 @@ requires = ["hatchling"]
 
 # ========================= Features ===================================
 [tool.pixi.feature.nlp.dependencies]
-torch = ">=2.2.0,<3"
 huggingface-hub = "*"
 transformers = "*"
 finbert-embedding = "*"
