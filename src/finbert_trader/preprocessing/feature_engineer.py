@@ -8,7 +8,7 @@
 
 import pandas as pd
 import numpy as np
-from finbert_trader.config import ConfigSetup
+from finbert_trader.config_setup import ConfigSetup
 from sklearn.model_selection import train_test_split, KFold  # For splitting
 import logging
 
@@ -157,9 +157,9 @@ class FeatureEngineer:
 # Example usage
 if __name__ == "__main__":
     config = ConfigSetup()
-    # Assume dr = DataResource(config)
+    # dr = DataResource(config)
     # stock_data = dr.fetch_stock_data()
-    # news_chunks = dr.load_news_data('data/news_data.csv')
+    # news_chunks = dr.load_news_data('data_cache/nasdaq_exteral_data.csv')
     pp = FeatureEngineer(config)
     # sentiment_news = pp.process_news_chunks(news_chunks)
     # fused_df = pp.merge_features(stock_data, sentiment_news)

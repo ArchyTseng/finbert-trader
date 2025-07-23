@@ -10,7 +10,7 @@ import warnings
 import pandas as pd
 import logging
 from datetime import datetime
-from finbert_trader.config import ConfigSetup  
+from finbert_trader.config_setup import ConfigSetup  
 from finbert_trader.data.data_resource import DataResource
 from finbert_trader.preprocessing.feature_engineer import FeatureEngineer  # Adjusted import based on module names
 

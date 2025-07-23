@@ -15,8 +15,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 class ConfigSetup:
     # config directory , from FinRL reference
     DATA_SAVE_DIR = 'data_cache'
-    MODEL_SAVE_DIR = 'model_cache'
-    RESULTS_SAVE_DIR = 'results_cache'
     LOG_SAVE_DIR = 'logs'
 
     def __init__(self, custom_config=None):

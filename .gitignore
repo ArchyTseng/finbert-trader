@@ -9,7 +9,7 @@ __pycache__/
 .vscode/
 
 # Conda envs
-.env/
+.env
 .envs/
 
 # ONNX/CoreML artifacts
@@ -32,7 +32,18 @@ finbert_trader_backup_*/
 # data_cache
 data_cache/
 
+# scaler_cache
+scaler_cache/
+
+# model_cache
+model_cache/
+
+# results_cache
+results_cache/
+
+# logs
+logs/
+
 # notebooks
 notebooks/
 .ipynb_checkpoints
-
