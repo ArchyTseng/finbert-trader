@@ -1,5 +1,5 @@
-# environment.py (Updated with Optimized ConfigTrading)
-# Module: Environment
+# stock_trading_env.py (Updated with Optimized ConfigTrading)
+# Module: StockTradingEnv
 # Purpose: Build custom Gymnasium environment for stock trading RL.
 # Updates: Uses optimized ConfigTrading; accesses self.config_trading.model_params if needed (e.g., for future extensions); reward scaled.
 # Linkage: config_trading from main; rl_data from Preprocessing.
@@ -20,10 +20,10 @@ class StockTradingEnv(gym.Env):
     def __init__(self, config_trading, rl_data, mode='train'):
         """
         Initialize Env with ConfigTrading instance and rl_data.
-        Input: config_trading (ConfigTrading), rl_data (train/val list), mode ('train'/'val'/'test'), scaler_path (str).
+        Input: config_trading (ConfigTrading), rl_data (train/val list), mode ('train'/'val'/'test')
         Output: Self as Gym Env.
         Logic: Use config_trading.initial_cash etc.; infer dims; fit/load scaler.
-        Robustness: Check rl_data empty; log config params and model.
+        Robustness: Check rl_data empty; use train scaler for val/test modes to ensure consistency.
         """
         super(StockTradingEnv, self).__init__()
         self.config_trading = config_trading
@@ -31,7 +31,7 @@ class StockTradingEnv(gym.Env):
         self.mode = mode
         self.scaler_dir = config_trading.SCALER_SAVE_DIR
         # initial scaler save path
-        self.scaler_path = os.path.join(self.scaler_dir, f"scaler_{self.mode}_{self.config_trading.model}.pkl")
+        self.scaler_path = os.path.join(self.scaler_dir, f"scaler_train_{self.config_trading.model}.pkl")
         logging.info(f"Initial Scaler path: {self.scaler_path}")
 
         logging.info(f"Env config: model={self.config_trading.model}, initial_cash={self.config_trading.initial_cash}, transaction_cost={self.config_trading.transaction_cost}")
@@ -59,7 +59,11 @@ class StockTradingEnv(gym.Env):
                 self.scaler = joblib.load(self.scaler_path)
                 logging.info(f"Loaded scaler from {self.scaler_path}")
             else:
-                raise FileNotFoundError(f"Scaler not found at {self.scaler_path}; train first")
+                # Fallback: fit scaler on val/test data if train scaler not found
+                logging.warning(f"Scaler not found at {self.scaler_path}; fitting on {self.mode} data")
+                all_states = np.vstack([window['states'].reshape(-1, self.feature_dim) for window in self.rl_data])
+                self.scaler.fit(all_states)
+                logging.info(f"Fitted scaler on {self.mode} data as fallback")
         
         self.reset()
 
@@ -118,7 +122,12 @@ class StockTradingEnv(gym.Env):
         return next_state, reward, terminated, truncated, info
 
     def _get_state(self):
-        features = self.current_window['states'][self.current_step]
+        # Handle terminal step by using last features if step >= states size
+        if self.current_step >= len(self.current_window['states']):
+            features = self.current_window['states'][-1]    # Use last features for terminal state
+            logging.debug("Using last features for terminal state.")
+        else:
+            features = self.current_window['states'][self.current_step]
         # Scale only the features(match fit dim), then append dynamic position/cash without scaling
         scaled_features = self.scaler.transform(features.reshape(1, -1))[0]
         state = np.append(scaled_features, [self.current_position, self.current_cash])

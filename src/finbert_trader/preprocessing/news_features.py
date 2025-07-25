@@ -1,4 +1,4 @@
-# news_feature_engineer.py
+# news_features.py
 # Module: NewsFeatureEngineer
 # Purpose: Dedicated class for news sentiment feature engineering using FinBERT.
 # Design: Single responsibility for news processing; handles chunks and text selection.
@@ -65,7 +65,7 @@ class NewsFeatureEngineer:
         """
         Compute weighted sentiment scores per chunk.
         Input: cleaned news_df
-        Output: news_df with 'sentiment_score' (float 1-5 range)
+        Output: news_df with 'sentiment_score' (float 1-5 range). Reference from FDSPID
         Logic: Concat text_cols; batch infer probs; weighted_score = pos*5 + neu*3 + neg*1; aggregate mean.
         Robustness: Handle missing cols; drop empty text.
         """
@@ -109,4 +109,11 @@ class NewsFeatureEngineer:
         # Aggregate mean sentiment per Date/Symbol
         news_df = news_df.groupby(['Date', 'Symbol'])['sentiment_score'].mean().reset_index()
         logging.info(f"Computed weighted sentiment for chunk using cols: {avail_cols}")
+
+        # Release model and tokenizer resources to reduce memory and avoid fork issues in multi-process training
+        del self.model
+        del self.tokenizer
+        torch.cuda.empty_cache()  # Clear GPU memory if used
+        logging.info("Released FinBERT model and tokenizer resources to optimize multi-process compatibility")
+        
         return news_df

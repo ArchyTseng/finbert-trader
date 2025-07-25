@@ -1,5 +1,5 @@
-# preprocessing.py (Updated Version with Sub-Engineers)
-# Module: Preprocessing
+# feature_engineer.py
+# Module: FeatureEngineer
 # Purpose: Orchestrator for feature engineering; calls StockFeatureEngineer and NewsFeatureEngineer.
 # Design: Retains merge, normalize, prepare, split; delegates stock/news to sub-classes for modularity.
 # Linkage: Inputs from DataResource; outputs split RL data for Environment/Agent.

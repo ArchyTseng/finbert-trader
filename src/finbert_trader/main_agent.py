@@ -1,22 +1,22 @@
-# main_env.py (used for Environment Module test)
-# Module: Main
-# Purpose: Entry point to test the entire pipeline: ConfigSetup → DataResource → FeatureEngineer → ConfigTrading → StockTradingEnv.
-# Design: Instantiates configs, fetches/processes data, prepares RL data, sets up trading env, and simulates reset/step for verification.
-# Linkage: Calls all developed modules in sequence; upstream rl_data feeds into Env; handles exceptions for robustness.
-# Extensibility: Custom configs for overrides; easy to add RL training or backtest modules later.
+# main_agent.py (used for Agent Module test)
+# Purpose: Entry point to test the entire pipeline: ConfigSetup → DataResource → FeatureEngineer → ConfigTrading → StockTradingEnv → TradingAgent.
+# Design: Instantiates configs, fetches/processes data, prepares RL data, sets up envs, initializes agent, and simulates training for verification.
+# Linkage: Upstream rl_data split into train/val for envs; ConfigTrading inherits upstream; Agent consumes envs for training.
+# Extensibility: Custom configs for overrides; easy to add backtest after training.
 # Robustness: Try-except blocks; checks for empty outputs; logs detailed progress including shapes/values for debugging.
 
 import warnings
 import pandas as pd
 import logging
 from datetime import datetime
-import numpy as np  # For action simulation in Env test
+import numpy as np  # For potential action simulation if needed
 
-from finbert_trader.config_setup import ConfigSetup  # Updated import: renamed from config
-from finbert_trader.config_trading import ConfigTrading  # Trading config for Env/Agent
+from finbert_trader.config_setup import ConfigSetup  # Upstream config for data/feature
+from finbert_trader.config_trading import ConfigTrading  # Downstream config for trading/Env/Agent
 from finbert_trader.data.data_resource import DataResource
 from finbert_trader.preprocessing.feature_engineer import FeatureEngineer
 from finbert_trader.environment.stock_trading_env import StockTradingEnv  # RL environment module
+from finbert_trader.agent.trading_agent import TradingAgent  # New: RL agent module
 
 # Ignore warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -26,12 +26,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 def run_pipeline(custom_setup_config=None, custom_trading_config=None):
     """
-    Run the full pipeline for testing, including new trading env.
+    Run the full pipeline for testing, including agent training.
     Input: custom_setup_config (dict, optional) for upstream overrides; custom_trading_config (dict, optional) for downstream.
-    Output: Prints/logs results; returns env instance for further use.
-    Logic: Initialize setups → Fetch/process data → Prepare RL data → Init trading config → Setup Env → Simulate reset/step.
-    Robustness: Catch exceptions at each step; validate outputs (e.g., non-empty rl_data, state shapes); log key metrics.
-    Extensibility: Decoupled configs allow independent tuning; Env simulation can extend to full episodes or agent training.
+    Output: Prints/logs results; returns agent instance for further use.
+    Logic: Initialize upstream config → Fetch/process data → Prepare RL data → Split into train/val → Init trading config with upstream inheritance → Setup train/val envs → Init agent → Simulate train.
+    Robustness: Catch exceptions at each step; validate outputs (e.g., non-empty rl_data, env states); log key metrics.
+    Extensibility: Decoupled configs allow independent tuning; agent train can extend to full hyperparam search.
     """
     try:
         # Step 1: Initialize upstream configuration (data/feature)
@@ -72,36 +72,36 @@ def run_pipeline(custom_setup_config=None, custom_trading_config=None):
             raise ValueError("No RL data prepared")
         logging.info("Prepared {} RL data windows".format(len(rl_data)))
         
-        # Step 4: Split RL data (use train for Env test, or full if no split)
+        # Step 4: Split RL data into train/val
         splits = fe.split_rl_data(rl_data)
         if setup_config.k_folds and setup_config.k_folds > 1:
-            train_data, _ = splits[0]  # Use first fold's train for simplicity
-            logging.info("Using first cross-validation fold's train for Env test")
+            train_data, val_data = splits[0]  # Use first fold for simplicity
+            logging.info("Using first cross-validation fold for train/val envs")
         else:
-            train_data, _ = splits
-        logging.info("Using {} train windows for Env test".format(len(train_data)))
+            train_data, val_data = splits
+        logging.info("Train data: {} windows, Val data: {} windows".format(len(train_data), len(val_data)))
         
-        # Step 5: Initialize downstream trading configuration
+        # Step 5: Initialize downstream trading configuration, inheriting upstream
         trading_config = ConfigTrading(custom_trading_config, upstream_config=setup_config)
         logging.info("Trading configuration initialized with initial_cash: {}".format(trading_config.initial_cash))
         
-        # Step 6: Setup StockTradingEnv with train rl_data and trading config
-        env = StockTradingEnv(trading_config, train_data, mode='train')  # Pass list of rl_data dicts
-        logging.info("StockTradingEnv initialized with state_dim: {}".format(env.state_dim))
+        # Step 6: Setup train and val envs
+        train_env = StockTradingEnv(trading_config, train_data, mode='train')
+        val_env = StockTradingEnv(trading_config, val_data, mode='val')
+        logging.info("Train Env initialized with state_dim: {}".format(train_env.state_dim))
+        logging.info("Val Env initialized with state_dim: {}".format(val_env.state_dim))
         
-        # Step 7: Simulate Env interaction for test (reset and one step)
-        state, _ = env.reset()
-        logging.info("Env reset: Initial state shape {}".format(state.shape))
+        # Step 7: Initialize TradingAgent and simulate train
+        agent = TradingAgent(trading_config, train_env, val_env)
+        agent.train()  # Simulate training; will use SharpeCallback for monitoring
+        logging.info("Agent training simulation completed")
         
-        # Simulate a random action (e.g., buy: 0.5)
-        action = np.array([0.5])  # Action space: [-1,1] for sell/hold/buy
-        next_state, reward, terminated, truncated, info = env.step(action)
-        logging.info("Env step: Next state shape {}, Reward: {}, Terminated: {}, Info: {}".format(next_state.shape, reward, terminated, info))
+        # Optional: Test predict after train
+        obs, _ = val_env.reset()
+        action, _ = agent.predict(obs)
+        logging.info("Agent predict test: Action shape {}".format(action.shape))
         
-        if terminated or truncated:
-            logging.warning("Env terminated/truncated after one step; check window_size")
-        
-        return env
+        return agent
     
     except Exception as e:
         logging.error("Pipeline failed: {}".format(e))
@@ -117,8 +117,9 @@ if __name__ == "__main__":
         'k_folds': None  # Set to 5 for cross-val if needed
     }
     custom_trading = {
-        'initial_cash': 100000,  # Override default for test
-        'transaction_cost': 0.001
+        'initial_cash': 100000,  
+        'transaction_cost': 0.001,  
+        'total_timesteps': 10000  # Smaller for quick test
     }
     run_pipeline(custom_setup, custom_trading)
     logging.info("Pipeline test completed successfully!")
