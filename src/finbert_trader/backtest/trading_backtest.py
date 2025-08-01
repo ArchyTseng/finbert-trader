@@ -54,16 +54,23 @@ class RLStrategy(bt.Strategy):
             self.data.risk_score[0]  # Added risk_score
         ]
 
+        # Force NaN to 0 in current features
+        features = np.nan_to_num(features, nan=0.0)
+
         # Append to history
         self.feature_history.append(features)
         
-        # Pad if history < window_size
+        # Build window with padding
         if len(self.feature_history) < self.window_size:
             pad = np.zeros((self.window_size - len(self.feature_history), self.features_per_time))
             window = np.vstack((pad, np.array(self.feature_history)))
         else:
             window = np.array(self.feature_history)
 
+        # Force NaN to 0 in window
+        window = np.nan_to_num(window, nan=0.0)
+
+        # Flatten and append position/cash
         position = self.position.size
         cash = self.broker.getcash()
         state = np.append(window.flatten(), [position, cash])

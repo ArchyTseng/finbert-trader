@@ -111,6 +111,11 @@ class FeatureEngineer:
         to_normalize = self.stock_engineer.indicators + ['sentiment_score', 'risk_score']
         present_cols = [col for col in df.columns if any(ind in col for ind in to_normalize)]  # e.g., 'macd_AAPL' contains 'macd'
         df = df.set_index('Date') if 'Date' in df.columns else df  # Set Date as index if present
+
+        # Enhanced NaN handling: replace all NaN with 0 globally before normalization
+        df = df.fillna(0)
+        df = pd.DataFrame(np.nan_to_num(df.values, nan=0), columns=df.columns, index=df.index)  # Force num, handle inf/NaN
+
         df = df.select_dtypes(include=[np.number])  # Filter numeric, index preserved
         logging.info("FE Module - Set Date as index before numeric filter")
         if not present_cols:
@@ -125,6 +130,7 @@ class FeatureEngineer:
             for col in present_cols:
                 mean = df[col].mean()
                 std = df[col].std()
+                std = max(std, 1e-6)  # Clip std > 1e-6 to prevent NaN
                 means_stds[col] = (mean, std)
                 df[col] = (df[col] - mean) / std if std != 0 else 0
             logging.info(f"FE Module - Fitted and normalized {len(present_cols)} columns")
@@ -132,6 +138,7 @@ class FeatureEngineer:
         else:
             for col in present_cols:
                 mean, std = means_stds.get(col, (0, 1))
+                std = max(std, 1e-6)  # Same clip
                 df[col] = (df[col] - mean) / std if std != 0 else 0
             logging.info(f"FE Module - Transformed {len(present_cols)} columns")
             return df

@@ -188,6 +188,9 @@ class StockTradingEnv(gym.Env):
             if len(features) < self.feature_dim:
                 features = np.pad(features, (0, self.feature_dim - len(features)), mode='constant', constant_values=0)
         logging.debug(f"STE Modul - Padded features to len {len(features)}")
+        
+        # Force NaN to 0 in features to prevent propagation (covers all paths)
+        features = np.nan_to_num(features, nan=0.0)
         state = np.append(features, [self.current_position, self.current_cash])
         state = np.atleast_1d(state)  # Ensure at least 1D if scalar
         logging.debug(f"STE Modul - State shape: {state.shape}")
