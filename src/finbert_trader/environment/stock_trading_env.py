@@ -146,14 +146,16 @@ class StockTradingEnv(gym.Env):
             adjusted_return = 0.0
             logging.warning("STE Modul - Invalid portfolio; return set to 0")
 
-        # Reward = adjusted_return; for CPPO, add CVaR penalty if in worst alpha, reference from FinRL_DeepSeek (4.1.2: penalize high-loss trajectories)
-        reward = adjusted_return
+        # Add positive components to reward: entropy bonus for action diversity, holding bonus for portfolio growth
+        action_entropy = -np.log(np.clip(abs(action) + 1e-10, 0, 1))  # Simple entropy-like for single action, encourage non-zero
+        holding_bonus = max(0, (current_portfolio - self.config_trading.initial_cash) / self.config_trading.initial_cash * 10)  # Small positive if portfolio > initial, scaled
+        reward = adjusted_return + self.config_trading.model_params.get('ent_coef', 0.1) * action_entropy + holding_bonus  # Combined reward with positive incentives, reference from FinRL_DeepSeek (5.3: entropy for exploration)
         if self.config_trading.model == 'CPPO' and len(self.returns_history) > 10:  # Min history for percentile
             sorted_returns = np.sort(self.returns_history)
             var_threshold = np.percentile(sorted_returns, self.alpha * 100)
             if adjusted_return < var_threshold:
                 cvar_penalty = self.config_trading.model_params['lambda_'] * (var_threshold - adjusted_return) / (1 - self.alpha)
-                reward -= cvar_penalty + self.config_trading.model_params['beta']  # Add auxiliary penalty
+                reward -= 0.5 * cvar_penalty    # Halve penalty (lambda_=0.5 effectively), to reduce over-penalization of negative trajectories
                 logging.debug(f"STE Modul - CPPO CVaR penalty applied: {cvar_penalty:.4f}")
 
         self.previous_price = current_price
@@ -188,7 +190,7 @@ class StockTradingEnv(gym.Env):
             if len(features) < self.feature_dim:
                 features = np.pad(features, (0, self.feature_dim - len(features)), mode='constant', constant_values=0)
         logging.debug(f"STE Modul - Padded features to len {len(features)}")
-        
+
         # Force NaN to 0 in features to prevent propagation (covers all paths)
         features = np.nan_to_num(features, nan=0.0)
         state = np.append(features, [self.current_position, self.current_cash])

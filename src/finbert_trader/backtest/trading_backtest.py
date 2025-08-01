@@ -77,6 +77,13 @@ class RLStrategy(bt.Strategy):
         
         action, _ = self.model.predict(state, deterministic=True)
         action = action[0]
+
+        # Add min_action_threshold to prevent micro-actions (no trades), reference from FinRL_DeepSeek (5.3: action clipping for stability)
+        min_threshold = 0.05  # Empirical threshold to force hold on small actions
+        if abs(action) < min_threshold:
+            action = 0.0  # Force hold to avoid cost-eating micro-trades
+
+        # trade logic if action >0 or <0
         if action > 0:
             self.buy(size=action * cash / self.data.close[0])
         elif action < 0:
@@ -160,7 +167,9 @@ class Backtest:
             
             # Information Ratio: mean excess return / tracking error
             if not benchmark_rets.empty:
-                excess_rets = daily_rets - benchmark_rets.reindex(daily_rets.index, method='ffill').fillna(0)
+                # Align indices before subtraction to prevent mismatch
+                aligned_daily_rets, aligned_benchmark_rets = daily_rets.align(benchmark_rets, join='inner', method='ffill')
+                excess_rets = aligned_daily_rets - aligned_benchmark_rets.fillna(0)
                 tracking_error = excess_rets.std()
                 metrics['information_ratio'] = (excess_rets.mean() / tracking_error * np.sqrt(252)) if tracking_error != 0 else 0.0
             else:

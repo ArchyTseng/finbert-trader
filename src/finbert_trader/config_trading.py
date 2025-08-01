@@ -22,7 +22,7 @@ class ConfigTrading:
     _model_defaults = {
         'PPO': {  # From FinRL rl_model.py
             "n_steps": 2048,
-            "ent_coef": 0.1,   # Increased to encourage action entropy, from 0.01 -> 0.02 -> 0.05, prevent zero-action policies
+            "ent_coef": 0.2,   # Increased to encourage action entropy, from 0.01 -> 0.02 -> 0.05 -> 0.2, prevent zero-action policies
             "learning_rate": 0.00025,
             "batch_size": 64,
         },
@@ -30,6 +30,7 @@ class ConfigTrading:
             "learning_rate": 0.0007,
             "n_steps": 5,
             "gamma": 0.99,
+            "ent_coef": 0.2,    # A2C has vf_coef/gae_lambda, but add ent_coef if applicable (Stable-Baselines3 A2C supports ent_coef=0.0 default, set to 0.2)
         },
         'DDPG': {  # Default from Stable-Baselines3 docs
             "learning_rate": 0.001,
@@ -48,19 +49,19 @@ class ConfigTrading:
         },
         'CPPO': {  # Extended from PPO with CVaR params, reference from FinRL_DeepSeek (4.1.2: alpha=0.05, lambda=1.0, beta=0.01)
             "n_steps": 2048,
-            "ent_coef": 0.1,
+            "ent_coef": 0.2,
             "learning_rate": 0.00025,
             "batch_size": 64,
             "alpha": 0.05,  # CVaR confidence level (worst 5%)
-            "lambda_": 1.0,  # Lagrange multiplier for constraint
-            "beta": 0.01,   # Auxiliary penalty
+            "lambda_": 0.5,  # Reduced from 1.0 to 0.5 for lighter CVaR penalty, prevent excessive negative rewards, reference from FinRL_DeepSeek (4.1.2: tune lambda for balance)
+            "beta": 0.005,   # Reduced from 0.01 for same reason
         },
     }
 
     # Valid parameters per model to ensure compatibility with stable_baselines3
     _valid_params = {
         'PPO': {'n_steps', 'ent_coef', 'learning_rate', 'batch_size', 'gamma', 'gae_lambda', 'vf_coef'},
-        'A2C': {'learning_rate', 'n_steps', 'gamma', 'gae_lambda', 'vf_coef'},
+        'A2C': {'learning_rate', 'n_steps', 'gamma', 'gae_lambda', 'vf_coef', 'ent_coef'},
         'DDPG': {'learning_rate', 'batch_size', 'buffer_size', 'gamma', 'tau', 'action_noise'},
         'TD3': {'learning_rate', 'batch_size', 'buffer_size', 'gamma', 'tau', 'action_noise', 'policy_delay'},
         'SAC': {'learning_rate', 'buffer_size', 'batch_size', 'ent_coef', 'action_noise', 'gamma'},
