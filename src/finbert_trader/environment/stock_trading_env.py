@@ -161,6 +161,8 @@ class StockTradingEnv(gym.Env):
         self.action_memory.append(mod_action)  # Append modified action
         self.date_memory.append(self.current_window['start_date'] + pd.Timedelta(days=self.current_step))  # Approximate date
         logging.info(f"STE Modul - Step: {self.current_step}, Mod_Action: {float(mod_action):.2f}, Reward: {float(reward):.2f}")
+        # Added logging for debug: base_return, adjusted_return, current_portfolio
+        logging.info(f"STE Modul - Step: {self.current_step}, Base Return: {base_return:.4f}, Adjusted Return: {adjusted_return:.4f}, Portfolio: {current_portfolio:.2f}")
         return next_state, reward, terminated, truncated, info
 
     def _get_state(self):
