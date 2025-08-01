@@ -6,7 +6,7 @@ version = "0.1.0"
 description = "Starter Pixi project template"
 authors = [{name = "Shicheng Zeng", email = "archyz.studio@gmail.com"}]
 requires-python = ">=3.11"
-dependencies = ["yfinance==0.2.65", "stable-baselines3>=2.6.0,<3", "logging>=0.4.9.6,<0.5"]
+dependencies = ["yfinance==0.2.65", "stable-baselines3>=2.6.0,<3", "logging>=0.4.9.6,<0.5", "backtrader>=1.9.78.123,<2"]
 
 # ========================= Pixi Config ================================
 

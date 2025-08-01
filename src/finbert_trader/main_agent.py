@@ -36,14 +36,14 @@ def run_pipeline(custom_setup_config=None, custom_trading_config=None):
     try:
         # Step 1: Initialize upstream configuration (data/feature)
         setup_config = ConfigSetup(custom_setup_config)
-        logging.info("Upstream configuration initialized with symbols: {}".format(setup_config.symbols))
+        logging.info(f"Upstream configuration initialized with symbols: {setup_config.symbols}")
         
         # Step 2: Fetch data using DataResource
         dr = DataResource(setup_config)
         stock_data_dict = dr.fetch_stock_data()
         if not stock_data_dict:
             raise ValueError("No stock data fetched")
-        logging.info("Fetched stock data for {} symbols".format(len(stock_data_dict)))
+        logging.info(f"Fetched stock data for {len(stock_data_dict)} symbols")
         
         news_chunks_gen = dr.load_news_data(save_path='nasdaq_exteral_data.csv')  # Use default path
         # Note: Generator for memory efficiency
@@ -60,51 +60,51 @@ def run_pipeline(custom_setup_config=None, custom_trading_config=None):
         fused_df = fe.merge_features(stock_data_dict, sentiment_news_df)
         if fused_df.empty:
             raise ValueError("Fused DataFrame is empty")
-        logging.info("Fused DataFrame shape: {}".format(fused_df.shape))
+        logging.info(f"Fused DataFrame shape: {fused_df.shape}")
         
         # Normalize features
         normalized_df = fe.normalize_features(fused_df)
-        logging.info("Normalized DataFrame shape: {}".format(normalized_df.shape))
+        logging.info(f"Normalized DataFrame shape: {normalized_df.shape}")
         
         # Prepare RL data (list of windows)
         rl_data = fe.prepare_rl_data(normalized_df)
         if not rl_data:
             raise ValueError("No RL data prepared")
-        logging.info("Prepared {} RL data windows".format(len(rl_data)))
+        logging.info(f"Prepared {len(rl_data)} RL data windows")
         
-        # Step 4: Split RL data into train/val
+        # Step 4: Split RL data into train/valid
         splits = fe.split_rl_data(rl_data)
         if setup_config.k_folds and setup_config.k_folds > 1:
-            train_data, val_data = splits[0]  # Use first fold for simplicity
-            logging.info("Using first cross-validation fold for train/val envs")
+            train_data, valid_data = splits[0]  # Use first fold for simplicity
+            logging.info("Using first cross-validation fold for train/valid envs")
         else:
-            train_data, val_data = splits
-        logging.info("Train data: {} windows, Val data: {} windows".format(len(train_data), len(val_data)))
+            train_data, valid_data = splits
+        logging.info(f"Train data: {len(train_data)} windows, Val data: {len(valid_data)} windows")
         
         # Step 5: Initialize downstream trading configuration, inheriting upstream
         trading_config = ConfigTrading(custom_trading_config, upstream_config=setup_config)
-        logging.info("Trading configuration initialized with initial_cash: {}".format(trading_config.initial_cash))
+        logging.info(f"Trading configuration initialized with initial_cash: {trading_config.initial_cash}")
         
-        # Step 6: Setup train and val envs
+        # Step 6: Setup train and valid envs
         train_env = StockTradingEnv(trading_config, train_data, mode='train')
-        val_env = StockTradingEnv(trading_config, val_data, mode='val')
-        logging.info("Train Env initialized with state_dim: {}".format(train_env.state_dim))
-        logging.info("Val Env initialized with state_dim: {}".format(val_env.state_dim))
+        valid_env = StockTradingEnv(trading_config, valid_data, mode='valid')
+        logging.info(f"Train Env initialized with state_dim: {train_env.state_dim}")
+        logging.info(f"Val Env initialized with state_dim: {valid_env.state_dim}")
         
         # Step 7: Initialize TradingAgent and simulate train
-        agent = TradingAgent(trading_config, train_env, val_env)
+        agent = TradingAgent(trading_config, train_env, valid_env)
         agent.train()  # Simulate training; will use SharpeCallback for monitoring
         logging.info("Agent training simulation completed")
         
         # Optional: Test predict after train
-        obs, _ = val_env.reset()
+        obs, _ = valid_env.reset()
         action, _ = agent.predict(obs)
-        logging.info("Agent predict test: Action shape {}".format(action.shape))
+        logging.info(f"Agent predict test: Action shape {action.shape}")
         
         return agent
     
     except Exception as e:
-        logging.error("Pipeline failed: {}".format(e))
+        logging.error(f"Pipeline failed: {e}")
         raise
 
 if __name__ == "__main__":

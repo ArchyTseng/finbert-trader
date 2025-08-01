@@ -27,6 +27,7 @@ venv/
 outputs/
 
 # backup
+backup/
 finbert_trader_backup_*/
 
 # data_cache
