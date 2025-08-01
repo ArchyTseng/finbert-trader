@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 import logging
 import os
 import yfinance as yf  # For benchmark download
+from collections import deque   # Import deque from collections for history buffer
 from stable_baselines3 import PPO, A2C, DDPG, TD3, SAC  # Import classes for dynamic load
 from finbert_trader.agent.trading_agent import CPPO     # reference from FinRL_DeepSeek
 from finbert_trader.environment.stock_trading_env import StockTradingEnv  # For dummy env and simulation
@@ -30,6 +31,9 @@ class RLStrategy(bt.Strategy):
     def __init__(self):
         self.model = self.p.model
         self.actions = []  # Collect actions for entropy/win_rate
+        self.window_size = 50  # From config, align with env
+        self.features_per_time = 15  # OHLCV 5 + ind 8 + sent + risk
+        self.feature_history = deque(maxlen=self.window_size)  # Buffer for window
 
     def next(self):
         features = [
@@ -49,9 +53,21 @@ class RLStrategy(bt.Strategy):
             self.data.sentiment_score[0],
             self.data.risk_score[0]  # Added risk_score
         ]
+
+        # Append to history
+        self.feature_history.append(features)
+        
+        # Pad if history < window_size
+        if len(self.feature_history) < self.window_size:
+            pad = np.zeros((self.window_size - len(self.feature_history), self.features_per_time))
+            window = np.vstack((pad, np.array(self.feature_history)))
+        else:
+            window = np.array(self.feature_history)
+
         position = self.position.size
         cash = self.broker.getcash()
-        state = np.append(features, [position, cash])
+        state = np.append(window.flatten(), [position, cash])
+        
         action, _ = self.model.predict(state, deterministic=True)
         action = action[0]
         if action > 0:
