@@ -236,13 +236,12 @@ class Backtest:
         logging.info(f"TB Module - Simulation for mode {mode} ({self.symbol}): account_value shape {df_account_value.shape}, actions shape {df_actions.shape}")
         return df_account_value, df_actions
 
-    # Original location in trading_backtest.py: Replace the entire run_backtest_for_mode function with the following optimized version to handle suffixed wide fused_df (split per-symbol sub-df, rename to generic columns for bt.Data, adddata per symbol):
     def run_backtest_for_mode(self, mode):
         """
         Run backtest for a single mode on test data.
         Updates: Dynamic model loading; use dummy_env for load; added benchmark fetch (NDX for Nasdaq-100, reference from FinRL_DeepSeek 5); passed to compute_metrics; plot with benchmark curve.
         """
-        fused_test_df = self.fused_dfs.get(mode, {}).get('test', pd.DataFrame()).reset_index()  # Ensure 'Date' as column
+        fused_test_df = self.fused_dfs.get(mode, {}).get('test', pd.DataFrame())
         model_path = self.models_paths.get(mode)
         zip_path = f"{model_path}.zip" if model_path else None
         logging.info(f"TB Module - Backtest for mode {mode} ({self.symbol}): fused_test shape {fused_test_df.shape}, model_path {model_path}, zip exists {os.path.exists(zip_path) if zip_path else False}")
@@ -268,17 +267,23 @@ class Backtest:
         
         # Upstream repair: Filter test period
         mode_df = fused_test_df.copy().sort_values('Date')  # Use test df directly
-        mode_df = mode_df.rename(columns={'Adj_Open': 'Open', 'Adj_High': 'High', 'Adj_Low': 'Low', 'Adj_Close': 'Close'})  # Map Adj_ if not already
+        mode_df = mode_df.reset_index() # Ensure 'Date' as columns
         
         cerebro = bt.Cerebro()
         
         # Split wide df to per-symbol sub-df with generic columns
-        symbol_cols = {symbol: [c for c in mode_df.columns if c.endswith(f'_{symbol}')] for symbol in self.config_trade.symbols}
+        symbol_cols = {symbol: [col for col in mode_df.columns if col.endswith(f'_{symbol}')] for symbol in self.config_trade.symbols}
         for symbol in self.config_trade.symbols:
             if not symbol_cols[symbol]:
                 logging.warning(f"TB Module - No columns for symbol {symbol} in mode {mode}; skipping")
                 continue
-            symbol_df = mode_df[['Date'] + symbol_cols[symbol]].rename(columns={c: c.replace(f'_{symbol}', '') for c in symbol_cols[symbol]})
+            # Get global (non-symbol-specific) indicator columns
+            global_ind_cols = [col for col in mode_df.columns if col != 'Date' and not any(col.endswith(f'_{symbol}') for symbol in self.config_trade.symbols)]
+            # Merge symbol-specific and global indicator columns
+            all_symbol_cols = symbol_cols[symbol] + global_ind_cols
+            # Rename symbol-specific columns to generic names (remove suffix)
+            symbol_df = mode_df[['Date'] + all_symbol_cols].rename(columns={col: col.replace(f'_{symbol}', '') for col in symbol_cols[symbol]})
+
             data = CustomPandasData(dataname=symbol_df.set_index('Date'))
             cerebro.adddata(data, name=symbol)  # Name per symbol for strategy access
         
@@ -324,9 +329,6 @@ class Backtest:
     def run(self):
         logging.info("=========== Start to run Backtest ===========")
         all_results = {}
-        cum_fig, ax = plt.subplots()
-        sharpe_values = {}
-        table_data = []
         
         # Simplified plotting loop:
         for group, modes in self.config_trade.exper_mode.items():
@@ -335,37 +337,42 @@ class Backtest:
                 results_dict, fig_path = self.run_backtest_for_mode(mode)
                 if results_dict:
                     all_results[mode] = (results_dict, fig_path)
-                    portfolio_series = results_dict.get('portfolio_series', pd.Series())
-                    if not portfolio_series.empty:
-                        ax.plot(portfolio_series.index, portfolio_series, label=mode)
-                    sharpe_values[mode] = results_dict['metrics']['sharpe']  # Use metrics
-                    table_data.append({'mode': mode, **results_dict['metrics']})  # Append inside loop
-        
-        ax.set_title(f'Portfolio Value Comparison ({self.symbol})')
-        ax.legend()
-        combined_fig_path = f"{self.results_cache}/combined_portfolio.png"
-        cum_fig.savefig(combined_fig_path)
-        plt.close(cum_fig)
-        logging.info(f"TB Module - Saved combined portfolio fig to {combined_fig_path} for {self.symbol}")
-        
-        sharpe_fig, ax_sharpe = plt.subplots()
-        if sharpe_values:
-            ax_sharpe.bar(sharpe_values.keys(), sharpe_values.values())
-        else:
-            logging.warning(f"TB Module - No sharpe values for plot ({self.symbol})")
-        ax_sharpe.set_title(f'Sharpe Ratio Comparison ({self.symbol})')
-        sharpe_fig_path = f"{self.results_cache}/sharpe_comparison.png"
-        sharpe_fig.savefig(sharpe_fig_path)
-        plt.close(sharpe_fig)
-        logging.info(f"TB Module - Saved Sharpe fig to {sharpe_fig_path} for {self.symbol}")
 
-        if table_data:
-            results_df = pd.DataFrame(table_data).sort_values(by='sharpe', ascending=False)
-            logging.info(f"TB Module - Results table for {self.symbol}:\n{results_df.to_string()}")
-            table_path = f"{self.results_cache}/metrics_table.csv"
+        # Aggregate plot/table across symbols per mode
+        all_series = {}  # {mode: {symbol: series}}
+        all_metrics = []  # list of {'mode':, 'symbol':, **metrics}
+        for mode in sum(self.config_trade.exper_mode.values(), []):
+            mode_series = {}
+            for symbol in self.config_trade.symbols:
+                symbol_results = all_results.get(symbol, {}).get(mode, (None, None))[0]
+                if symbol_results and 'portfolio_series' in symbol_results:
+                    mode_series[symbol] = symbol_results['portfolio_series']
+                    all_metrics.append({'mode': mode, 'symbol': symbol, **symbol_results['metrics']})
+            all_series[mode] = mode_series
+
+        # Plot multi-symbol per mode
+        for mode, mode_series in all_series.items():
+            if mode_series:
+                fig_multi, ax_multi = plt.subplots()
+                for sym, ser in mode_series.items():
+                    ax_multi.plot(ser.index, ser, label=f'{mode}-{sym}')
+                # Add benchmark (fetch once outside if needed)
+                benchmark_df = yf.download('^NDX', start=min(s.index[0] for s in mode_series.values()), end=max(s.index[-1] for s in mode_series.values()))
+                benchmark_series = benchmark_df['Adj Close'] / benchmark_df['Adj Close'].iloc[0] * self.config_trade.initial_cash
+                ax_multi.plot(benchmark_series.index, benchmark_series, label='Nasdaq-100', linestyle='--')
+                ax_multi.set_title(f'Portfolio Value Comparison - {mode} (Multi-Symbol)')
+                ax_multi.legend()
+                multi_fig_path = f"{self.results_cache}/{mode}_multi_portfolio.png"
+                fig_multi.savefig(multi_fig_path)
+                plt.close(fig_multi)
+                logging.info(f"TB Module - Saved multi-symbol portfolio fig to {multi_fig_path} for {mode}")
+
+        # Combined metrics table across all
+        if all_metrics:
+            results_df = pd.DataFrame(all_metrics).sort_values(by=['mode', 'sharpe'], ascending=[True, False])
+            logging.info(f"TB Module - Multi-symbol results table:\n{results_df.to_string()}")
+            table_path = f"{self.results_cache}/metrics_table_multi.csv"
             results_df.to_csv(table_path, index=False)
-            logging.info(f"TB Module - Saved metrics table to {table_path} for {self.symbol}")
-        else:
-            logging.warning(f"TB Module - No results for table ({self.symbol})")
+            logging.info(f"TB Module - Saved multi-symbol metrics table to {table_path}")
         
         return all_results
