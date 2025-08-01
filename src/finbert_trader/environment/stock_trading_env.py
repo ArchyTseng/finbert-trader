@@ -97,12 +97,14 @@ class StockTradingEnv(gym.Env):
         mod_action = np.clip(mod_action, -1, 1)
 
         next_state = self._get_state()  # Get next features
-        current_price = next_state[self.lead_col_idx]  # From current flattened features
+        # Force scalar extraction to prevent ndarray in calculations
+        current_price = float(next_state[self.lead_col_idx])  # Ensure scalar
         if not np.isfinite(current_price) or current_price <= 0:
             logging.warning(f"STE Modul - Invalid price {current_price}; using previous_price")
             current_price = self.previous_price if np.isfinite(self.previous_price) and self.previous_price > 0 else 1e-6
 
-        previous_portfolio = self.current_cash + self.current_position * self.previous_price
+        # Compute portfolios as floats
+        previous_portfolio = float(self.current_cash + self.current_position * self.previous_price)
 
         # Trade logic with mod_action
         if mod_action > 0:
@@ -129,16 +131,16 @@ class StockTradingEnv(gym.Env):
         truncated = False
 
         # Compute base return and infuse R_f, reference from FinRL_DeepSeek (4.3: D_Rf = R_f * D, R_f 0.9-1.1 based on risk)
-        current_portfolio = self.current_cash + self.current_position * current_price
+        current_portfolio = float(self.current_cash + self.current_position * current_price )  # Compute portfolios as floats
         if np.isfinite(current_portfolio) and np.isfinite(previous_portfolio):
-            base_return = (current_portfolio - previous_portfolio) * self.config_trading.reward_scale
+            base_return = float((current_portfolio - previous_portfolio) * self.config_trading.reward_scale)
             if risk_avg > 0:  # High risk amplifies negative returns
                 R_f = 1 + self.infusion_strength * (risk_avg / 2)  # Normalized risk >0 -> >1, amplify loss
             elif risk_avg < 0:
                 R_f = 1 - self.infusion_strength * (abs(risk_avg) / 2)  # Low risk dampens
             else:
                 R_f = 1.0
-            adjusted_return = R_f * base_return
+            adjusted_return = float(R_f * base_return)
             self.returns_history.append(adjusted_return)  # Collect for CVaR
         else:
             adjusted_return = 0.0
@@ -162,7 +164,7 @@ class StockTradingEnv(gym.Env):
         self.date_memory.append(self.current_window['start_date'] + pd.Timedelta(days=self.current_step))  # Approximate date
         logging.info(f"STE Modul - Step: {self.current_step}, Mod_Action: {float(mod_action):.2f}, Reward: {float(reward):.2f}")
         # Added logging for debug: base_return, adjusted_return, current_portfolio
-        logging.info(f"STE Modul - Step: {self.current_step}, Base Return: {base_return:.4f}, Adjusted Return: {adjusted_return:.4f}, Portfolio: {current_portfolio:.2f}")
+        logging.info(f"STE Modul - Step: {self.current_step}, Base Return: {float(base_return):.4f}, Adjusted Return: {float(adjusted_return):.4f}, Portfolio: {float(current_portfolio):.2f}")
         return next_state, reward, terminated, truncated, info
 
     def _get_state(self):
