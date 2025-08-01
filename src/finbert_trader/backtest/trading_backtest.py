@@ -329,8 +329,8 @@ class Backtest:
             
             # Fetch benchmark (Nasdaq-100 '^NDX', reference from FinRL_DeepSeek 5)
             benchmark_df = yf.download('^NDX', start=portfolio_series.index[0], end=portfolio_series.index[-1])
-            benchmark_rets = benchmark_df['Adj Close'].pct_change().dropna()
-            benchmark_series = benchmark_df['Adj Close'] / benchmark_df['Adj Close'].iloc[0] * self.config_trade.initial_cash  # Normalize to initial_cash for plot/comparison
+            benchmark_rets = benchmark_df['Close'].pct_change().dropna()
+            benchmark_series = benchmark_df['Close'] / benchmark_df['Close'].iloc[0] * self.config_trade.initial_cash  # Normalize to initial_cash for plot/comparison
             
             metrics = self.compute_metrics(daily_rets, portfolio_series, actions, trade_rewards, benchmark_rets)
             logging.info(f"TB Module - Backtest for mode {mode} ({self.symbol}): {metrics}")
@@ -381,7 +381,7 @@ class Backtest:
                     ax_multi.plot(ser.index, ser, label=f'{mode}-{sym}')
                 # Add benchmark (fetch once outside if needed)
                 benchmark_df = yf.download('^NDX', start=min(s.index[0] for s in mode_series.values()), end=max(s.index[-1] for s in mode_series.values()))
-                benchmark_series = benchmark_df['Adj Close'] / benchmark_df['Adj Close'].iloc[0] * self.config_trade.initial_cash
+                benchmark_series = benchmark_df['Close'] / benchmark_df['Close'].iloc[0] * self.config_trade.initial_cash
                 ax_multi.plot(benchmark_series.index, benchmark_series, label='Nasdaq-100', linestyle='--')
                 ax_multi.set_title(f'Portfolio Value Comparison - {mode} (Multi-Symbol)')
                 ax_multi.legend()
