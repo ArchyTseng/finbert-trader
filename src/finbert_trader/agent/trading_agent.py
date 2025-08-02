@@ -208,7 +208,7 @@ class SharpeCallback(BaseCallback):
         return True
 
 class TradingAgent:
-    def __init__(self, config_trading, train_env=None, valid_env=None, model_path='model_cache/rl_model', seed=42, symbol=''):
+    def __init__(self, config_trading, train_env=None, valid_env=None, model_path='model_cache/rl_model', seed=42):
         """
         Initialize with ConfigTrading, train/val envs, model save path, seed, and symbol for uniqueness.
         Input: config_trading (ConfigTrading), train_env (StockTradingEnv), val_env (StockTradingEnv), model_path (str), seed (int), symbol (str).
@@ -220,8 +220,7 @@ class TradingAgent:
         self.config_trading = config_trading
         self.train_env = train_env
         self.valid_env = valid_env
-        self.symbol = symbol  # Added for per-symbol path
-        self.base_model_path = f"{model_path}_{self.symbol}" if self.symbol else model_path  # Append symbol to avoid overwrite
+        self.base_model_path = model_path   # Unified path without symbol
         self.model_name = config_trading.model
         self.seed = seed
         self._set_seeds()  # Set seeds early
@@ -245,13 +244,13 @@ class TradingAgent:
         if train_env is not None:
             try:
                 self.model = self._initialize_model(train_env)
-                logging.info(f"TA Module - Initialized {self.model_name} for {self.symbol} with params: {self.config_trading.get_model_params()}")
+                logging.info(f"TA Module - Initialized {self.model_name} with params: {self.config_trading.get_model_params()}")
             except Exception as e:
-                logging.error(f"TA Module - Error initializing model for {self.symbol}: {e}")
+                logging.error(f"TA Module - Error initializing model : {e}")
                 raise
         else:
             self.model = None
-            logging.info(f"TA Module - Deferred model initialization for {self.model_name} ({self.symbol})")
+            logging.info(f"TA Module - Deferred model initialization for {self.model_name}")
 
     def _set_seeds(self):
         """

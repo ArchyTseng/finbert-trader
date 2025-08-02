@@ -35,15 +35,14 @@ class StockTradingEnv(gym.Env):
         if not self.rl_data:
             raise ValueError("Empty rl_data")
 
-        features_per_time = 15 * len(self.config_trading.symbols)  # OHLCV 5 + ind 8 + sent/risk 2 per symbol
-        self.feature_dim = features_per_time * self.config_trading.window_size
-        self.state_dim = features_per_time + 2  # + position, cash (corrected for per-step state)
-        lead_col_idx = self.feature_dim // len(self.config_trading.symbols) * 0 + 3  # Assume OHLCV offset 3 for Adj_Close, adjust per-symbol block if needed
-        self.lead_col_idx = lead_col_idx  # As class member
-        self.state_dim = self.feature_dim + 2  # + position, cash (simplified; for multi, position could be vector but keep scalar for total)
-        self.action_space = spaces.Box(low=-1, high=1, shape=(1,), dtype=np.float32)
+        # Adjust for multi-stock: features_per_time=15 * len(symbols), state_dim=features_per_time * window + len(symbols) +1 (positions vector + cash)
+        self.features_per_time = 15 * len(self.config_trading.symbols)  # OHLCV 5 + ind 8 + sent/risk 2 per symbol
+        self.feature_dim = self.features_per_time * self.config_trading.window_size
+        self.state_dim = self.feature_dim + len(self.config_trading.symbols) + 1  # positions vector + cash
+        self.action_space = spaces.Box(low=-1, high=1, shape=(len(self.config_trading.symbols),), dtype=np.float32)  # Action per stock
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.state_dim,), dtype=np.float32)
         logging.info(f"STE Modul - Env initialized: model={self.config_trading.model}, state_dim={self.state_dim}")
+
         self.portfolio_memory = []  # Added to record portfolio values, reference from FinRL (env_stocktrading.py: asset_memory)
         self.action_memory = []  # Added to record actions, reference from FinRL (env_stocktrading.py: actions_memory)
         self.date_memory = []  # Added to record dates for memory alignment, reference from FinRL (env_stocktrading.py: date_memory)
@@ -61,11 +60,12 @@ class StockTradingEnv(gym.Env):
         self.current_window_idx = np.random.randint(0, len(self.rl_data))
         self.current_window = self.rl_data[self.current_window_idx]
         self.current_step = 0
-        self.current_position = 0.0
+        self.current_position = np.zeros(len(self.config_trading.symbols))  # Vector
         self.current_cash = self.config_trading.initial_cash
 
         state = self._get_state()  # Reuse to get initial features
-        self.previous_price = state[self.lead_col_idx]  # From initial flattened features
+        # Multi adjustment: previous_price as array per stock
+        self.previous_prices = np.array([state[self.lead_col_idx + i * self.features_per_time] for i in range(len(self.config_trading.symbols))])  # Initial prices vector
 
         self.portfolio_memory = [self.current_cash + self.current_position * self.previous_price]  # Initialize with initial portfolio, reference from FinRL (asset_memory start with initial_amount)
         self.action_memory = []  # Reset actions per episode
@@ -83,46 +83,51 @@ class StockTradingEnv(gym.Env):
         Robustness: Handles invalid prices; logs action/reward.
         Updates: Added infusion: mod_action = S_f * action where S_f based on sentiment_score (state[-3]), reference from FinRL_DeepSeek (4.2: S_f 1.1 if positive and buy etc.); adjust return D = R_f * base_return where R_f based on risk_score (state[-2]), reference from FinRL_DeepSeek (4.3: D_Rf = R_f * D); for CPPO, add CVaR penalty to reward if in worst alpha%, reference from FinRL_DeepSeek (4.1.2: CVaR loss term); collect returns_history for CVaR.
         """
-        sentiment_avg = np.mean(self._get_state()[-5:-3])  # Assume flattened, adjust indices for avg over stocks' sentiments
-        risk_avg = np.mean(self._get_state()[-3:-2])  # Avg over stocks' risks
+        # Multi adjustment: compute S_f as array per stock, reference from FinRL_DeepSeek (4.2: S_f based on score and action sign)
+        num_symbols = len(self.config_trading.symbols)
+        sent_idx = -5 * num_symbols  # Assume sentiment per-stock at state end, adjust index as per state layout
+        sentiment_per_stock = np.array([next_state[sent_idx + i] for i in range(num_symbols)])  # Per-stock sentiments
 
-        # Compute S_f for action infusion, reference from FinRL_DeepSeek (4.2: S_f close to 1 based on score and action sign)
-        if sentiment_avg > 0 and action > 0 or sentiment_avg < 0 and action < 0:
-            S_f = 1 + self.infusion_strength
-        elif sentiment_avg > 0 and action < 0 or sentiment_avg < 0 and action > 0:
-            S_f = 1 - self.infusion_strength
-        else:
-            S_f = 1.0
+        S_f = np.ones(num_symbols)  # Initialize array
+        for i in range(num_symbols):
+            if sentiment_per_stock[i] > 0 and action[i] > 0 or sentiment_per_stock[i] < 0 and action[i] < 0:
+                S_f[i] = 1 + self.infusion_strength
+            elif sentiment_per_stock[i] > 0 and action[i] < 0 or sentiment_per_stock[i] < 0 and action[i] > 0:
+                S_f[i] = 1 - self.infusion_strength
+        
         mod_action = S_f * action
         mod_action = np.clip(mod_action, -1, 1)
 
         next_state = self._get_state()  # Get next features
-        # Force scalar extraction to prevent ndarray in calculations
-        current_price = float(next_state[self.lead_col_idx])  # Ensure scalar
-        if not np.isfinite(current_price) or current_price <= 0:
-            logging.warning(f"STE Modul - Invalid price {current_price}; using previous_price")
-            current_price = self.previous_price if np.isfinite(self.previous_price) and self.previous_price > 0 else 1e-6
+        # Multi trade loop: current_prices as array, reference from FinRL_DeepSeek (4.3: multi-stock portfolio)
+        current_prices = np.array([float(next_state[self.lead_col_idx + i * self.features_per_time]) for i in range(num_symbols)])  # Per-stock prices array
+        if not np.all(np.isfinite(current_prices)) or np.any(current_prices <= 0):
+            logging.warning(f"STE Modul - Invalid prices {current_prices}; using previous_prices")
+            current_prices = np.where(np.isfinite(current_prices) & (current_prices > 0), current_prices, self.previous_prices)
 
-        # Compute portfolios as floats
-        previous_portfolio = float(self.current_cash + self.current_position * self.previous_price)
+        # Compute portfolios as total (cash + dot(position, prices))
+        previous_portfolio = self.current_cash + np.dot(self.current_position, self.previous_prices)
 
-        # Trade logic with mod_action
-        if mod_action > 0:
-            shares_to_buy = (self.current_cash * mod_action) / current_price
-            cost = shares_to_buy * current_price * (1 + self.config_trading.transaction_cost)
-            if np.isfinite(cost) and cost <= self.current_cash:
-                self.current_position += shares_to_buy
-                self.current_cash -= cost
-            else:
-                logging.warning("STE Modul - Insufficient cash; no buy")
-        elif mod_action < 0:
-            shares_to_sell = self.current_position * abs(mod_action)
-            revenue = shares_to_sell * current_price * (1 - self.config_trading.transaction_cost)
-            if np.isfinite(revenue):
-                self.current_position -= shares_to_sell
-                self.current_cash += revenue
-            else:
-                logging.warning("STE Modul - Invalid revenue; no sell")
+        # Multi trade loop
+        for i in range(num_symbols):
+            mod_act = mod_action[i]  # Per-stock
+            curr_price = current_prices[i]
+            if mod_act > 0:
+                shares_to_buy = (self.current_cash * mod_act) / curr_price
+                cost = shares_to_buy * curr_price * (1 + self.config_trading.transaction_cost)
+                if np.isfinite(cost) and cost <= self.current_cash:
+                    self.current_position[i] += shares_to_buy
+                    self.current_cash -= cost
+                else:
+                    logging.warning(f"STE Modul - Insufficient cash for symbol {i}; no buy")
+            elif mod_act < 0:
+                shares_to_sell = self.current_position[i] * abs(mod_act)
+                revenue = shares_to_sell * curr_price * (1 - self.config_trading.transaction_cost)
+                if np.isfinite(revenue):
+                    self.current_position[i] -= shares_to_sell
+                    self.current_cash += revenue
+                else:
+                    logging.warning(f"STE Modul - Invalid revenue for symbol {i}; no sell")
 
         # Advance step
         self.current_step += 1
@@ -130,17 +135,26 @@ class StockTradingEnv(gym.Env):
         terminated = self.current_step >= max_steps
         truncated = False
 
-        # Compute base return and infuse R_f, reference from FinRL_DeepSeek (4.3: D_Rf = R_f * D, R_f 0.9-1.1 based on risk)
-        current_portfolio = float(self.current_cash + self.current_position * current_price )  # Compute portfolios as floats
-        if np.isfinite(current_portfolio) and np.isfinite(previous_portfolio):
-            base_return = float((current_portfolio - previous_portfolio) * self.config_trading.reward_scale)
-            if risk_avg > 0:  # High risk amplifies negative returns
-                R_f = 1 + self.infusion_strength * (risk_avg / 2)  # Normalized risk >0 -> >1, amplify loss
-            elif risk_avg < 0:
-                R_f = 1 - self.infusion_strength * (abs(risk_avg) / 2)  # Low risk dampens
+        # Similar for R_f array (using risk_per_stock)
+        risk_idx = -3 * num_symbols  # Adjust index
+        risk_per_stock = np.array([next_state[risk_idx + i] for i in range(num_symbols)])
+        R_f_array = np.ones(num_symbols)  # Initialize
+        for i in range(num_symbols):
+            if risk_per_stock[i] > 0:
+                R_f_array[i] = 1 + self.infusion_strength * (risk_per_stock[i] / 2)
+            elif risk_per_stock[i] < 0:
+                R_f_array[i] = 1 - self.infusion_strength * (abs(risk_per_stock[i]) / 2)
             else:
-                R_f = 1.0
-            adjusted_return = float(R_f * base_return)
+                R_f_array[i] = 1.0
+
+        # Compute base return and infuse R_f, reference from FinRL_DeepSeek (4.3: D_Rf = R_f * D, R_f 0.9-1.1 based on risk)
+        current_portfolio = self.current_cash + np.dot(self.current_position, current_prices)
+        if np.isfinite(current_portfolio) and np.isfinite(previous_portfolio):
+            base_return = (current_portfolio - previous_portfolio) * self.config_trading.reward_scale
+            # Aggregate R_f = np.dot(weights, R_f_array), weights = position / sum(position) if sum>0 else uniform
+            weights = self.current_position / np.sum(self.current_position) if np.sum(self.current_position) != 0 else np.ones(num_symbols) / num_symbols
+            R_f = np.dot(weights, R_f_array)  # Weighted aggregate per-stock R_f
+            adjusted_return = R_f * base_return
             self.returns_history.append(adjusted_return)  # Collect for CVaR
         else:
             adjusted_return = 0.0
@@ -148,7 +162,6 @@ class StockTradingEnv(gym.Env):
 
         # Add Sharpe-like bonus and holding bonus for positive incentives, reference from FinRL_DeepSeek (Table 1: Sharpe/IR metrics for reward design)
         sharpe_bonus = adjusted_return / max(np.std(self.returns_history + [adjusted_return]), 1e-6) * 10 if len(self.returns_history) > 0 else 0  # Encourage stable positive returns
-        # Reference from FinRL_DeepSeek 5.3 entropy/exploration for balance
         holding_bonus = max(0, base_return) * 5  # Bonus for positive delta, scaled
 
         reward = adjusted_return + sharpe_bonus + holding_bonus  # Combined with positives
@@ -160,27 +173,24 @@ class StockTradingEnv(gym.Env):
                 reward -= 0.5 * cvar_penalty    # Halve penalty (lambda_=0.5 effectively), to reduce over-penalization of negative trajectories
                 logging.debug(f"STE Modul - CPPO CVaR penalty applied: {cvar_penalty:.4f}")
 
-        self.previous_price = current_price
+        self.previous_prices = current_prices
         next_state = self._get_state()
         info = {'portfolio_value': current_portfolio}
         self.portfolio_memory.append(current_portfolio)  # Append current portfolio, reference from FinRL (env_stocktrading.py: asset_memory append)
         self.action_memory.append(mod_action)  # Append modified action
         self.date_memory.append(self.current_window['start_date'] + pd.Timedelta(days=self.current_step))  # Approximate date
-        logging.info(f"STE Modul - Step: {self.current_step}, Mod_Action: {float(mod_action):.2f}, Reward: {float(reward):.2f}")
-        # Added logging for debug: base_return, adjusted_return, current_portfolio
-        logging.info(f"STE Modul - Step: {self.current_step}, Base Return: {float(base_return):.4f}, Adjusted Return: {float(adjusted_return):.4f}, Portfolio: {float(current_portfolio):.2f}")
+        logging.info(f"STE Modul - Step: {self.current_step}, Mod_Action: {mod_action}, Reward: {reward:.2f}, Base Return: {base_return:.4f}, Adjusted Return: {adjusted_return:.4f}, Portfolio: {current_portfolio:.2f}")
         return next_state, reward, terminated, truncated, info
 
     def _get_state(self):
-        features_per_time = self.feature_dim // self.config_trading.window_size
-        start_idx = self.current_step * features_per_time
-        end_idx = start_idx + features_per_time
+        start_idx = self.current_step * self.features_per_time
+        end_idx = start_idx + self.features_per_time
         if self.current_step >= self.config_trading.window_size:
-            features = self.current_window['states'][-features_per_time:]  # Last time features for terminal
+            features = self.current_window['states'][-self.features_per_time:]  # Last time features for terminal
         else:
             features = self.current_window['states'][start_idx:end_idx]  # Slice current time
-        if len(features) < features_per_time:
-            features = np.pad(features, (0, features_per_time - len(features)), 'constant', constant_values=0)
+        if len(features) < self.features_per_time:
+            features = np.pad(features, (0, self.features_per_time - len(features)), 'constant', constant_values=0)
 
         if self.current_step >= len(self.current_window['states']) // self.feature_dim:
             features = self.current_window['states'][-self.feature_dim:]

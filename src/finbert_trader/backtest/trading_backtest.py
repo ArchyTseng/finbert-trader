@@ -34,61 +34,78 @@ class RLStrategy(bt.Strategy):
         self.window_size = 50  # From config, align with env
         self.features_per_time = 15  # OHLCV 5 + ind 8 + sent + risk
         self.feature_history = deque(maxlen=self.window_size)  # Buffer for window
+        # Multi-stock: map datas by name=symbol
+        self.symbol_datas = {date._name: date for date in self.datas}  # Dict of per-symbol data
+        self.num_symbols = len(self.symbol_datas)  # Number of symbols
+        self.positions = np.zeros(self.num_symbols)  # Positions array (updated in trad
 
     def next(self):
-        features = [
-            self.data.open[0],
-            self.data.high[0],
-            self.data.low[0],
-            self.data.close[0],
-            self.data.volume[0],
-            self.data.macd[0],
-            self.data.boll_ub[0],
-            self.data.boll_lb[0],
-            self.data.rsi_30[0],
-            self.data.cci_30[0],
-            self.data.dx_30[0],
-            self.data.close_30_sma[0],
-            self.data.close_60_sma[0],
-            self.data.sentiment_score[0],
-            self.data.risk_score[0]  # Added risk_score
-        ]
+        # Multi-stock: collect features per symbol into multi array
+        features_list = []
+        for symbol_idx, (symbol, data) in enumerate(self.symbol_datas.items()):
+            sym_features = np.array([
+                data.open[0],
+                data.high[0],
+                data.low[0],
+                data.close[0],
+                data.volume[0],
+                data.macd[0],
+                data.boll_ub[0],
+                data.boll_lb[0],
+                data.rsi_30[0],
+                data.cci_30[0],
+                data.dx_30[0],
+                data.close_30_sma[0],
+                data.close_60_sma[0],
+                data.sentiment_score[0],
+                data.risk_score[0]  # Added risk_score
+            ])
+            sym_features = np.nan_to_num(sym_features, nan=0.0)  # Clean NaN
+            features_list.append(sym_features)
 
-        # Force NaN to 0 in current features
-        features = np.nan_to_num(features, nan=0.0)
-
-        # Append to history
+        features = np.concatenate(features_list)  # Concat to multi-features (15*num_symbols)
+        
+        # Append to history (now multi-features per time)
         self.feature_history.append(features)
         
         # Build window with padding
         if len(self.feature_history) < self.window_size:
-            pad = np.zeros((self.window_size - len(self.feature_history), self.features_per_time))
+            pad = np.zeros((self.window_size - len(self.feature_history), self.features_per_time * self.num_symbols))
             window = np.vstack((pad, np.array(self.feature_history)))
         else:
             window = np.array(self.feature_history)
-
+        
         # Force NaN to 0 in window
         window = np.nan_to_num(window, nan=0.0)
 
-        # Flatten and append position/cash
-        position = self.position.size
+        # Flatten window and append positions array + cash
         cash = self.broker.getcash()
-        state = np.append(window.flatten(), [position, cash])
+        # Update positions from broker (multi-stock: getposition per data)
+        self.positions = np.array([self.getposition(data).size for data in self.symbol_datas.values()])
+        state = np.append(window.flatten(), np.append(self.positions, cash))  # Multi-state: flatten + positions vec + cash
         
+        # Predict action vector
         action, _ = self.model.predict(state, deterministic=True)
-        action = action[0]
+        
+        # Clip small actions to 0 (hold) to prevent no-trades, reference from FinRL_DeepSeek (5.3: action threshold for stability)
+        action[np.abs(action) < 0.1] = 0.0  # Vector clip
 
-        # Add min_action_threshold to prevent micro-actions (no trades), reference from FinRL_DeepSeek (5.3: action clipping for stability)
-        min_threshold = 0.1  # Empirical threshold to force hold on small actions
-        if abs(action) < min_threshold:
-            action = 0.0  # Force hold to avoid cost-eating micro-trades
-
-        # trade logic if action >0 or <0
-        if action > 0:
-            self.buy(size=action * cash / self.data.close[0])
-        elif action < 0:
-            self.sell(size=abs(action) * position)
-        self.actions.append(action)
+        # Multi trade loop: per symbol/action[i]
+        for i, (symbol, data) in enumerate(self.symbol_datas.items()):
+            act = action[i]
+            price = data.close[0]
+            if act > 0:
+                shares_to_buy = (cash * act) / price
+                cost = shares_to_buy * price * (1 + self.broker.getcommission())
+                if np.isfinite(cost) and cost <= cash:
+                    self.buy(data=data, size=shares_to_buy)  # Buy on specific data
+            elif act < 0:
+                shares_to_sell = self.positions[i] * abs(act)
+                revenue = shares_to_sell * price * (1 - self.broker.getcommission())
+                if np.isfinite(revenue):
+                    self.sell(data=data, size=shares_to_sell)  # Sell on specific data
+        
+        self.actions.append(action)  # Append vector action
 
 class CustomPandasData(bt.feeds.PandasData):
     lines = ('macd', 'boll_ub', 'boll_lb', 'rsi_30', 'cci_30', 'dx_30', 'close_30_sma', 'close_60_sma', 'sentiment_score', 'risk_score')  # Added risk_score
@@ -311,16 +328,15 @@ class Backtest:
         
         # Split wide df to per-symbol sub-df with generic columns
         symbol_cols = {symbol: [col for col in mode_df.columns if col.endswith(f'_{symbol}')] for symbol in self.config_trade.symbols}
+        global_ind_cols = [col for col in mode_df.columns if col != 'Date' and not any(col.endswith(f'_{symbol}') for symbol in self.config_trade.symbols)]
         for symbol in self.config_trade.symbols:
             if not symbol_cols[symbol]:
                 logging.warning(f"TB Module - No columns for symbol {symbol} in mode {mode}; skipping")
                 continue
-            # Get global (non-symbol-specific) indicator columns
-            global_ind_cols = [col for col in mode_df.columns if col != 'Date' and not any(col.endswith(f'_{symbol}') for symbol in self.config_trade.symbols)]
             # Merge symbol-specific and global indicator columns
             all_symbol_cols = symbol_cols[symbol] + global_ind_cols
             # Rename symbol-specific columns to generic names (remove suffix)
-            symbol_df = mode_df[['Date'] + all_symbol_cols].rename(columns={col: col.replace(f'_{symbol}', '') for col in symbol_cols[symbol]})
+            symbol_df = mode_df[['Date'] + all_symbol_cols].rename(columns={col: col.replace(f'_{symbol}', '') for col in all_symbol_cols if col.endswith(f'_{symbol}')})
 
             data = CustomPandasData(dataname=symbol_df.set_index('Date'))
             cerebro.adddata(data, name=symbol)  # Name per symbol for strategy access
