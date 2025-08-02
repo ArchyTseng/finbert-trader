@@ -45,7 +45,7 @@ class StockFeatureEngineer:
         
         for ind in self.indicators:
             try:
-                stock_df[ind] = indicator_funcs.get(ind, lambda df: np.nan)(stock_df)
+                stock_df[f'{ind}_{symbol}'] = indicator_funcs.get(ind, lambda df: np.nan)(stock_df)  # Add _{symbol} suffix to indicators
             except KeyError:
                 logging.warning(f"SF Module - Indicator {ind} not supported")
         
