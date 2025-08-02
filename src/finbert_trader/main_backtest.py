@@ -110,7 +110,7 @@ if __name__ == "__main__":
     custom_trading = {
         'initial_cash': 100000,
         'transaction_cost': 0.001,
-        'total_timesteps': 1000000  # Increased for better training to ensure non-zero sharpe/returns in backtest
+        'total_timesteps': 2000000  # Increased for better training to ensure non-zero sharpe/returns in backtest
     }
     results = run_pipeline(custom_setup, custom_trading, force_train=True)  # Force retrain to test updated pipeline
     logging.info(f"Pipeline test completed successfully with results: {results}")

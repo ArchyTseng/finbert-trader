@@ -79,7 +79,7 @@ class RLStrategy(bt.Strategy):
         action = action[0]
 
         # Add min_action_threshold to prevent micro-actions (no trades), reference from FinRL_DeepSeek (5.3: action clipping for stability)
-        min_threshold = 0.05  # Empirical threshold to force hold on small actions
+        min_threshold = 0.1  # Empirical threshold to force hold on small actions
         if abs(action) < min_threshold:
             action = 0.0  # Force hold to avoid cost-eating micro-trades
 
@@ -160,20 +160,25 @@ class Backtest:
         """
         metrics = {}
         alpha = 0.05  # For CVaR
+
+        # Use len() >0 for empty check to avoid ambiguous truth value, reference from FinRL_DeepSeek (5.2: safe metrics computation)
+        if len(benchmark_rets) > 0 and len(daily_rets) > 0:
+            # Align before subtraction
+            aligned_daily, aligned_bench = daily_rets.align(benchmark_rets, join='inner', method='ffill')
+            excess_rets = aligned_daily - aligned_bench.fillna(0)
+            tracking_error = excess_rets.std()
+            metrics['information_ratio'] = (excess_rets.mean() / tracking_error * np.sqrt(252)) if tracking_error != 0 else 0.0
+        else:
+            metrics['information_ratio'] = 0.0
         
         try: 
+            if len(portfolio_series) <= 1:
+                logging.warning("TB Module - No portfolio changes detected; setting metrics to 0")
+                metrics = {k: 0.0 for k in ['sharpe', 'information_ratio', 'total_returns', 'total_rewards', 'annualized_return', 'max_drawdown', 'cvar', 'rachev_ratio', 'action_entropy', 'win_rate', 'num_trades']}
+                return metrics  # Early return defaults without raise
+            
             std_ret = daily_rets.std()
             metrics['sharpe'] = (daily_rets.mean() / std_ret * np.sqrt(252)) if std_ret != 0 else 0.0
-            
-            # Information Ratio: mean excess return / tracking error
-            if not benchmark_rets.empty:
-                # Align indices before subtraction to prevent mismatch
-                aligned_daily_rets, aligned_benchmark_rets = daily_rets.align(benchmark_rets, join='inner', method='ffill')
-                excess_rets = aligned_daily_rets - aligned_benchmark_rets.fillna(0)
-                tracking_error = excess_rets.std()
-                metrics['information_ratio'] = (excess_rets.mean() / tracking_error * np.sqrt(252)) if tracking_error != 0 else 0.0
-            else:
-                metrics['information_ratio'] = 0.0
             
             metrics['total_returns'] = (portfolio_series.iloc[-1] / portfolio_series.iloc[0] - 1) if len(portfolio_series) > 1 else 0.0
 
@@ -223,9 +228,10 @@ class Backtest:
             metrics['num_trades'] = sum(np.abs(np.array(actions)) > 0.1) if actions else 0
             
             logging.debug(f"TB Module - Action bins: buy={bins[0]}, hold={bins[1]}, sell={bins[2]}")
+
         except Exception as e:
             logging.error(f"TB Module - Error in computing metrics: {e}")
-            metrics = {k: 0.0 for k in ['sharpe', 'information_ratio', 'total_returns', 'total_rewards', 'annualized_return', 'max_drawdown', 'cvar', 'rachev_ratio', 'action_entropy', 'win_rate', 'num_trades']}
+            metrics = {k: 0.0 for k in metrics}  # Reset to 0 on failure
         
         return metrics
 

@@ -146,10 +146,12 @@ class StockTradingEnv(gym.Env):
             adjusted_return = 0.0
             logging.warning("STE Modul - Invalid portfolio; return set to 0")
 
-        # Add positive components to reward: entropy bonus for action diversity, holding bonus for portfolio growth
-        action_entropy = -np.log(np.clip(abs(action) + 1e-10, 0, 1))  # Simple entropy-like for single action, encourage non-zero
-        holding_bonus = max(0, (current_portfolio - self.config_trading.initial_cash) / self.config_trading.initial_cash * 10)  # Small positive if portfolio > initial, scaled
-        reward = adjusted_return + self.config_trading.model_params.get('ent_coef', 0.1) * action_entropy + holding_bonus  # Combined reward with positive incentives, reference from FinRL_DeepSeek (5.3: entropy for exploration)
+        # Add Sharpe-like bonus and holding bonus for positive incentives, reference from FinRL_DeepSeek (Table 1: Sharpe/IR metrics for reward design)
+        sharpe_bonus = adjusted_return / max(np.std(self.returns_history + [adjusted_return]), 1e-6) * 10 if len(self.returns_history) > 0 else 0  # Encourage stable positive returns
+        # Reference from FinRL_DeepSeek 5.3 entropy/exploration for balance
+        holding_bonus = max(0, base_return) * 5  # Bonus for positive delta, scaled
+
+        reward = adjusted_return + sharpe_bonus + holding_bonus  # Combined with positives
         if self.config_trading.model == 'CPPO' and len(self.returns_history) > 10:  # Min history for percentile
             sorted_returns = np.sort(self.returns_history)
             var_threshold = np.percentile(sorted_returns, self.alpha * 100)
