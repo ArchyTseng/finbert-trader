@@ -51,15 +51,15 @@ class StockFeatureEngineer:
         
         # NaN handling: ffill first, then fill remaining with mean (or 0 for neutral indicators like MACD)
         for ind in self.indicators:
-            nan_count_before = stock_df[ind].isna().sum()
-            stock_df[ind] = stock_df[ind].fillna(method='ffill')
+            nan_count_before = stock_df[f'{ind}_{symbol}'].isna().sum()
+            stock_df[f'{ind}_{symbol}'] = stock_df[f'{ind}_{symbol}'].fillna(method='ffill')
             if ind in ['macd', 'rsi_30', 'cci_30', 'dx_30']:  # Neutral 0 for momentum
-                stock_df[ind].fillna(0, inplace=True)
+                stock_df[f'{ind}_{symbol}'].fillna(0, inplace=True)
             else:  # Mean for others (e.g., SMA)
-                mean_val = stock_df[ind].mean()
-                stock_df[ind].fillna(mean_val, inplace=True)
-            nan_count_after = stock_df[ind].isna().sum()
+                mean_val = stock_df[f'{ind}_{symbol}'].mean()
+                stock_df[f'{ind}_{symbol}'].fillna(mean_val, inplace=True)
+            nan_count_after = stock_df[f'{ind}_{symbol}'].isna().sum()
             if nan_count_before > nan_count_after:
-                logging.info(f"SF Module - Filled {nan_count_before - nan_count_after} NaNs in {ind}")
+                logging.info(f"SF Module - Filled {nan_count_before - nan_count_after} NaNs in {ind}_{symbol}")
         
         return stock_df
