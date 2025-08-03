@@ -32,7 +32,7 @@ class NewsFeatureEngineer:
         self.model = AutoModelForSequenceClassification.from_pretrained("ProsusAI/finbert")
         self.model.eval()
         self.min_variance = 0.1  # Threshold for acceptable variance
-        self.noise_std_base = 0.2  # Increased base std
+        self.noise_std_base = 0.3  # Increased base std from 0.2 to 0.3 for stronger baseline noise
 
     def clean_news_data(self, news_df):
         """
@@ -127,7 +127,7 @@ class NewsFeatureEngineer:
             noise_std = self.noise_std_base
             if score_var < self.min_variance:
                 logging.warning(f"NF Module - Low sentiment variance ({score_var:.4f}) < {self.min_variance}; amplifying noise")
-                noise_std *= 1.5  # Amplify if below min
+                noise_std *= 2.0  # Stronger amplify from 1.5 to 2.0 for better diversity
             news_df['sentiment_score'] += np.random.normal(0, noise_std, len(news_df))
             final_var = news_df['sentiment_score'].var()
             logging.info(f"NF Module - Sentiment variance after adjustment: {final_var:.4f}")
@@ -193,7 +193,7 @@ class NewsFeatureEngineer:
             noise_std = self.noise_std_base
             if score_var < self.min_variance:
                 logging.warning(f"NF Module - Low risk variance ({score_var:.4f}) < {self.min_variance}; amplifying noise")
-                noise_std *= 1.5
+                noise_std *= 2.0 # Stronger amplify from 1.5 to 2.0 for better diversity
             news_df['risk_score'] += np.random.normal(0, noise_std, len(news_df))
             final_var = news_df['risk_score'].var()
             logging.info(f"NF Module - Risk variance after adjustment: {final_var:.4f}")

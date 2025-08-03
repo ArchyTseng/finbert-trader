@@ -94,7 +94,7 @@ def run_pipeline(custom_setup_config=None, custom_trading_config=None, force_tra
         logging.info(f"Main - Backtest completed, results generated in results_cache")
         
         # Optional: Test StockTradingEnv manually for inspection (multi-stock)
-        test_data = exper_data.get('benchmark', {}).get('test', [])
+        test_data = exper_data.get('PPO', {}).get('test', [])   # Use actual mode like 'PPO' instead of 'benchmark'
         if test_data:
             test_env = StockTradingEnv(trading_config, test_data, mode='test')
             state, _ = test_env.reset()

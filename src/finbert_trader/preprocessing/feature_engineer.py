@@ -14,6 +14,8 @@ import torch
 from sklearn.model_selection import train_test_split, KFold, TimeSeriesSplit
 import logging
 import hashlib
+import os
+import joblib
 
 from finbert_trader.preprocessing.stock_features import StockFeatureEngineer
 from finbert_trader.preprocessing.news_features import NewsFeatureEngineer
@@ -104,7 +106,7 @@ class FeatureEngineer:
 
         return fused_df
 
-    def normalize_features(self, df, fit=False, means_stds=None):
+    def normalize_features(self, df, fit=False, means_stds=None, scaler_path=None):
         """
         Normalize indicators and sentiment_score.
         Updates: Added 'risk_score' to to_normalize.
@@ -127,16 +129,29 @@ class FeatureEngineer:
         logging.info("FE Module - Global NaN filled with 0 before normalization")
 
         if fit:
-            means_stds = {}
-            for col in present_cols:
-                mean = df[col].mean()
-                std = df[col].std()
-                std = max(std, 1e-6)  # Clip std > 1e-6 to prevent NaN
-                means_stds[col] = (mean, std)
-                df[col] = (df[col] - mean) / std if std != 0 else 0
-            logging.info(f"FE Module - Fitted and normalized {len(present_cols)} columns")
+            if scaler_path and os.path.exists(scaler_path):
+                logging.info(f"FE Module - Loading existing scaler from {scaler_path}")
+                means_stds = joblib.load(scaler_path)   # Load scaler
+            else:
+                means_stds = {}
+                for col in present_cols:
+                    mean = df[col].mean()
+                    std = df[col].std()
+                    std = max(std, 1e-6)  # Clip std > 1e-6 to prevent NaN
+                    means_stds[col] = (mean, std)
+                    df[col] = (df[col] - mean) / std if std != 0 else 0
+                if scaler_path:
+                    os.makedirs(os.path.dirname(scaler_path), exist_ok=True)
+                    joblib.dump(means_stds, scaler_path)    # Save scaler
+                    logging.info(f"FE Module - Fitted and saved scaler to {scaler_path}")
             return df, means_stds
         else:
+            if scaler_path and os.path.exists(scaler_path):
+                means_stds = joblib.load(scaler_path)   # Load scaler
+                logging.info(f"FE Module - Loaded scaler from {scaler_path} for transform")
+            if not means_stds:
+                logging.warning("FE Module - No means_stds provided for transform; assuming 0/1")
+                means_stds = {col: (0, 1) for col in present_cols}
             for col in present_cols:
                 mean, std = means_stds.get(col, (0, 1))
                 std = max(std, 1e-6)  # Same clip
@@ -266,7 +281,7 @@ class FeatureEngineer:
 
             original_exper_cols = self.news_engineer.text_cols
             # Determine model_type and news_cols based on group
-            group = next((g for g, modes in self.exper_mode.items() if mode in modes), None)
+            group = next((group for group, modes in self.exper_mode.items() if mode in modes), None)
             if group == 'rl_algorithm':
                 self.news_engineer.text_cols = exper_cols['title_textrank']  # Fix to title_textrank, reference from FinRL_DeepSeek (4.2: stock recommendation prompt)
                 model_type = mode  # PPO, CPPO, etc.
@@ -301,9 +316,10 @@ class FeatureEngineer:
             logging.info(f"FE Module - Split for mode {mode}: train {len(train_df)}, valid {len(valid_df)}, test {len(test_df)}")
 
             # Normalize
-            train_df, means_stds = self.normalize_features(train_df, fit=True)
-            valid_df = self.normalize_features(valid_df, fit=False, means_stds=means_stds)
-            test_df = self.normalize_features(test_df, fit=False, means_stds=means_stds)
+            scaler_path = f"scaler_cache/scaler_train_{group}_{mode}.pkl"   # Dynamic per-group/mode
+            train_df, means_stds = self.normalize_features(train_df, fit=True, scaler_path=scaler_path) # Load cache scaler if existed
+            valid_df = self.normalize_features(valid_df, fit=False, means_stds=means_stds, scaler_path=scaler_path) # Load cache scaler if existed
+            test_df = self.normalize_features(test_df, fit=False, means_stds=means_stds, scaler_path=scaler_path)   # Load cache scaler if existed
 
             # Prepare RL data
             train_rl_data = self.prepare_rl_data(train_df)

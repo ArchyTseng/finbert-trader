@@ -11,7 +11,7 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 from sklearn.preprocessing import StandardScaler
-import joblib
+# import joblib
 import os
 import logging
 import pandas as pd
@@ -28,9 +28,9 @@ class StockTradingEnv(gym.Env):
         self.config_trading = config_trading
         self.rl_data = rl_data
         self.mode = mode
-        self.scaler_dir = config_trading.SCALER_SAVE_DIR
-        self.scaler_path = os.path.join(self.scaler_dir, f"scaler_train_{self.config_trading.model}.pkl")
-        logging.info(f"STE Modul - Scaler path: {self.scaler_path}")
+        # self.scaler_dir = config_trading.SCALER_SAVE_DIR
+        # self.scaler_path = os.path.join(self.scaler_dir, f"scaler_train_{self.config_trading.model}.pkl")
+        # logging.info(f"STE Modul - Scaler path: {self.scaler_path}")
 
         if not self.rl_data:
             raise ValueError("Empty rl_data")
