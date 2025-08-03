@@ -67,7 +67,7 @@ class StockTradingEnv(gym.Env):
         # Multi adjustment: previous_price as array per stock
         self.previous_prices = np.array([state[i * 15 + 3] for i in range(len(self.config_trading.symbols))])  # Replace the entire self.previous_prices line; 15=OHLCV5+ind8+sent1+risk1=15 per symbol, +3 for Adj_Close offset (Open0,High1,Low2,Close3)
 
-        self.portfolio_memory = [self.current_cash + self.current_position * self.previous_price]  # Initialize with initial portfolio, reference from FinRL (asset_memory start with initial_amount)
+        self.portfolio_memory = [self.current_cash + self.current_position * self.previous_prices]  # Initialize with initial portfolio, reference from FinRL (asset_memory start with initial_amount)
         self.action_memory = []  # Reset actions per episode
         self.date_memory = [self.current_window['start_date']]  # Assume 'start_date' in rl_data; adjust if needed
         self.returns_history = []  # For CVaR, reference from FinRL_DeepSeek (4.1.2: trajectory return D)
@@ -164,8 +164,8 @@ class StockTradingEnv(gym.Env):
             logging.warning("STE Modul - Invalid portfolio; return set to 0")
 
         # Add Sharpe-like bonus and holding bonus for positive incentives, reference from FinRL_DeepSeek (Table 1: Sharpe/IR metrics for reward design)
-        sharpe_bonus = adjusted_return / max(np.std(self.returns_history + [adjusted_return]), 1e-6) * 10 if len(self.returns_history) > 0 else 0  # Encourage stable positive returns
-        holding_bonus = max(0, base_return) * 5  # Bonus for positive delta, scaled
+        sharpe_bonus = adjusted_return / max(np.std(self.returns_history + [adjusted_return]), 1e-6) * 50 if len(self.returns_history) > 0 else 0  # Encourage stable positive returns, increased scale from 10 to 50
+        holding_bonus = max(0, base_return) * 20  # Bonus for positive delta, scaled from 5 to 20
 
         reward = adjusted_return + sharpe_bonus + holding_bonus  # Combined with positives
         if self.config_trading.model == 'CPPO' and len(self.returns_history) > 10:  # Min history for percentile

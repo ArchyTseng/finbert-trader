@@ -37,7 +37,7 @@ class RLStrategy(bt.Strategy):
         # Multi-stock: map datas by name=symbol
         self.symbol_datas = {date._name: date for date in self.datas}  # Dict of per-symbol data
         self.num_symbols = len(self.symbol_datas)  # Number of symbols
-        self.positions = np.zeros(self.num_symbols)  # Positions array (updated in trad
+        self.current_positions = np.zeros(self.num_symbols)  # Positions array (updated in next())
 
     def next(self):
         # Multi-stock: collect features per symbol into multi array
@@ -81,8 +81,8 @@ class RLStrategy(bt.Strategy):
         # Flatten window and append positions array + cash
         cash = self.broker.getcash()
         # Update positions from broker (multi-stock: getposition per data)
-        self.positions = np.array([self.getposition(data).size for data in self.symbol_datas.values()])
-        state = np.append(window.flatten(), np.append(self.positions, cash))  # Multi-state: flatten + positions vec + cash
+        self.current_positions = np.array([self.getposition(data).size for data in self.symbol_datas.values()])
+        state = np.append(window.flatten(), np.append(self.current_positions, cash))  # Multi-state: flatten + positions vec + cash
         
         # Predict action vector
         action, _ = self.model.predict(state, deterministic=True)
@@ -100,7 +100,7 @@ class RLStrategy(bt.Strategy):
                 if np.isfinite(cost) and cost <= cash:
                     self.buy(data=data, size=shares_to_buy)  # Buy on specific data
             elif act < 0:
-                shares_to_sell = self.positions[i] * abs(act)
+                shares_to_sell = self.current_positions[i] * abs(act)
                 revenue = shares_to_sell * price * (1 - self.broker.getcommission())
                 if np.isfinite(revenue):
                     self.sell(data=data, size=shares_to_sell)  # Sell on specific data
