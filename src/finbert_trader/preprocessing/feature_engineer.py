@@ -118,7 +118,7 @@ class FeatureEngineer:
         Updates: Added 'risk_score' to to_normalize.
         """
         to_normalize = self.stock_engineer.indicators + ['sentiment_score', 'risk_score']
-        # Explicitly exclude price/volume cols to ensure
+        # Explicitly exclude price/volume cols
         present_cols = [col for col in df.columns if any(ind in col for ind in to_normalize) and not any(price in col.lower() for price in ['open', 'high', 'low', 'close', 'volume'])]
         df = df.set_index('Date') if 'Date' in df.columns else df  # Set Date as index if present
 
