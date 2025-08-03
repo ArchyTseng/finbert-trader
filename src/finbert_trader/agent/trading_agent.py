@@ -208,7 +208,7 @@ class SharpeCallback(BaseCallback):
         return True
 
 class TradingAgent:
-    def __init__(self, config_trading, train_env=None, valid_env=None, model_path='model_cache/rl_model', seed=42):
+    def __init__(self, config_trading, train_env=None, valid_env=None, model_path='model_cache/rl_model', seed=42, symbol=''):
         """
         Initialize with ConfigTrading, train/val envs, model save path, seed, and symbol for uniqueness.
         Input: config_trading (ConfigTrading), train_env (StockTradingEnv), val_env (StockTradingEnv), model_path (str), seed (int), symbol (str).
@@ -223,6 +223,7 @@ class TradingAgent:
         self.base_model_path = model_path   # Unified path without symbol
         self.model_name = config_trading.model
         self.seed = seed
+        self.symbol = symbol  # For uniqueness in model path
         self._set_seeds()  # Set seeds early
         
         # Validate envs if provided

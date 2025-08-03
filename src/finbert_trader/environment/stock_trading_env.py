@@ -65,7 +65,7 @@ class StockTradingEnv(gym.Env):
 
         state = self._get_state()  # Reuse to get initial features
         # Multi adjustment: previous_price as array per stock
-        self.previous_prices = np.array([state[self.lead_col_idx + i * self.features_per_time] for i in range(len(self.config_trading.symbols))])  # Initial prices vector
+        self.previous_prices = np.array([state[i * 15 + 3] for i in range(len(self.config_trading.symbols))])  # Replace the entire self.previous_prices line; 15=OHLCV5+ind8+sent1+risk1=15 per symbol, +3 for Adj_Close offset (Open0,High1,Low2,Close3)
 
         self.portfolio_memory = [self.current_cash + self.current_position * self.previous_price]  # Initialize with initial portfolio, reference from FinRL (asset_memory start with initial_amount)
         self.action_memory = []  # Reset actions per episode
@@ -85,8 +85,11 @@ class StockTradingEnv(gym.Env):
         """
         # Multi adjustment: compute S_f as array per stock, reference from FinRL_DeepSeek (4.2: S_f based on score and action sign)
         num_symbols = len(self.config_trading.symbols)
-        sent_idx = -5 * num_symbols  # Assume sentiment per-stock at state end, adjust index as per state layout
-        sentiment_per_stock = np.array([next_state[sent_idx + i] for i in range(num_symbols)])  # Per-stock sentiments
+        
+        next_state = self._get_state()  # Get current features for this step (single time block); moved to start to define next_state early for extractions below
+        
+        # Extract sentiment from current features (next_state is current time's features); use [i * 15 + 13] since features is single time block of 45 elements
+        sentiment_per_stock = np.array([next_state[i * 15 + 13] for i in range(num_symbols)])  # Moved after next_state definition to avoid NameError; +13 for sentiment_score offset in per-symbol block
 
         S_f = np.ones(num_symbols)  # Initialize array
         for i in range(num_symbols):
@@ -98,9 +101,9 @@ class StockTradingEnv(gym.Env):
         mod_action = S_f * action
         mod_action = np.clip(mod_action, -1, 1)
 
-        next_state = self._get_state()  # Get next features
         # Multi trade loop: current_prices as array, reference from FinRL_DeepSeek (4.3: multi-stock portfolio)
-        current_prices = np.array([float(next_state[self.lead_col_idx + i * self.features_per_time]) for i in range(num_symbols)])  # Per-stock prices array
+        current_prices = np.array([float(next_state[i * 15 + 3]) for i in range(num_symbols)])  # Extract from current features (next_state); 15=features per symbol, +3 for Adj_Close offset
+
         if not np.all(np.isfinite(current_prices)) or np.any(current_prices <= 0):
             logging.warning(f"STE Modul - Invalid prices {current_prices}; using previous_prices")
             current_prices = np.where(np.isfinite(current_prices) & (current_prices > 0), current_prices, self.previous_prices)
@@ -136,8 +139,8 @@ class StockTradingEnv(gym.Env):
         truncated = False
 
         # Similar for R_f array (using risk_per_stock)
-        risk_idx = -3 * num_symbols  # Adjust index
-        risk_per_stock = np.array([next_state[risk_idx + i] for i in range(num_symbols)])
+        risk_per_stock = np.array([next_state[i * 15 + 14] for i in range(num_symbols)])  # Extract from current features (next_state); +14 for risk_score offset (last in block); kept after trade as risk adjusts realized return
+
         R_f_array = np.ones(num_symbols)  # Initialize
         for i in range(num_symbols):
             if risk_per_stock[i] > 0:
@@ -174,7 +177,7 @@ class StockTradingEnv(gym.Env):
                 logging.debug(f"STE Modul - CPPO CVaR penalty applied: {cvar_penalty:.4f}")
 
         self.previous_prices = current_prices
-        next_state = self._get_state()
+        next_state = self._get_state()  # Get next features after step advance; second call to update next_state for return
         info = {'portfolio_value': current_portfolio}
         self.portfolio_memory.append(current_portfolio)  # Append current portfolio, reference from FinRL (env_stocktrading.py: asset_memory append)
         self.action_memory.append(mod_action)  # Append modified action
@@ -205,7 +208,7 @@ class StockTradingEnv(gym.Env):
 
         # Force NaN to 0 in features to prevent propagation (covers all paths)
         features = np.nan_to_num(features, nan=0.0)
-        state = np.append(features, [self.current_position, self.current_cash])
+        state = np.append(features, np.concatenate([self.current_position, [self.current_cash]]))   # Use concatenate to merge position array and cash scalar into uniform array
         state = np.atleast_1d(state)  # Ensure at least 1D if scalar
         logging.debug(f"STE Modul - State shape: {state.shape}")
         return state

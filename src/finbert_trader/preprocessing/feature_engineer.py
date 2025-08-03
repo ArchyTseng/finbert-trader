@@ -96,9 +96,10 @@ class FeatureEngineer:
         fused_df = all_stock_df.sort_values('Date').reset_index(drop=True)  # Ensure order, drop extra index
 
         # reorder columns by field-type across symbols (group by prefix)
-        all_cols = fused_df.columns.tolist()
-        sorted_cols = ['Date'] + sorted([c for c in all_cols if c != 'Date'], key=lambda x: (x.split('_')[0], x))  # Sort by field prefix then full (e.g., Adj_Close_AAPL before Adj_Close_MSFT)
-        fused_df = fused_df[sorted_cols]
+        # Remove the resort-columns lines to keep original order per symbol for merge
+        # all_cols = fused_df.columns.tolist()
+        # sorted_cols = ['Date'] + sorted([c for c in all_cols if c != 'Date'], key=lambda x: (x.split('_')[0], x))  # Sort by field prefix then full (e.g., Adj_Close_AAPL before Adj_Close_MSFT)
+        # fused_df = fused_df[sorted_cols]
         logging.info(f"FE Module - Fused features: {fused_df.shape} rows, with risk_mode={self.risk_mode}")
 
         return fused_df
@@ -159,8 +160,8 @@ class FeatureEngineer:
                 window = np.vstack((pad_array, window))  # Pad 0 rows at start for short window
             window = window.flatten()  # To 1D full len
 
-            target_col_idx = fused_df.columns.get_loc(f'Adj_Close_{self.config.symbols[0]}') if self.config.symbols else 3  # Dynamic index for lead Adj_Close
-            target = fused_df.iloc[i+self.window_size:i+self.window_size+self.prediction_days].values[:, target_col_idx]  # 1D targets from lead column
+            # target_col_idx = fused_df.columns.get_loc(f'Adj_Close_{self.config.symbols[0]}') if self.config.symbols else 3  # Dynamic index for lead Adj_Close
+            target = fused_df.iloc[i+self.window_size:i+self.window_size+self.prediction_days][[f'Adj_Close_{sym}' for sym in self.config.symbols]].values.flatten()
             rl_data.append({'start_date': dates[i], 'states': window, 'targets': target})
         logging.info(f"FE Module - Prepared {len(rl_data)} RL windows")
         return rl_data
