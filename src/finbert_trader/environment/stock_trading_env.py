@@ -164,8 +164,8 @@ class StockTradingEnv(gym.Env):
             logging.warning("STE Modul - Invalid portfolio; return set to 0")
 
         # Add Sharpe-like bonus and holding bonus for positive incentives, reference from FinRL_DeepSeek (Table 1: Sharpe/IR metrics for reward design)
-        sharpe_bonus = adjusted_return / max(np.std(self.returns_history + [adjusted_return]), 1e-6) * 50 if len(self.returns_history) > 0 else 0  # Encourage stable positive returns, increased scale from 10 to 50
-        holding_bonus = max(0, base_return) * 20  # Bonus for positive delta, scaled from 5 to 20
+        sharpe_bonus = adjusted_return / max(np.std(self.returns_history + [adjusted_return]), 1e-6) * 100 if len(self.returns_history) > 0 else 0  # Encourage stable positive returns, increased scale from 10 -> 50 -> 100
+        holding_bonus = max(0, base_return) * 50  # Bonus for positive delta, scaled from 5 -> 20 -> 50
 
         reward = adjusted_return + sharpe_bonus + holding_bonus  # Combined with positives
         if self.config_trading.model == 'CPPO' and len(self.returns_history) > 10:  # Min history for percentile

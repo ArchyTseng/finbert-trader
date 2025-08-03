@@ -96,12 +96,13 @@ class RLStrategy(bt.Strategy):
             price = data.close[0]
             if act > 0:
                 shares_to_buy = (cash * act) / price
-                cost = shares_to_buy * price * (1 + self.broker.getcommission())
+                # Fixes attribute error without altering trade logic.
+                cost = shares_to_buy * price * (1 + self.broker.get_commissioninfo(data).p.commission)  # Use get_commissioninfo(data).p.commission
                 if np.isfinite(cost) and cost <= cash:
                     self.buy(data=data, size=shares_to_buy)  # Buy on specific data
             elif act < 0:
                 shares_to_sell = self.current_positions[i] * abs(act)
-                revenue = shares_to_sell * price * (1 - self.broker.getcommission())
+                revenue = shares_to_sell * price * (1 - self.broker.get_commissioninfo(data).p.commission)  # Use get_commissioninfo(data).p.commission
                 if np.isfinite(revenue):
                     self.sell(data=data, size=shares_to_sell)  # Sell on specific data
         
@@ -352,7 +353,8 @@ class Backtest:
             actions = thestrats[0].actions
             trade_rewards = []
             for i in range(1, len(portfolio_values)):
-                if abs(actions[i-1]) > 0.05:
+                # Fixes ambiguous error without altering logic.
+                if (np.abs(actions[i-1]) > 0.05).any(): # Use .any() for array condition, check if any action > threshold
                     delta = portfolio_values[i] - portfolio_values[i-1]
                     trade_rewards.append(delta)
             portfolio_series = pd.Series(portfolio_values, index=mode_df['Date'])

@@ -97,6 +97,12 @@ class FeatureEngineer:
 
         fused_df = all_stock_df.sort_values('Date').reset_index(drop=True)  # Ensure order, drop extra index
 
+        # Global filter for positive Adj_Close per-symbol after merge (reference FinRL processor_yahoofinance.py)
+        # Ensures prices positive without altering core merge/normalize
+        for symbol in self.config.symbols:
+            fused_df = fused_df[fused_df[f'Adj_Close_{symbol}'] > 0]
+        logging.info(f"FE Module - Filtered fused_df to positive Adj_Close: {fused_df.shape} rows")
+
         # reorder columns by field-type across symbols (group by prefix)
         # Remove the resort-columns lines to keep original order per symbol for merge
         # all_cols = fused_df.columns.tolist()
@@ -112,7 +118,8 @@ class FeatureEngineer:
         Updates: Added 'risk_score' to to_normalize.
         """
         to_normalize = self.stock_engineer.indicators + ['sentiment_score', 'risk_score']
-        present_cols = [col for col in df.columns if any(ind in col for ind in to_normalize)]  # e.g., 'macd_AAPL' contains 'macd'
+        # Explicitly exclude price/volume cols to ensure
+        present_cols = [col for col in df.columns if any(ind in col for ind in to_normalize) and not any(price in col.lower() for price in ['open', 'high', 'low', 'close', 'volume'])]
         df = df.set_index('Date') if 'Date' in df.columns else df  # Set Date as index if present
 
         # Enhanced NaN handling: replace all NaN with 0 globally before normalization
