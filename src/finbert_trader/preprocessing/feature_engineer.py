@@ -58,7 +58,8 @@ class FeatureEngineer:
         for chunk in news_chunks_gen:
             if chunk.empty:
                 continue
-            cleaned_chunk = self.news_engineer.clean_news_data(chunk)
+            cleaned_chunk = self.news_engineer.clean_news_data(chunk)   # Drop useless columns and clean text for each column
+            # filtered_chunk = self.news_engineer.filter_random_news(cleaned_chunk)   # Filter one random news for each symbol per day
             if not cleaned_chunk.empty:
                 processed_chunks.append(cleaned_chunk)
         if processed_chunks:
@@ -66,7 +67,7 @@ class FeatureEngineer:
             logging.info(f"FE Module - Aggregated cleaned news: {len(aggregated_df)} rows")
             return aggregated_df
         logging.info("FE Module - No valid news chunks, returning empty DataFrame")
-        return pd.DataFrame(columns=['Date', 'Symbol', 'Full_Text', 'Article_title', 'Textrank_summary'])
+        return pd.DataFrame(columns=['Date', 'Symbol', 'Article_title', 'Full_Text', 'Lsa_summary', 'Luhn_summary', 'Textrank_summary', 'Lexrank_summary']) # Match original columns in FNSPID dataset
 
     def merge_features(self, stock_data_dict, sentiment_df, risk_df=None):
         """
@@ -243,12 +244,12 @@ class FeatureEngineer:
         score_mean = score_df[col].mean()
         logging.info(f"FE Module - {col} stats for mode {mode}: var={score_var:.4f}, mean={score_mean:.4f}")
         
-        if score_var < 0.05:
+        if score_var < 0.1:    # Raise 0.05 -> 0.1
             logging.warning(f"FE Module - Low var ({score_var:.4f}) for {col} in mode {mode}; adding mode-specific noise")
-            seed = int(hashlib.sha256(mode.encode()).hexdigest(), 16) % (2**32)
+            seed = int(hashlib.sha256(mode.encode()).hexdigest(), 16) % (2**32) # Generate reproducible seed for each mode
             np.random.seed(seed)
-            noise = np.random.normal(0, 0.1, len(score_df))
-            score_df[col] += noise
+            # Keep the score range [1.0, 5.0]
+            score_df[col] = np.clip(score_df[col] + np.random.normal(0, 0.3, len(score_df)), 1.0, 5.0)
             new_var = score_df[col].var()
             logging.info(f"FE Module - Adjusted var for {col} in mode {mode}: {new_var:.4f}")
         
@@ -299,7 +300,7 @@ class FeatureEngineer:
 
             # Compute sentiment
             if group == 'rl_algorithm' or mode != 'benchmark':
-                sentiment_news = self.news_engineer.compute_sentiment(cleaned_news.copy())
+                sentiment_news = self.news_engineer.compute_sentiment_score(cleaned_news.copy())
                 sentiment_news = self._check_and_adjust_sentiment(sentiment_news, mode, col='sentiment_score')
             else:
                 sentiment_news = pd.DataFrame(columns=['Date', 'Symbol', 'sentiment_score'])
@@ -308,7 +309,7 @@ class FeatureEngineer:
             # Compute risk if enabled
             risk_news = None
             if self.risk_mode and (group == 'rl_algorithm' or mode != 'benchmark'):
-                risk_news = self.news_engineer.compute_risk(cleaned_news.copy())
+                risk_news = self.news_engineer.compute_risk_score(cleaned_news.copy())
                 risk_news = self._check_and_adjust_sentiment(risk_news, mode, col='risk_score')
 
             # Merge and split

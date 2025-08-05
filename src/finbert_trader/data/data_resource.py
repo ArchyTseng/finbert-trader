@@ -98,7 +98,7 @@ class DataResource:
                         df.drop('Symbol', axis=1, inplace=True)
                         logging.info(f"DR Module - Dropped 'Symbol' column for {symbol}")
 
-                    df.reset_index(inplace=True)
+                    df.reset_index(inplace=True)    # Set 'Date' as a column instead of index
                     # Ensure Date is datetime64[ns] without tz
                     if df['Date'].dtype != 'datetime64[ns]':
                         df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.tz_localize(None).dt.normalize()
@@ -185,7 +185,7 @@ class DataResource:
                 logging.error("DR Module - Download failed. Aborting load_news_data.")
                 return
 
-        # Init Chunksize and Chunk Reader
+        # Initial Chunksize and Chunk Reader
         chunksize = chunksize or self.config.chunksize
         try:
             chunks = pd.read_csv(

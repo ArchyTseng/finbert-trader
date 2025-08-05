@@ -42,18 +42,23 @@ class NewsFeatureEngineer:
         Logic: Drop irrelevant; rename; clean text; handle NaN.
         """
         try:
-            if 'Unnamed: 0' in news_df.columns:
-                news_df.drop('Unnamed: 0', axis=1, inplace=True)
+            drop_cols = ['Unnamed: 0', 'Url', 'Publisher', 'Author']    # Drop useless columns in FNSPID dataset
+            for col in drop_cols:
+                if col in news_df.columns:
+                    news_df.drop(col, axis=1, inplace=True)
+                    logging.info(f"NF Module - Drop {col} column in news data")
+            logging.info(f"NF Module - Total columns of news_df : {news_df.shape[1]}")
             news_df.rename(columns={'Article': 'Full_Text', 'Stock_symbol': 'Symbol'}, inplace=True)
-            news_df['Date'] = pd.to_datetime(news_df['Date'], errors='coerce')
+            news_df['Date'] = pd.to_datetime(news_df['Date'], errors='coerce').dt.tz_localize(None).dt.normalize()
             news_df.dropna(subset=['Date'], inplace=True)
 
             def clean_text(text):
                 if pd.isnull(text):
                     return ""
-                text = re.sub(r'<[^>]+>', '', text)
-                text = re.sub(r'[^a-zA-Z0-9\s]', '', text)
-                return text.lower()
+                text = re.sub(r'<[^>]+>', '', text) # Remove HTML
+                text = re.sub(r'\s+', ' ', text)     # Normalize whitespace
+                text = re.sub(r'[^a-zA-Z0-9\s]', '', text)  # Remove punctuation 
+                return text.strip().lower() # Trim and lowercase
 
             text_cols = ['Full_Text', 'Article_title', 'Lsa_summary', 'Luhn_summary', 'Textrank_summary', 'Lexrank_summary']
             for col in text_cols:
@@ -67,7 +72,51 @@ class NewsFeatureEngineer:
             logging.error(f"NF Module - Cleaning error in chunk: {e}")
             return pd.DataFrame()
 
-    def compute_sentiment(self, news_df):
+    def filter_random_news(self, news_df):
+        """
+        Filter one random news for each symbol per day.
+        Input: news_df
+        Output: Filtered news_df
+        Logic: Group by 'Date' and 'Symbol', select one random news.
+        """
+        if news_df.empty:
+            logging.warning(f"NF Module - Empty news_df at filtering random news step ")
+        return news_df.groupby(['Date', 'Symbol']).sample(n=1, random_state=42).reset_index(drop=True)
+
+    def sentiment_batch_scores(self, texts, sentiment_mode='sentiment'):
+        inputs = self.tokenizer(texts, padding=True, truncation=True, return_tensors="pt", max_length=512)
+        # Compute without gradient
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+
+        # Map the correct index for positive, negative, neutral
+        id2label = self.model.config.id2label
+        label2id = {v: k for k, v in id2label.items()}
+        pos_idx = label2id['positive']
+        neg_idx = label2id['negative']
+        neu_idx = label2id['neutral']
+
+        probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
+        if sentiment_mode and sentiment_mode == 'sentiment':
+            # Weighted score: pos*5 + neu*3 + neg*1 (continuous in 1-5)
+            scores = probs[:, pos_idx] * 5 + probs[:, neu_idx] * 3 + probs[:, neg_idx] * 1
+        elif sentiment_mode and sentiment_mode == 'risk':
+            # Weighted score: pos*1 + neu*3 + neg*5 (continuous in 1-5)
+            scores = probs[:, pos_idx] * 1 + probs[:, neu_idx] * 3 + probs[:, neg_idx] * 5
+        else:
+            raise ValueError(f"NF Module - Unknown sentiment_mode: {sentiment_mode}")
+        
+        # Perturbation: 0.9-1.1
+        perturbation = torch.FloatTensor(np.random.uniform(0.9, 1.1, scores.shape)).to(scores.device)
+        scores = scores * perturbation
+
+        # Clamp to [1, 5] range
+        scores = torch.clamp(scores, min=1.0, max=5.0)
+
+        return scores.cpu().numpy()
+    
+
+    def compute_sentiment_score(self, news_df):
         """
         Compute weighted sentiment scores per chunk.
         Input: cleaned news_df
@@ -89,6 +138,7 @@ class NewsFeatureEngineer:
         else:
             avail_cols = self.text_cols
         
+        # Combine content in self.text_cols , default : Article_Title and Textrank_summary
         news_df['combined_text'] = news_df[avail_cols].apply(lambda row: ' '.join(row).strip(), axis=1)
         news_df = news_df[news_df['combined_text'] != '']
 
@@ -96,20 +146,12 @@ class NewsFeatureEngineer:
             logging.info("NF Module - No non-empty text after combining, returning DataFrame with 'Date', 'Symbol', 'sentiment_score'")
             return pd.DataFrame(columns=['Date', 'Symbol', 'sentiment_score'])
         
-        def sentiment_batch(texts):
-            inputs = self.tokenizer(texts, padding=True, truncation=True, return_tensors="pt", max_length=512)
-            with torch.no_grad():
-                outputs = self.model(**inputs)
-            probs = torch.nn.functional.softmax(outputs.logits, dim=-1)  # [pos, neg, neutral]
-            # Weighted score: pos*5 + neu*3 + neg*1 (continuous in 1-5)
-            scores = probs[:, 0] * 5 + probs[:, 2] * 3 + probs[:, 1] * 1
-            return scores.numpy()
-        
+        # Calculate sentiment/risk score
         sentiment_scores = []
         for i in range(0, len(news_df), self.batch_size):
             batch_texts = news_df['combined_text'].iloc[i:i+self.batch_size].tolist()
-            batch_scores = sentiment_batch(batch_texts)
-            sentiment_scores.extend(batch_scores)
+            batch_scores = self.sentiment_batch_scores(batch_texts, 'sentiment')
+            sentiment_scores.extend(batch_scores)   # Add each element in to target list
         
         news_df['sentiment_score'] = sentiment_scores
 
@@ -128,15 +170,17 @@ class NewsFeatureEngineer:
             if score_var < self.min_variance:
                 logging.warning(f"NF Module - Low sentiment variance ({score_var:.4f}) < {self.min_variance}; amplifying noise")
                 noise_std *= 2.0  # Stronger amplify from 1.5 to 2.0 for better diversity
-            news_df['sentiment_score'] += np.random.normal(0, noise_std, len(news_df))
+            # Keep the score range [1.0 , 5.0]
+            news_df['sentiment_score'] = np.clip(news_df['sentiment_score'] + np.random.normal(0, noise_std, len(news_df)),
+                                                 1.0, 5.0)
             final_var = news_df['sentiment_score'].var()
             logging.info(f"NF Module - Sentiment variance after adjustment: {final_var:.4f}")
         
         return news_df
 
-    def compute_risk(self, news_df):
+    def compute_risk_score(self, news_df):
         """
-        Compute weighted risk scores per chunk, similar to sentiment but using risk_prompt.
+        Compute weighted risk scores per chunk, similar to sentiment.
         Input: cleaned news_df
         Output: news_df with 'risk_score' (float 1-5 range).
         Logic: Same as sentiment but interpret probs as low-risk (pos->1), moderate (neu->3), high-risk (neg->5); aggregate mean, reference from FinRL_DeepSeek (3: Risk Prompt, weighted as pos*1 + neu*3 + neg*5 for inversion).
@@ -162,19 +206,10 @@ class NewsFeatureEngineer:
             logging.info("NF Module - No non-empty text after combining, returning DataFrame with 'Date', 'Symbol', 'risk_score'")
             return pd.DataFrame(columns=['Date', 'Symbol', 'risk_score'])
         
-        def risk_batch(texts):
-            inputs = self.tokenizer(texts, padding=True, truncation=True, return_tensors="pt", max_length=512)
-            with torch.no_grad():
-                outputs = self.model(**inputs)
-            probs = torch.nn.functional.softmax(outputs.logits, dim=-1)  # [pos, neg, neutral]
-            # Weighted risk: low low-risk (pos*1) + moderate (neu*3) + high-risk (neg*5)
-            scores = probs[:, 0] * 1 + probs[:, 2] * 3 + probs[:, 1] * 5  # Inverted from sentiment for risk
-            return scores.numpy()
-        
         risk_scores = []
         for i in range(0, len(news_df), self.batch_size):
             batch_texts = news_df['combined_text'].iloc[i:i+self.batch_size].tolist()
-            batch_scores = risk_batch(batch_texts)
+            batch_scores = self.sentiment_batch_scores(batch_texts, sentiment_mode='risk')
             risk_scores.extend(batch_scores)
         
         news_df['risk_score'] = risk_scores
@@ -186,7 +221,7 @@ class NewsFeatureEngineer:
 
         # Aggregate mean risk per Date/Symbol
         news_df = news_df.groupby(['Date', 'Symbol'])['risk_score'].mean().reset_index()
-        logging.info(f"NF Module - Computed weighted risk for chunk using cols: {avail_cols} and prompt: {self.risk_prompt[:50]}...")
+        logging.info(f"NF Module - Computed weighted risk for chunk using cols: {avail_cols}")
 
         if not news_df.empty:
             score_var = news_df['risk_score'].var()

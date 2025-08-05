@@ -51,7 +51,6 @@ class ConfigSetup:
         self.k_folds = None  # If >1, enable cross-val
         self.split_mode = 'date'  # 'date' (default) or 'ratio' for fallback
         self.cross_valid_mode = 'time_series'  # 'time_series' (default for TimeSeriesSplit) or 'kfold'
-        self.risk_prompt = "You are a financial expert specializing in risk assessment for stock recommendations. Based on a specific stock, provide a risk score from 1 to 5, where: 1 indicates very low risk, 2 indicates low risk, 3 indicates moderate risk (default if the news lacks any clear indication of risk), 4 indicates high risk, and 5 indicates very high risk."  # Reference from FinRL_DeepSeek (3: Risk Assessment Prompt)
         self.risk_mode = True  # Enable risk assessment prompt, reference from FinRL_DeepSeek (3: Risk Prompt)
 
         # Date params reference from FinRL
@@ -106,8 +105,14 @@ class ConfigSetup:
         
         # Validate date sequence
         try:
-            dates = [self.start, self.end, self.train_start_date, self.train_end_date,
-                     self.valid_start_date, self.valid_end_date, self.test_start_date, self.test_end_date]
+            dates = [self.start,
+                     self.end,
+                     self.train_start_date,
+                     self.train_end_date,
+                     self.valid_start_date,
+                     self.valid_end_date,
+                     self.test_start_date,
+                     self.test_end_date]
             parsed = [datetime.strptime(date, '%Y-%m-%d') for date in dates]
             if not (parsed[0] <= parsed[2] <= parsed[3] <= parsed[4] <= parsed[5] <= parsed[6] <= parsed[7] <= parsed[1]):
                 raise ValueError("Date sequence invalid: global start <= train <= valid <= test <= global end")
@@ -152,7 +157,6 @@ class ConfigSetup:
             'valid_end_date': '2022-12-31',
             'test_start_date': '2023-01-01',
             'test_end_date': '2023-12-31',
-            'risk_prompt': "You are a financial expert specializing in risk assessment for stock recommendations. Based on a specific stock, provide a risk score from 1 to 5, where: 1 indicates very low risk, 2 indicates low risk, 3 indicates moderate risk (default if the news lacks any clear indication of risk), 4 indicates high risk, and 5 indicates very high risk.",
             'risk_mode': True,
             'exper_mode': {
                 'indicator/news': ['benchmark',
