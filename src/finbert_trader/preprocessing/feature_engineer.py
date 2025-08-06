@@ -667,7 +667,41 @@ class FeatureEngineer:
         except Exception as e:
             logging.warning(f"FE Module - Load exper_data_dict failed: {e}")
         return exper_data_dict
+    
+    def _update_feature_dim_per_stock(self, fused_df):
+        """
+        Introduction
+        ------------
+        Update the feature_dim_per_stock in config based on columns in the fused DataFrame.
+        Computes average dimension per stock by filtering symbol-suffixed columns; ensures consistency across symbols.
 
+        Parameters
+        ----------
+        fused_df : pd.DataFrame
+            Fused DataFrame with symbol-suffixed columns (e.g., 'macd_AAPL').
+
+        Notes
+        -----
+        - Requires config.symbols; raises ValueError if empty or dims inconsistent.
+        - Calculates per-stock cols ending with '_{symbol}'; averages for symmetric assumption.
+        - Fallback to 0 if no columns; logs final dim for verification.
+        """
+        if not self.config.symbols:
+            raise ValueError("FE Module - No symbols defined; cannot compute feature_dim_per_stock")  # Ensure symbols exist to avoid invalid computation
+        
+        per_stock_cols = []  # List to store column counts per symbol
+        for symbol in self.config.symbols:
+            # Filter and count columns specific to each symbol
+            symbol_cols = [col for col in fused_df.columns if col.endswith(f"_{symbol}")]  # Filter cols ending with _sym, e.g., 'macd_AAPL'
+            per_stock_cols.append(len(symbol_cols))  # Append count for this symbol
+        if per_stock_cols:
+            if len(set(per_stock_cols)) != 1:  # Check if all per-stock dims are equal to ensure symmetry
+                raise ValueError(f"FE Module - Inconsistent feature dims per stock: {per_stock_cols}; expected equal for all symbols")  # Raise on inconsistency
+            self.config.feature_dim_per_stock = int(sum(per_stock_cols) / len(per_stock_cols))  # Average per-stock dim (assume symmetric across symbols)
+        else:
+            self.config.feature_dim_per_stock = 0  # Fallback if no cols found (e.g., empty fused_df)
+        logging.info(f"FE Module - Stored feature_dim_per_stock dynamically: {self.config.feature_dim_per_stock}")  # Log updated dim for debugging and confirmation
+    
     def generate_experiment_data(self, stock_data_dict, news_chunks_gen, exper_mode=None, single_mode=None):
         """
         Introduction
@@ -822,6 +856,9 @@ class FeatureEngineer:
                 logging.info(f"FE Module - Generated data for mode {mode}: train {len(split_dict['train'])}, valid {len(split_dict['valid'])}, test {len(split_dict['test'])}")
 
                 self.news_engineer.text_cols = original_exper_news_cols # Restore original text columns after mode processing
+
+            # Update feature dim per stock for Stock Trading Environment
+            self._update_feature_dim_per_stock(fused_df)
 
             # Release FinBERT resources
             if hasattr(self.news_engineer, 'model') and self.news_engineer.model is not None:

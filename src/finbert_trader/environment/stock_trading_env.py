@@ -27,8 +27,8 @@ class StockTradingEnv(gym.Env):
         # Initial config and Data
         self.config_trading = config_trading
         self.rl_data = rl_data.copy()
-        #
-        self.mode = env_type
+        
+        self.env_type = env_type
 
 
         if not self.rl_data:
@@ -133,7 +133,7 @@ class StockTradingEnv(gym.Env):
 
         # Advance step
         self.current_step += 1
-        max_steps = self.config_trading.window_size if self.mode in ['train', 'valid'] else len(self.current_window['states']) - 1
+        max_steps = self.config_trading.window_size if self.env_type in ['train', 'valid'] else len(self.current_window['states']) - 1
         terminated = self.current_step >= max_steps
         truncated = False
 

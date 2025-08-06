@@ -88,14 +88,14 @@ class ConfigTrading:
         self.initial_cash = 100000
         self.transaction_cost = 0.001
         self.reward_scale = 1e-4
-        self.action_space = 1
         self.risk_aversion = 0.0
         self.commission_rate = 0.0005
         self.slippage = 0.001
         self.total_timesteps = 2e6  # Increased to 2M for stability, reference from FinRL_DeepSeek (5.2: 2M steps for convergence)
         self.infusion_strength = 0.001  # Default 0.1% for subtle injection, tunable 0.001-0.1, reference from FinRL_DeepSeek (5.3: 0.1% vs 10%)
         self.risk_mode = True  # Enable risk assessment prompt, reference from FinRL_DeepSeek (3: Risk Prompt)
-        
+        self.turbulence_threshold = None
+
         # Set model and load params
         self.model = model
         if self.model not in self.SUPPORTED_MODELS:
@@ -106,7 +106,7 @@ class ConfigTrading:
 
         # Inherit from upstream_config if provided (linkage)
         if upstream_config:
-            shared_params = ['symbols', 'indicators', 'sentiment_keys', 'features_dim_per_stock', 'window_size', 'prediction_days', 'split_ratio', 'k_folds', 'batch_size', 'exper_mode']
+            shared_params = ['symbols', 'indicators', 'sentiment_keys', 'feature_dim_per_stock', 'window_size', 'prediction_days', 'split_ratio', 'k_folds', 'batch_size', 'exper_mode']
             for param in shared_params:
                 if hasattr(upstream_config, param):
                     setattr(self, param, getattr(upstream_config, param))

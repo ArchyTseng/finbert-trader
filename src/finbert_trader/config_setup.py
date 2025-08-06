@@ -62,7 +62,7 @@ class ConfigSetup:
             f"close_{self.timeperiods * 2}_sma"
         ]  # Reference from FinRL; dynamic indicators with timeperiods
         self.sentiment_keys = ['sentiment_score', 'risk_score']  # Keys for sentiment/risk features
-        self.features_dim_per_stock = 5 + len(self.indicators) + len(self.sentiment_keys)   # 5: Open, High, Low, Close, Volume; compute total features per stock
+        self.feature_dim_per_stock = 0   # Expected: OHLCV + indicators + sentiment + risk; compute total features per stock in FeatureEngineer Module
         self.decay_lambda = 0.03  # From FNSPID paper; for potential decay in scoring
         self.window_size = 50  # For RL windows; observation history length
         self.prediction_days = 1  # For Short-term trading strategy; future days to predict
