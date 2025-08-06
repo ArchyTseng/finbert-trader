@@ -86,8 +86,8 @@ def run_pipeline(custom_setup_config=None, custom_trading_config=None):
         logging.info(f"Trading configuration initialized with initial_cash: {trading_config.initial_cash}")
         
         # Step 6: Setup train and valid envs
-        train_env = StockTradingEnv(trading_config, train_data, mode='train')
-        valid_env = StockTradingEnv(trading_config, valid_data, mode='valid')
+        train_env = StockTradingEnv(trading_config, train_data, env_type='train')
+        valid_env = StockTradingEnv(trading_config, valid_data, env_type='valid')
         logging.info(f"Train Env initialized with state_dim: {train_env.state_dim}")
         logging.info(f"Val Env initialized with state_dim: {valid_env.state_dim}")
         

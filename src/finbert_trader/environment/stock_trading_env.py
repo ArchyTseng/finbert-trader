@@ -10,27 +10,26 @@
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+import pandas as pd
 from sklearn.preprocessing import StandardScaler
 # import joblib
 import os
 import logging
-import pandas as pd
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class StockTradingEnv(gym.Env):
-    def __init__(self, config_trading, rl_data, mode='train'):
+    def __init__(self, config_trading, rl_data, env_type='train'):
         """
         Initialize with ConfigTrading and rl_data.
-        Updates: state_dim +1 for risk_score (feature_dim +3: position, cash, extra? No, +2 original +1 risk -> +3 total? Wait, original feature_dim includes sentiment, now +risk, so adjust to feature_dim +2 (position,cash), but if risk added, feature_dim increases.
         """
         super(StockTradingEnv, self).__init__()
+        # Initial config and Data
         self.config_trading = config_trading
-        self.rl_data = rl_data
-        self.mode = mode
-        # self.scaler_dir = config_trading.SCALER_SAVE_DIR
-        # self.scaler_path = os.path.join(self.scaler_dir, f"scaler_train_{self.config_trading.model}.pkl")
-        # logging.info(f"STE Modul - Scaler path: {self.scaler_path}")
+        self.rl_data = rl_data.copy()
+        #
+        self.mode = env_type
+
 
         if not self.rl_data:
             raise ValueError("Empty rl_data")

@@ -96,7 +96,7 @@ def run_pipeline(custom_setup_config=None, custom_trading_config=None, force_tra
         # Optional: Test StockTradingEnv manually for inspection (multi-stock)
         test_data = exper_data_dict.get('PPO', {}).get('test', [])   # Use actual mode like 'PPO' instead of 'benchmark'
         if test_data:
-            test_env = StockTradingEnv(trading_config, test_data, mode='test')
+            test_env = StockTradingEnv(trading_config, test_data, env_type='test')
             state, _ = test_env.reset()
             action = np.array([0.5] * len(trading_config.symbols))  # Simulate partial buy
             next_state, reward, terminated, truncated, info = test_env.step(action)

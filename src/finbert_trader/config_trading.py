@@ -87,7 +87,9 @@ class ConfigTrading:
         # Default trading params (non-model specific)
         self.initial_cash = 100000
         self.transaction_cost = 0.001
-        self.reward_scale = 100
+        self.reward_scale = 1e-4
+        self.action_space = 1
+        self.risk_aversion = 0.0
         self.commission_rate = 0.0005
         self.slippage = 0.001
         self.total_timesteps = 2e6  # Increased to 2M for stability, reference from FinRL_DeepSeek (5.2: 2M steps for convergence)
@@ -104,7 +106,7 @@ class ConfigTrading:
 
         # Inherit from upstream_config if provided (linkage)
         if upstream_config:
-            shared_params = ['symbols', 'window_size', 'prediction_days', 'split_ratio', 'k_folds', 'batch_size', 'exper_mode']
+            shared_params = ['symbols', 'indicators', 'sentiment_keys', 'features_dim_per_stock', 'window_size', 'prediction_days', 'split_ratio', 'k_folds', 'batch_size', 'exper_mode']
             for param in shared_params:
                 if hasattr(upstream_config, param):
                     setattr(self, param, getattr(upstream_config, param))
@@ -149,7 +151,9 @@ class ConfigTrading:
         defaults = {
             'initial_cash': 100000,
             'transaction_cost': 0.001,
-            'reward_scale': 1.0,
+            'reward_scale': 1e-4,
+            'action_space': 1,
+            'risk_aversion': 0.0,
             'commission_rate': 0.0005,
             'slippage': 0.001,
             'total_timesteps': 2000000,

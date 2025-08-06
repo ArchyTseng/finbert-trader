@@ -86,7 +86,7 @@ def run_pipeline(custom_setup_config=None, custom_trading_config=None):
         logging.info("Trading configuration initialized with initial_cash: {}".format(trading_config.initial_cash))
         
         # Step 6: Setup StockTradingEnv with train rl_data and trading config
-        env = StockTradingEnv(trading_config, train_data, mode='train')  # Pass list of rl_data dicts
+        env = StockTradingEnv(trading_config, train_data, env_type='train')  # Pass list of rl_data dicts
         logging.info("StockTradingEnv initialized with state_dim: {}".format(env.state_dim))
         
         # Step 7: Simulate Env interaction for test (reset and one step)

@@ -401,8 +401,8 @@ class TradingAgent:
             else:
                 logging.info(f"TA Module - Training for mode {mode} (force_train: {force_train}) for {self.symbol}")
 
-            train_env = StockTradingEnv(self.config_trading, train_rl_data, mode='train')
-            valid_env = StockTradingEnv(self.config_trading, valid_rl_data, mode='valid')
+            train_env = StockTradingEnv(self.config_trading, train_rl_data, env_type='train')
+            valid_env = StockTradingEnv(self.config_trading, valid_rl_data, env_type='valid')
 
             self.train_env = train_env
             self.valid_env = valid_env
@@ -460,7 +460,7 @@ class TradingAgent:
         Updates: Added CVaR computation in logs_df if CPPO.
         """
         self.load(model_path=model_path, model_type=model_type)
-        test_env = StockTradingEnv(self.config_trading, test_rl_data, mode=mode)
+        test_env = StockTradingEnv(self.config_trading, test_rl_data, env_type=mode)
         logs = []
         obs, _ = test_env.reset()
         done = False

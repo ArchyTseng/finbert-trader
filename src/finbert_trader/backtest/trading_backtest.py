@@ -162,7 +162,7 @@ class Backtest:
         # Dummy env for model loading (required for TD3/DDPG/SAC _setup_model)
         # Use StockTradingEnv with minimal rl_data to match spaces
         dummy_rl_data = [{'states': [[0.0] * 15], 'start_date': '2000-01-01'}]  # 15 features: OHLCV+8 ind+sentiment+risk
-        self.dummy_env = StockTradingEnv(self.config_trade, dummy_rl_data, mode='test')
+        self.dummy_env = StockTradingEnv(self.config_trade, dummy_rl_data, env_type='test')
         logging.info(f"TB Module - Initialized dummy_env with observation_space: {self.dummy_env.observation_space}, action_space: {self.dummy_env.action_space}")
 
         if not isinstance(self.exper_data, dict) or not isinstance(self.fused_dfs, dict):
@@ -278,7 +278,7 @@ class Backtest:
         model = model_class.load(model_path, env=self.dummy_env)  # Use dummy_env for load
 
         # Create test env from rl_data
-        test_env = StockTradingEnv(self.config_trade, test_rl_data, mode='test')  # Use 'backtest' mode for full run
+        test_env = StockTradingEnv(self.config_trade, test_rl_data, env_type='test')  # Use 'backtest' mode for full run
 
         obs, _ = test_env.reset()
         done = False

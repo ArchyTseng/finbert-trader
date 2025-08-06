@@ -16,27 +16,41 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 class ConfigSetup:
     # Config directories, from FinRL reference
     DATA_SAVE_DIR = 'data_cache'
+    EXPER_DATA_DIR = 'exper_cache'
     LOG_SAVE_DIR = 'logs'
 
     def __init__(self, custom_config=None):
         """
-        Initialize with optional custom_config dict to override defaults.
-        Input: custom_config (dict, optional)
-        Output: Self with attributes set.
-        Logic: Set defaults; update from custom; validate dates and symbols.
-        Extensibility: Added 'rl_algorithm' in exper_mode for RL comparison; can extend with new groups.
-        Updates: Added 'CPPO' to rl_algorithm for risk-sensitive comparison, reference from FinRL_DeepSeek (4.3: LLM-infused CPPO); added risk_prompt string for news_features, reference from FinRL_DeepSeek (3: Risk Prompt).
+        Introduction
+        ------------
+        Initialize ConfigSetup with default parameters and optional overrides from custom_config.
+        Sets up symbols, dates, indicators, experiment modes, and other RL pipeline configs.
+        Validates dates, symbols, and parameters; computes derived values like features_dim_per_stock.
+
+        Parameters
+        ----------
+        custom_config : dict, optional
+            Dictionary to override default attributes (e.g., {'symbols': ['GOOG']}).
+
+        Notes
+        -----
+        - Defaults centralized for easy maintenance; overrides logged for traceability.
+        - Derived: timeperiods from ind_mode, indicators with dynamic tp, features_dim_per_stock.
+        - exper_mode groups for multi-experiments; added 'rl_algorithm' with 'CPPO' for risk-sensitive RL (ref: FinRL_DeepSeek 4.3).
+        - For split_mode='ratio', computes fallback dates based on global start/end.
+        - Validates date sequence, chunksize, split_ratio, symbols; raises ValueError on issues.
+        - risk_mode enables risk_prompt (ref: FinRL_DeepSeek 3).
         """
         # Default values centralized here
         self.symbols = ['AAPL']  # Example S&P500 symbols; extensible list
-        self.start = '2000-01-01'   # Global fallback start
-        self.end = '2023-12-31'    # Global fallback end
-        self.chunksize = 100000  # For large data loading
+        self.start = '2000-01-01'   # Global fallback start for overall data range
+        self.end = '2023-12-31'    # Global fallback end for overall data range
+        self.chunksize = 100000  # For large data loading to manage memory in chunk processing
         self.indicators_mode = {'short': 10,
                                 'middle': 20,
-                                'long': 30}
-        self.ind_mode = 'short'
-        self.timeperiods = self.indicators_mode.get(self.ind_mode, 10)  # Default as short mode
+                                'long': 30}  # Mapping of indicator modes to timeperiods
+        self.ind_mode = 'short'  # Default indicator mode
+        self.timeperiods = self.indicators_mode.get(self.ind_mode, 10)  # Default as short mode; retrieve timeperiod
         self.indicators = [
             "macd",
             "boll_ub",
@@ -46,72 +60,78 @@ class ConfigSetup:
             f"dx_{self.timeperiods}",
             f"close_{self.timeperiods}_sma",
             f"close_{self.timeperiods * 2}_sma"
-        ]  # Reference from FinRL
-        self.decay_lambda = 0.03  # From FNSPID paper
-        self.window_size = 50  # For RL windows
-        self.prediction_days = 1  # For Short-term trading strategy
-        self.batch_size = 32  # For FinBERT inference
-        self.text_cols = ['Article_title', 'Textrank_summary']  # Default scheme from FNSPID
-        self.split_ratio = 0.8  # For train/val split
-        self.k_folds = None  # If >1, enable cross-val
-        self.split_mode = 'date'  # 'date' (default) or 'ratio' for fallback
+        ]  # Reference from FinRL; dynamic indicators with timeperiods
+        self.sentiment_keys = ['sentiment_score', 'risk_score']  # Keys for sentiment/risk features
+        self.features_dim_per_stock = 5 + len(self.indicators) + len(self.sentiment_keys)   # 5: Open, High, Low, Close, Volume; compute total features per stock
+        self.decay_lambda = 0.03  # From FNSPID paper; for potential decay in scoring
+        self.window_size = 50  # For RL windows; observation history length
+        self.prediction_days = 1  # For Short-term trading strategy; future days to predict
+        self.batch_size = 32  # For FinBERT inference; balance memory and speed
+        self.text_cols = ['Article_title', 'Textrank_summary']  # Default scheme from FNSPID; text fields for sentiment
+        self.split_ratio = 0.8  # For train/val split if split_mode='ratio'
+        self.k_folds = None  # If >1, enable cross-val on train data
+        self.split_mode = 'date'  # 'date' (default) or 'ratio' for fallback splitting
         self.cross_valid_mode = 'time_series'  # 'time_series' (default for TimeSeriesSplit) or 'kfold'
         self.risk_mode = True  # Enable risk assessment prompt, reference from FinRL_DeepSeek (3: Risk Prompt)
 
         # Date params reference from FinRL
-        self.train_start_date = '2010-01-01'
-        self.train_end_date = '2021-12-31'
-        self.valid_start_date = '2022-01-01'
-        self.valid_end_date = '2022-12-31'
-        self.test_start_date = '2023-01-01'
-        self.test_end_date = '2023-12-31'
+        self.train_start_date = '2010-01-01'  # Train period start
+        self.train_end_date = '2021-12-31'  # Train period end
+        self.valid_start_date = '2022-01-01'  # Validation period start
+        self.valid_end_date = '2022-12-31'  # Validation period end
+        self.test_start_date = '2023-01-01'  # Test period start
+        self.test_end_date = '2023-12-31'  # Test period end
 
         # Config exper_mode for multi-mode experiments
         self.exper_mode = {
             'indicator/news': ['benchmark',
                                'title_only',
                                'title_textrank',
-                               'title_fulltext'],
+                               'title_fulltext'],  # Groups for indicator/news experiments
             'rl_algorithm': ['PPO',
                              'CPPO',
-                             'A2C']  # Added 'CPPO' for comparison, reference from FinRL_DeepSeek
+                             'A2C']  # Added 'CPPO' for comparison, reference from FinRL_DeepSeek; RL algorithm groups
         }
 
         # Override with custom_config
         if custom_config:
+            # Apply overrides from dict for flexibility
             for key, value in custom_config.items():
                 if hasattr(self, key):
-                    setattr(self, key, value)
-                    logging.info(f"CS Module - Overrode config: {key} = {value}")
+                    setattr(self, key, value)  # Set attribute if exists
+                    logging.info(f"CS Module - Overrode config: {key} = {value}")  # Log override for auditing
                 else:
-                    logging.warning(f"CS Module - Ignored unknown config key: {key}")
+                    logging.warning(f"CS Module - Ignored unknown config key: {key}")  # Warn on unknown keys
 
         # Fallback for train/valid/test dates if split_mode is 'ratio'
         if self.split_mode == 'ratio':
-            start_date = datetime.strptime(self.start, '%Y-%m-%d')
-            end_date = datetime.strptime(self.end, '%Y-%m-%d')
-            total_days = (end_date - start_date).days
+            # Compute dates based on ratio for non-date splitting
+            start_date = datetime.strptime(self.start, '%Y-%m-%d')  # Parse global start
+            end_date = datetime.strptime(self.end, '%Y-%m-%d')  # Parse global end
+            total_days = (end_date - start_date).days  # Calculate total days
             if total_days <= 0:
-                raise ValueError("End date must be after start date")
-            train_days = max(int(total_days * self.split_ratio), 1)
-            valid_days = max(int(total_days * 0.1), 1)
-            test_days = total_days - train_days - valid_days
+                raise ValueError("End date must be after start date")  # Validate range
+            train_days = max(int(total_days * self.split_ratio), 1)  # Ensure at least 1 day for train
+            valid_days = max(int(total_days * 0.1), 1)  # 10% for valid, min 1
+            test_days = total_days - train_days - valid_days  # Remaining for test
             if test_days < 0:
+                # Adjust if test negative
                 logging.warning("CS Module - Test days <= 0, adjusting valid_days")
                 valid_days = total_days - train_days - 1
-                test_days = 1
-            self.train_end_date = (start_date + datetime.timedelta(days=train_days)).strftime('%Y-%m-%d')
-            self.valid_start_date = self.train_end_date
-            self.valid_end_date = (start_date + datetime.timedelta(days=train_days + valid_days)).strftime('%Y-%m-%d')
-            self.test_start_date = self.valid_end_date
-            self.test_end_date = self.end
-            logging.info(f"CS Module - Fallback dates set: train {self.train_start_date} to {self.train_end_date}, valid {self.valid_start_date} to {self.valid_end_date}, test {self.test_start_date} to {self.test_end_date}")
+                test_days = 1  # Min 1 for test
+            self.train_end_date = (start_date + datetime.timedelta(days=train_days)).strftime('%Y-%m-%d')  # Set train end
+            self.valid_start_date = self.train_end_date  # Valid starts after train
+            self.valid_end_date = (start_date + datetime.timedelta(days=train_days + valid_days)).strftime('%Y-%m-%d')  # Set valid end
+            self.test_start_date = self.valid_end_date  # Test starts after valid
+            self.test_end_date = self.end  # Test ends at global end
+            logging.info(f"CS Module - Fallback dates set: train {self.train_start_date} to {self.train_end_date}, valid {self.valid_start_date} to {self.valid_end_date}, test {self.test_start_date} to {self.test_end_date}")  # Log computed dates
 
         # Basic validation
         if not isinstance(self.chunksize, int) or self.chunksize <= 0:
-            raise ValueError("chunksize must be positive integer")
+            raise ValueError("chunksize must be positive integer")  # Validate chunksize
+        
         if self.split_ratio <= 0 or self.split_ratio >= 1:
-            raise ValueError("split_ratio must be between 0 and 1")
+            raise ValueError("split_ratio must be between 0 and 1")  # Validate split_ratio
         
         # Validate date sequence
         try:
@@ -122,17 +142,17 @@ class ConfigSetup:
                      self.valid_start_date,
                      self.valid_end_date,
                      self.test_start_date,
-                     self.test_end_date]
-            parsed = [datetime.strptime(date, '%Y-%m-%d') for date in dates]
+                     self.test_end_date]  # Collect all dates for sequence check
+            parsed = [datetime.strptime(date, '%Y-%m-%d') for date in dates]  # Parse to datetime
             if not (parsed[0] <= parsed[2] <= parsed[3] <= parsed[4] <= parsed[5] <= parsed[6] <= parsed[7] <= parsed[1]):
-                raise ValueError("Date sequence invalid: global start <= train <= valid <= test <= global end")
+                raise ValueError("Date sequence invalid: global start <= train <= valid <= test <= global end")  # Ensure logical order
         except Exception as e:
-            logging.error(f"CS Module - Invalid date format: {e}")
-            raise ValueError("Dates must be in 'YYYY-MM-DD' format")
+            logging.error(f"CS Module - Invalid date format: {e}")  # Log parsing errors
+            raise ValueError("Dates must be in 'YYYY-MM-DD' format")  # Raise on format issues
 
         # Validate symbols
         if not isinstance(self.symbols, list) or not self.symbols:
-            raise ValueError("symbols must be a non-empty list")
+            raise ValueError("symbols must be a non-empty list")  # Ensure symbols valid
 
     @staticmethod
     def get_defaults():
@@ -144,6 +164,11 @@ class ConfigSetup:
             'start': '2010-01-01',
             'end': '2023-12-31',
             'chunksize': 100000,
+            'indicators_mode': {'short': 10,
+                                'middle': 20,
+                                'long': 30},
+            'ind_mode': 'short',
+            'timeperiods': 10,
             'indicators': ["macd",
                            "boll_ub",
                            "boll_lb",
