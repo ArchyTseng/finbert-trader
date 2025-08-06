@@ -32,19 +32,24 @@ class ConfigSetup:
         self.start = '2000-01-01'   # Global fallback start
         self.end = '2023-12-31'    # Global fallback end
         self.chunksize = 100000  # For large data loading
+        self.indicators_mode = {'short': 10,
+                                'middle': 20,
+                                'long': 30}
+        self.ind_mode = 'short'
+        self.timeperiods = self.indicators_mode.get(self.ind_mode, 10)  # Default as short mode
         self.indicators = [
             "macd",
             "boll_ub",
             "boll_lb",
-            "rsi_30",
-            "cci_30",
-            "dx_30",
-            "close_30_sma",
-            "close_60_sma"
+            f"rsi_{self.timeperiods}",
+            f"cci_{self.timeperiods}",
+            f"dx_{self.timeperiods}",
+            f"close_{self.timeperiods}_sma",
+            f"close_{self.timeperiods * 2}_sma"
         ]  # Reference from FinRL
         self.decay_lambda = 0.03  # From FNSPID paper
         self.window_size = 50  # For RL windows
-        self.prediction_days = 3  # For RL targets
+        self.prediction_days = 1  # For Short-term trading strategy
         self.batch_size = 32  # For FinBERT inference
         self.text_cols = ['Article_title', 'Textrank_summary']  # Default scheme from FNSPID
         self.split_ratio = 0.8  # For train/val split
@@ -54,17 +59,22 @@ class ConfigSetup:
         self.risk_mode = True  # Enable risk assessment prompt, reference from FinRL_DeepSeek (3: Risk Prompt)
 
         # Date params reference from FinRL
-        self.train_start_date = '2022-06-01'
-        self.train_end_date = '2023-06-01'
-        self.valid_start_date = '2023-06-02'
-        self.valid_end_date = '2023-09-01'
-        self.test_start_date = '2023-09-02'
+        self.train_start_date = '2010-01-01'
+        self.train_end_date = '2021-12-31'
+        self.valid_start_date = '2022-01-01'
+        self.valid_end_date = '2022-12-31'
+        self.test_start_date = '2023-01-01'
         self.test_end_date = '2023-12-31'
 
         # Config exper_mode for multi-mode experiments
         self.exper_mode = {
-            'indicator/news': ['benchmark', 'title_only', 'title_textrank', 'title_fulltext'],
-            'rl_algorithm': ['PPO', 'CPPO', 'A2C']  # Added 'CPPO' for comparison, reference from FinRL_DeepSeek
+            'indicator/news': ['benchmark',
+                               'title_only',
+                               'title_textrank',
+                               'title_fulltext'],
+            'rl_algorithm': ['PPO',
+                             'CPPO',
+                             'A2C']  # Added 'CPPO' for comparison, reference from FinRL_DeepSeek
         }
 
         # Override with custom_config
@@ -131,17 +141,17 @@ class ConfigSetup:
         """
         return {
             'symbols': ['AAPL'],
-            'start': '2000-01-01',
+            'start': '2010-01-01',
             'end': '2023-12-31',
             'chunksize': 100000,
             'indicators': ["macd",
                            "boll_ub",
                            "boll_lb",
-                           "rsi_30",
-                           "cci_30",
-                           "dx_30",
-                           "close_30_sma",
-                           "close_60_sma"],
+                           "rsi_10",
+                           "cci_10",
+                           "dx_10",
+                           "close_10_sma",
+                           "close_20_sma"],
             'decay_lambda': 0.03,
             'window_size': 50,
             'prediction_days': 3,

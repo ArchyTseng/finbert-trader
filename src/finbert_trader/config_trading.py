@@ -85,7 +85,7 @@ class ConfigTrading:
         Updates: Added infusion_strength (default 0.001 for 0.1% perturbation, reference from FinRL_DeepSeek 5.3.2: 0.1% improves CPPO); risk_mode (bool, for enabling risk prompt in news_features).
         """
         # Default trading params (non-model specific)
-        self.initial_cash = 10000
+        self.initial_cash = 100000
         self.transaction_cost = 0.001
         self.reward_scale = 100
         self.commission_rate = 0.0005
@@ -147,7 +147,7 @@ class ConfigTrading:
         Static method to return default config dict for a model.
         """
         defaults = {
-            'initial_cash': 10000,
+            'initial_cash': 100000,
             'transaction_cost': 0.001,
             'reward_scale': 1.0,
             'commission_rate': 0.0005,

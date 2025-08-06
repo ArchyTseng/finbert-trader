@@ -74,8 +74,8 @@ def run_pipeline(custom_setup_config=None, custom_trading_config=None, force_tra
         
         # Step 3: Generate experiment data (multi-stock fused, with news switch/modes)
         fe = FeatureEngineer(setup_config)
-        exper_data = fe.generate_experiment_data(stock_data_dict, news_chunks_gen)
-        logging.info(f"Main - Generated experiment data for modes: {list(exper_data.keys())}")
+        exper_data_dict = fe.generate_experiment_data(stock_data_dict, news_chunks_gen, exper_mode='rl_algorithm')
+        logging.info(f"Main - Generated experiment data for modes: {list(exper_data_dict.keys())}")
         
         # Step 4: Init trading config, inheriting upstream config
         trading_config = ConfigTrading(custom_trading_config, upstream_config=setup_config)
@@ -83,18 +83,18 @@ def run_pipeline(custom_setup_config=None, custom_trading_config=None, force_tra
         
         # Step 5: Train agents per mode (multi-stock, with model caching support)
         agent = TradingAgent(trading_config, None, None, symbol='')  # Empty symbol for global multi-stock
-        models_paths = agent.train_for_experiment(exper_data, force_train=force_train)
+        models_paths = agent.train_for_experiment(exper_data_dict, force_train=force_train)
         logging.info(f"Main - Trained/loaded models for modes: {list(models_paths.keys())}")
         
         # Step 6: Run backtest and generate results
         backtest = Backtest(
-            trading_config, exper_data, models_paths, fe.fused_dfs, stock_data_dict, symbol=''
+            trading_config, exper_data_dict, models_paths, fe.fused_dfs, stock_data_dict, symbol=''
         )
         results = backtest.run()
         logging.info(f"Main - Backtest completed, results generated in results_cache")
         
         # Optional: Test StockTradingEnv manually for inspection (multi-stock)
-        test_data = exper_data.get('PPO', {}).get('test', [])   # Use actual mode like 'PPO' instead of 'benchmark'
+        test_data = exper_data_dict.get('PPO', {}).get('test', [])   # Use actual mode like 'PPO' instead of 'benchmark'
         if test_data:
             test_env = StockTradingEnv(trading_config, test_data, mode='test')
             state, _ = test_env.reset()

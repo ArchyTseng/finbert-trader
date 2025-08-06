@@ -37,6 +37,7 @@ class FeatureEngineer:
         self.split_mode = self.config.split_mode
         self.cross_valid_mode = self.config.cross_valid_mode
         self.exper_mode = self.config.exper_mode
+        self.ind_mode = self.config.ind_mode
         self.risk_mode = self.config.risk_mode
         self.stock_engineer = StockFeatureEngineer(config)
         self.news_engineer = NewsFeatureEngineer(config)
@@ -69,14 +70,42 @@ class FeatureEngineer:
         logging.info("FE Module - No valid news chunks, returning empty DataFrame")
         return pd.DataFrame(columns=['Date', 'Symbol', 'Article_title', 'Full_Text', 'Lsa_summary', 'Luhn_summary', 'Textrank_summary', 'Lexrank_summary']) # Match original columns in FNSPID dataset
 
-    def merge_features(self, stock_data_dict, sentiment_df, risk_df=None):
+    def _fill_score_columns(df, prefix, fill_value=3.0):
+        """
+        Handle NaN values in columns by filling 3.0 as default
+        """
+        score_cols = [col for col in df.columns if col.startswith(prefix)]
+        # Sum NaN values before filling
+        nulls_before = df[score_cols].isna().sum().sum()
+        df[score_cols] = df[score_cols].fillna(fill_value)
+        # Sum Nan values after filling
+        nulls_after = df[score_cols].isna().sum().sum()
+        logging.info(f"FE Module - Filled {nulls_before - nulls_after} NaNs in {prefix} columns")
+        return df
+    
+    def _fill_nan_after_merge(df):
+        """
+        Handle NaN values before return DataFrame in merge step
+        """
+        for col in df.columns:
+            if 'sentiment_score_' in col or 'risk_score_' in col:
+                if df[col].isna().any():
+                    logging.info(f"FE Module - Fillna with value 3.0 in {col}")
+                    df[col] = df[col].fillna(3.0)
+            elif any(keyword in col for keyword in ['macd', 'rsi', 'cci', 'sma', 'dx', 'boll', 'close']):
+                if df[col].isna().any():
+                    logging.info(f"FE Module - Fillna with value 0 in {col}")
+                    df[col] = df[col].fillna(0)
+        return df
+
+    def merge_features(self, stock_data_dict, sentiment_df, risk_df=None, ind_mode=None):
         """
         Merge stock and news features with decay fill.
         Updates: Added risk_df param; merge sentiment and risk; apply decay_fill to both; default mid 3.0, reference from FinRL_DeepSeek (4.3: R_f aggregation, but here per stock/day).
         """
         processed_stocks = []
         for symbol, df in stock_data_dict.items():
-            processed_df = self.stock_engineer.compute_features(df, symbol)
+            processed_df = self.stock_engineer.compute_features(df, symbol, ind_mode)
             processed_stocks.append(processed_df.set_index('Date'))
         all_stock_df = pd.concat(processed_stocks, axis=1, join='outer').reset_index()  # Concat wide table
 
@@ -87,14 +116,18 @@ class FeatureEngineer:
         if not sentiment_df.empty:
             sentiment_df = sentiment_df.pivot(index='Date',
                                               columns='Symbol',
-                                              values='sentiment_score').add_prefix('sentiment_score_').fillna(3.0)
+                                              values='sentiment_score').add_prefix('sentiment_score_')
             all_stock_df = pd.merge(all_stock_df, sentiment_df, left_on='Date', right_index=True, how='left')
+            # Fill NaN value after merge
+            all_stock_df = self._fill_score_columns(all_stock_df, 'sentiment_score_')
 
         if self.risk_mode and risk_df is not None and not risk_df.empty:
             risk_df = risk_df.pivot(index='Date',
                                     columns='Symbol',
-                                    values='risk_score').add_prefix('risk_score_').fillna(3.0)
+                                    values='risk_score').add_prefix('risk_score_')
             all_stock_df = pd.merge(all_stock_df, risk_df, left_on='Date', right_index=True, how='left')
+            # Fill NaN value after merge
+            all_stock_df = self._fill_score_columns(all_stock_df, 'risk_score_')
 
         fused_df = all_stock_df.sort_values('Date').reset_index(drop=True)  # Ensure order, drop extra index
 
@@ -104,87 +137,94 @@ class FeatureEngineer:
             fused_df = fused_df[fused_df[f'Adj_Close_{symbol}'] > 0]
         logging.info(f"FE Module - Filtered fused_df to positive Adj_Close: {fused_df.shape} rows")
 
-        # reorder columns by field-type across symbols (group by prefix)
-        # Remove the resort-columns lines to keep original order per symbol for merge
-        # all_cols = fused_df.columns.tolist()
-        # sorted_cols = ['Date'] + sorted([c for c in all_cols if c != 'Date'], key=lambda x: (x.split('_')[0], x))  # Sort by field prefix then full (e.g., Adj_Close_AAPL before Adj_Close_MSFT)
-        # fused_df = fused_df[sorted_cols]
+        # Get columns without 'Date'
+        cols = fused_df.columns.tolist()
+        cols.remove('Date')
+        # Reorder columns by field-type across symbols (group by symbol)
+        symbols = self.config.symbols
+        ordered_cols = ['Date']
+        for symbol in symbols:
+            ordered_cols += [col for col in cols if col.endswith(f'_{symbol}')]
+
+        fused_df = fused_df[ordered_cols]
         logging.info(f"FE Module - Fused features: {fused_df.shape} rows, with risk_mode={self.risk_mode}")
+
+        fused_df = self._fill_nan_after_merge(fused_df)
 
         return fused_df
 
     def normalize_features(self, df, fit=False, means_stds=None, scaler_path=None):
         """
-        Normalize indicators and sentiment_score.
-        Updates: Added 'risk_score' to to_normalize.
+        Normalize indicators and sentiment/risk scores.
+        - Only applies to numeric columns matching self.indicators + ['sentiment_score', 'risk_score']
+        - Price/Volume columns excluded
         """
         to_normalize = self.stock_engineer.indicators + ['sentiment_score', 'risk_score']
-        # Explicitly exclude price/volume cols
-        present_cols = [col for col in df.columns if any(ind in col for ind in to_normalize) and not any(price in col.lower() for price in ['open', 'high', 'low', 'close', 'volume'])]
-        df = df.set_index('Date') if 'Date' in df.columns else df  # Set Date as index if present
+        present_cols = [col for col in df.columns 
+                        if any(ind in col for ind in to_normalize) 
+                        and not any(x in col.lower() for x in ['open', 'high', 'low', 'close', 'volume']) 
+                        and pd.api.types.is_numeric_dtype(df[col])]
 
-        # Enhanced NaN handling: replace all NaN with 0 globally before normalization
-        df = df.fillna(0)
-        df = pd.DataFrame(np.nan_to_num(df.values, nan=0), columns=df.columns, index=df.index)  # Force num, handle inf/NaN
+        if 'Date' in df.columns:
+            df = df.set_index('Date')
 
-        df = df.select_dtypes(include=[np.number])  # Filter numeric, index preserved
-        logging.info("FE Module - Set Date as index before numeric filter")
         if not present_cols:
-            logging.warning("FE Module - No columns to normalize")
-            return df, {} if fit else df
-        
-        df = df.fillna(0)  # Global fill 0 for all numeric (neutral/safe for indicators/sentiment/risk); or df.fillna(df.mean()) if prefer mean, but 0 simpler for NaN-heavy
-        logging.info("FE Module - Global NaN filled with 0 before normalization")
+            logging.warning("FE Module - No valid columns to normalize.")
+            return df, {}  # Always return tuple
 
         if fit:
             if scaler_path and os.path.exists(scaler_path):
-                logging.info(f"FE Module - Loading existing scaler from {scaler_path}")
-                means_stds = joblib.load(scaler_path)   # Load scaler
+                means_stds = joblib.load(scaler_path)
+                logging.info(f"FE Module - Loaded scaler from {scaler_path}")
             else:
                 means_stds = {}
                 for col in present_cols:
                     mean = df[col].mean()
                     std = df[col].std()
-                    std = max(std, 1e-6)  # Clip std > 1e-6 to prevent NaN
+                    std = max(std, 1e-6)
                     means_stds[col] = (mean, std)
-                    df[col] = (df[col] - mean) / std if std != 0 else 0
+                    df[col] = (df[col] - mean) / std
                 if scaler_path:
                     os.makedirs(os.path.dirname(scaler_path), exist_ok=True)
-                    joblib.dump(means_stds, scaler_path)    # Save scaler
-                    logging.info(f"FE Module - Fitted and saved scaler to {scaler_path}")
-            return df, means_stds
+                    joblib.dump(means_stds, scaler_path)
+                    logging.info(f"FE Module - Saved new scaler to {scaler_path}")
         else:
             if scaler_path and os.path.exists(scaler_path):
-                means_stds = joblib.load(scaler_path)   # Load scaler
+                means_stds = joblib.load(scaler_path)
                 logging.info(f"FE Module - Loaded scaler from {scaler_path} for transform")
             if not means_stds:
-                logging.warning("FE Module - No means_stds provided for transform; assuming 0/1")
-                means_stds = {col: (0, 1) for col in present_cols}
+                logging.warning("FE Module - No scaler found; defaulting to mean=0, std=1")
             for col in present_cols:
                 mean, std = means_stds.get(col, (0, 1))
-                std = max(std, 1e-6)  # Same clip
-                df[col] = (df[col] - mean) / std if std != 0 else 0
-            logging.info(f"FE Module - Transformed {len(present_cols)} columns")
-            return df
+                std = max(std, 1e-6)
+                df[col] = (df[col] - mean) / std
+
+        return df, means_stds
 
     def prepare_rl_data(self, fused_df):
         """
         Prepare rolling windows for RL.
         Updates: Extended feature_cols to include 'risk_score'.
         """
+        if fused_df.isna().sum().sum() > 0:
+            logging.warning(f"FE Module - NaN values found in fused_df: {fused_df.isna().sum().sum()} before RL window generation")
+            fused_df = fused_df.fillna(0)  # Fill NaN with 0
+
         rl_data = []
         dates = fused_df.index
         for i in range(len(fused_df) - self.window_size - self.prediction_days + 1):
             full_features_per_time = len(fused_df.columns) - 1  # Exclude 'Date'
-            window = fused_df.iloc[i:i+self.window_size].values.flatten()  # Flatten numeric (index=Date auto excluded)
+            # Test window shape 
+            expected_dim = self.window_size * (len(fused_df.columns) - 1)
+            assert window.shape[0] == expected_dim, f"FE Module - Unexpected window shape: got {window.shape[0]}, expected {expected_dim}"
+            window = fused_df.iloc[i:i+self.window_size].values.flatten()  # Flatten numeric to 1D array for RL observation
             if window.shape[0] < self.window_size:
                 pad_rows = self.window_size - window.shape[0]
                 pad_array = np.zeros((pad_rows, full_features_per_time))
                 window = np.vstack((pad_array, window))  # Pad 0 rows at start for short window
-            window = window.flatten()  # To 1D full len
+            window = window.flatten()  # To 1D full length array
 
-            # target_col_idx = fused_df.columns.get_loc(f'Adj_Close_{self.config.symbols[0]}') if self.config.symbols else 3  # Dynamic index for lead Adj_Close
-            target = fused_df.iloc[i+self.window_size:i+self.window_size+self.prediction_days][[f'Adj_Close_{sym}' for sym in self.config.symbols]].values.flatten()
+            target = fused_df.iloc[i+self.window_size:i+self.window_size+self.prediction_days][[f'Adj_Close_{symbol}' for symbol in self.config.symbols]].values.flatten()
             rl_data.append({'start_date': dates[i], 'states': window, 'targets': target})
         logging.info(f"FE Module - Prepared {len(rl_data)} RL windows")
         return rl_data
@@ -255,10 +295,10 @@ class FeatureEngineer:
         
         return score_df
 
-    def generate_experiment_data(self, stock_data_dict, news_chunks_gen, single_mode=None):
+    def generate_experiment_data(self, stock_data_dict, news_chunks_gen, exper_mode=None, single_mode=None):
         """
-        Generate rl_data for each test_mode or single mode.
-        Input: stock_data_dict, news_chunks_gen, single_mode (str, optional)
+        Generate rl_data for each exper_mode or single mode.
+        Input: stock_data_dict, news_chunks_gen, exper_mode (str, default 'rl_algorithm'), single_mode (str, optional)
         Output: dict {'mode': {'train':, 'valid':, 'test':, 'model_type':}} or (train_rl_data, valid_rl_data, test_rl_data) if single_mode
         Logic: For 'rl_algorithm' group, fix news to 'title_fulltext'; for 'indicator/news', use defined cols.
         Robustness: Adds 'model_type' for TradingAgent; checks sentiment variance; releases FinBERT resources.
@@ -266,54 +306,63 @@ class FeatureEngineer:
         """
         logging.info("=========== Start to generate experiment data ===========")
         exper_data_dict = {}
-        exper_cols = {
+        exper_news_cols = {
             'benchmark': [],
             'title_only': ['Article_title'],
             'title_textrank': ['Article_title', 'Textrank_summary'],
             'title_fulltext': ['Article_title', 'Full_Text']
         }
-        available_modes = set(sum(self.exper_mode.values(), []))
-        exper_modes = [single_mode] if single_mode else sum(self.exper_mode.values(), [])
-        logging.info(f"FE Module - Experiment modes: {exper_modes}")
+        ind_mode = self.ind_mode
+        if single_mode:
+            logging.info(f"FE Module - Running Single mode: {single_mode}")
+            exper_modes = [single_mode]
+            group = next((g for g, modes in self.exper_mode.items() if single_mode in modes), None)
+            if not group:
+                raise ValueError(f"Unknown single_mode: {single_mode}")
+        elif exper_mode:
+            logging.info(f"FE Module - Running Experiment mode: {exper_mode}")
+            exper_modes = self.exper_mode.get(exper_mode, [])
+            group = exper_mode
+            if not exper_modes:
+                raise ValueError(f"Unknown exper_mode group: {exper_mode}")
+        else:
+            logging.info("FE Module - Running All experiment modes")
+            exper_modes = sum(self.exper_mode.values(), [])
+            group = None
 
-        # Load and clean news once
+        logging.info(f"FE Module - Experiment modes: {exper_modes} from group: {group}")
+
         cleaned_news = self.process_news_chunks(news_chunks_gen)
         logging.info(f"FE Module - Loaded and cleaned news: {len(cleaned_news)} rows")
 
         for mode in exper_modes:
-            if mode not in available_modes:
-                logging.warning(f"FE Module - Skipping unknown mode: {mode}")
-                continue
-            if single_mode and single_mode not in available_modes:
-                raise ValueError(f"FE Module - Unknown single mode: {single_mode}, expected one of {available_modes}")
-
-            original_exper_cols = self.news_engineer.text_cols
+            original_exper_news_cols = self.news_engineer.text_cols
             # Determine model_type and news_cols based on group
             group = next((group for group, modes in self.exper_mode.items() if mode in modes), None)
             if group == 'rl_algorithm':
-                self.news_engineer.text_cols = exper_cols['title_textrank']  # Fix to title_textrank, reference from FinRL_DeepSeek (4.2: stock recommendation prompt)
+                self.news_engineer.text_cols = exper_news_cols['title_textrank']  # Fix to title_textrank, reference from FinRL_DeepSeek (4.2: stock recommendation prompt)
                 model_type = mode  # PPO, CPPO, etc.
             else:
-                self.news_engineer.text_cols = exper_cols.get(mode, [])
+                self.news_engineer.text_cols = exper_news_cols.get(mode, [])
                 model_type = 'PPO'  # Default for indicator/news group
             logging.info(f"FE Module - Mode {mode} in group {group}, model_type={model_type}, news_cols={self.news_engineer.text_cols}")
 
             # Compute sentiment
             if group == 'rl_algorithm' or mode != 'benchmark':
-                sentiment_news = self.news_engineer.compute_sentiment_score(cleaned_news.copy())
-                sentiment_news = self._check_and_adjust_sentiment(sentiment_news, mode, col='sentiment_score')
+                sentiment_score_df = self.news_engineer.compute_sentiment_score(cleaned_news.copy())
+                sentiment_score_df = self._check_and_adjust_sentiment(sentiment_score_df, mode, col='sentiment_score')
             else:
-                sentiment_news = pd.DataFrame(columns=['Date', 'Symbol', 'sentiment_score'])
+                sentiment_score_df = pd.DataFrame(columns=['Date', 'Symbol', 'sentiment_score'])
                 logging.info("FE Module - Benchmark mode: no sentiment")
 
             # Compute risk if enabled
-            risk_news = None
+            risk_score_df = None
             if self.risk_mode and (group == 'rl_algorithm' or mode != 'benchmark'):
-                risk_news = self.news_engineer.compute_risk_score(cleaned_news.copy())
-                risk_news = self._check_and_adjust_sentiment(risk_news, mode, col='risk_score')
+                risk_score_df = self.news_engineer.compute_risk_score(cleaned_news.copy())
+                risk_score_df = self._check_and_adjust_sentiment(risk_score_df, mode, col='risk_score')
 
-            # Merge and split
-            fused_df = self.merge_features(stock_data_dict, sentiment_news, risk_news)
+            # Merge features and split train/valid/test data by date
+            fused_df = self.merge_features(stock_data_dict, sentiment_score_df, risk_score_df, ind_mode)
             if fused_df.empty:
                 raise ValueError(f"Fused DataFrame empty for mode {mode}")
             train_df = fused_df[(fused_df['Date'] >= pd.to_datetime(self.train_start_date)) & (fused_df['Date'] <= pd.to_datetime(self.train_end_date))]
@@ -323,7 +372,7 @@ class FeatureEngineer:
                 raise ValueError(f"Empty split for mode {mode}")
             logging.info(f"FE Module - Split for mode {mode}: train {len(train_df)}, valid {len(valid_df)}, test {len(test_df)}")
 
-            # Normalize
+            # Normalize RL data
             scaler_path = f"scaler_cache/scaler_train_{group}_{mode}.pkl"   # Dynamic per-group/mode
             train_df, means_stds = self.normalize_features(train_df, fit=True, scaler_path=scaler_path) # Load cache scaler if existed
             valid_df = self.normalize_features(valid_df, fit=False, means_stds=means_stds, scaler_path=scaler_path) # Load cache scaler if existed
@@ -361,7 +410,7 @@ class FeatureEngineer:
             self.fused_dfs[mode] = {'train': train_df, 'valid': valid_df, 'test': test_df}
             logging.info(f"FE Module - Generated data for mode {mode}: train {len(split_dict['train'])}, valid {len(split_dict['valid'])}, test {len(split_dict['test'])}")
 
-            self.news_engineer.text_cols = original_exper_cols
+            self.news_engineer.text_cols = original_exper_news_cols
 
         # Release FinBERT resources
         if hasattr(self.news_engineer, 'model') and self.news_engineer.model is not None:
