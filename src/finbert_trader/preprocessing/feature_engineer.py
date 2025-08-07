@@ -436,6 +436,7 @@ class FeatureEngineer:
 
             # Concatenate all symbol windows along axis=1 to form 2D states (window_size, n_symbols * features_dim_per_symbol)
             states = np.concatenate(window_parts, axis=1)  # Unified 2D array for RL observation
+            logging.info(f"FE Module - Generate states shape : {states.shape}")
 
             # Target: future Adj_Close of each stock
             target_cols = [f"Adj_Close_{symbol}" for symbol in symbols]  # Columns for targets
@@ -601,8 +602,11 @@ class FeatureEngineer:
         os.makedirs(self.exper_data_path, exist_ok=True)
         logging.info("FE Module - Initial exper_data_dict save path")
         try:
+            start = self.config.start
+            end = self.config.end
+            symbols = "_".join(self.config.symbols)
             for mode, data_dict in exper_data_dict.items():
-                mode_path = os.path.join(self.exper_data_path, f"{mode}_exper_data.npz")
+                mode_path = os.path.join(self.exper_data_path, f"{mode}_{symbols}_{start}_{end}.npz")
                 logging.info(f"FE Module - Initial exper_data_dict save path {mode_path} for mode {mode}")
                 npz_data = {}
 
@@ -653,10 +657,13 @@ class FeatureEngineer:
         """
         exper_data_dict = {}
         try:
+            start = self.config.start
+            end = self.config.end
+            symbols = "_".join(self.config.symbols)
             for filename in os.listdir(self.exper_data_path):
                 logging.info(f"FE Module - Loading exper_data_dict from {filename}")
                 if filename.endswith('.npz'):
-                    mode = filename.replace('_exper_data.npz', '')
+                    mode = filename.replace(f'_{symbols}_{start}_{end}.npz', '')
                     file_path = os.path.join(self.exper_data_path, filename)
                     data = np.load(file_path, allow_pickle=True)
 
@@ -721,8 +728,12 @@ class FeatureEngineer:
                 risk_cols = [col for col in symbol_cols if "risk_score" in col]  # Risk columns
 
                 # Derive indicators by exclusion
-                exclude_cols = set(price_cols + senti_cols + risk_cols)  # Set of excluded categories
+                full_price_cols = [col for col in symbol_cols if "Adj_" in col or "Volume_" in col]
+                exclude_cols = set(full_price_cols + senti_cols + risk_cols)  # Set of excluded categories
                 ind_cols = [col for col in symbol_cols if col not in exclude_cols]  # Remaining as indicators
+
+                # Merge all features per symbol
+                features_cols_per_symbol = price_cols + ind_cols + senti_cols + risk_cols
 
                 # Debug log category counts
                 logging.debug(f"{symbol} - price:{len(price_cols)}, ind:{len(ind_cols)}, senti:{len(senti_cols)}, risk:{len(risk_cols)}")
@@ -732,13 +743,15 @@ class FeatureEngineer:
                 self.config.features_ind[symbol] = ind_cols  # Store indicator cols
                 self.config.features_senti[symbol] = senti_cols  # Store sentiment cols
                 self.config.features_risk[symbol] = risk_cols  # Store risk cols
-                self.config.features_all[symbol] = price_cols + ind_cols + senti_cols + risk_cols  # Store all combined
+                self.config.features_all[symbol] = features_cols_per_symbol  # Store all combined
                 logging.info(f"FE Module - Update feature categories for symbol: {symbol}")  # Log per-symbol update
                 logging.info(f"FE Module - Features dim : features_price {price_cols}, features_ind {ind_cols}, features_senti {senti_cols}, features_risk {risk_cols}, features_all:{len(price_cols + ind_cols + senti_cols + risk_cols)}")
 
-            # Compute and update dimension per symbol (use first for symmetry assumption)
-            self.config.features_dim_per_symbol = len(self.config.features_all.values[0]) # Update feautres dim per symbol to self.config for inheriting by ConfigTrading
-            logging.info(f"FE Module - Update Features dim per symbol : {self.config.features_dim_per_symbol}")  # Log computed dim
+                if self.config.features_dim_per_symbol is None:
+                    # Compute and update dimension per symbol
+                    self.config.features_dim_per_symbol = len(features_cols_per_symbol)
+                    logging.info(f"FE Module - Update Features dim per symbol : {self.config.features_dim_per_symbol}")  # Log computed dim
+            
             logging.info(f"FE Module - Successfully update all feature categories to ConfigSetup")  # Log overall success
         except Exception as e:
             logging.warning(f"FE Module - Failed to Update feature categories : {e} ")  # Log any exceptions without crashing
@@ -862,6 +875,7 @@ class FeatureEngineer:
                 train_df, means_stds = self.normalize_features(train_df, fit=True, scaler_path=scaler_path) # Load cache scaler if existed
                 valid_df = self.normalize_features(valid_df, fit=False, means_stds=means_stds, scaler_path=scaler_path) # Load cache scaler if existed
                 test_df = self.normalize_features(test_df, fit=False, means_stds=means_stds, scaler_path=scaler_path)   # Load cache scaler if existed
+                logging.info(f"FE Module - Normalized features for mode {mode}")
 
                 # Prepare window for RL observation
                 train_rl_data = self.prepare_rl_data(train_df)  # Prepare RL-compatible data (e.g., windowed observations)
@@ -924,7 +938,7 @@ from finbert_trader.config_setup import ConfigSetup
 
 # %%
 custom_setup = {
-    'symbols': ['GOOGL'],  # Multi-stock for portfolio test
+    'symbols': ['GOOGL', 'AAPL'],  # Multi-stock for portfolio test
     # Optional: ['GOOGL', 'AAPL', 'MSFT', 'AMZN', 'NVDA', 'AMD', 'TSLA', 'META']
     'start': '2015-01-01',
     'end': '2023-12-31',
@@ -949,17 +963,6 @@ if not stock_data_dict:
 logging.info(f"Main - Prepared stock data for next step")
 stock_data_dict
 
-# %%
-cache_path, filtered_cache_path = dr.cache_path_config()
-cache_path, filtered_cache_path
-
-# %%
-import pandas as pd
-
-# %%
-import os
-print(os.getcwd())
-
 # %% [markdown]
 # origin_dir = '/Users/archy/Projects/finbert_trader/'
 # cache_path = origin_dir + cache_path
@@ -967,8 +970,8 @@ print(os.getcwd())
 # cache_path, filtered_cache_path
 
 # %%
-filtered_df = pd.read_csv(filtered_cache_path)
-filtered_df
+cache_path, filtered_cache_path = dr.cache_path_config()
+cache_path, filtered_cache_path
 
 # %%
 news_chunks_gen = dr.load_news_data(cache_path, filtered_cache_path)
@@ -990,5 +993,14 @@ for mode, data_dict in exper_data_dict.items():
             print(f"total data length: {len(data_list)}")
             print(f"data list keys: {data_list[0].keys()}")
             print(f"data shape: {data_list[0]['states'].shape, data_list[0]['targets'].shape}")
+
+# %%
+setup_config.features_all
+
+# %%
+setup_config.features_dim_per_symbol
+
+# %%
+setup_config.features_ind
 
 # %%
