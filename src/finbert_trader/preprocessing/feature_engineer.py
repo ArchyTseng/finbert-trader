@@ -734,10 +734,11 @@ class FeatureEngineer:
                 self.config.features_risk[symbol] = risk_cols  # Store risk cols
                 self.config.features_all[symbol] = price_cols + ind_cols + senti_cols + risk_cols  # Store all combined
                 logging.info(f"FE Module - Update feature categories for symbol: {symbol}")  # Log per-symbol update
+                logging.info(f"FE Module - Features dim : features_price {price_cols}, features_ind {ind_cols}, features_senti {senti_cols}, features_risk {risk_cols}, features_all:{len(price_cols + ind_cols + senti_cols + risk_cols)}")
 
             # Compute and update dimension per symbol (use first for symmetry assumption)
-            self.features_dim_per_symbol = len(self.features_all.values[0]) # Update feautres dim per symbol to self.config for inheriting by ConfigTrading
-            logging.info(f"FE Module - Update Features dim per symbol : {self.features_dim_per_symbol}")  # Log computed dim
+            self.config.features_dim_per_symbol = len(self.config.features_all.values[0]) # Update feautres dim per symbol to self.config for inheriting by ConfigTrading
+            logging.info(f"FE Module - Update Features dim per symbol : {self.config.features_dim_per_symbol}")  # Log computed dim
             logging.info(f"FE Module - Successfully update all feature categories to ConfigSetup")  # Log overall success
         except Exception as e:
             logging.warning(f"FE Module - Failed to Update feature categories : {e} ")  # Log any exceptions without crashing
