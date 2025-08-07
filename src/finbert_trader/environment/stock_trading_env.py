@@ -26,38 +26,72 @@ class StockTradingEnv(gym.Env):
         super(StockTradingEnv, self).__init__()
         # Initial config and Data
         self.config_trading = config_trading
-        self.rl_data = rl_data.copy()
-        
+        self.trading_df = rl_data.copy()
         self.env_type = env_type
+        
+        self.symbols = self.config_trading.symbols
+        self.symbols_dim = len(self.symbols)
+        self.feature_dim_per_stock = self.config_trading.feature_dim_per_stock
+        self.initial_cash = self.config_trading.initial_cash
+        self.transaction_cost = self.config_trading.transaction_cost
+        self.risk_aversion = self.config_trading.risk_aversion
+        self.reward_scale = self.config_trading.reward_scale
 
+        self.window_size = self.config_trading.window_size
+        self.prediction_days = self.config_trading.predicton_days
 
-        if not self.rl_data:
-            raise ValueError("Empty rl_data")
+        self.turbulence_threshold = self.config_trading.turbulence_threshold
 
-        # Adjust for multi-stock: features_per_time=15 * len(symbols), state_dim=features_per_time * window + len(symbols) +1 (positions vector + cash)
-        self.features_per_time = 15 * len(self.config_trading.symbols)  # OHLCV 5 + ind 8 + sent/risk 2 per symbol
-        self.feature_dim = self.features_per_time * self.config_trading.window_size
-        self.state_dim = self.feature_dim + len(self.config_trading.symbols) + 1  # positions vector + cash
-        self.action_space = spaces.Box(low=-1, high=1, shape=(len(self.config_trading.symbols),), dtype=np.float32)  # Action per stock
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.state_dim,), dtype=np.float32)
-        logging.info(f"STE Modul - Env initialized: model={self.config_trading.model}, state_dim={self.state_dim}")
+        # Initial Data index
+        self.unique_dates = sorted(self.trading_df['Date'].unique())
+        self.current_step = self.window_size
 
-        self.portfolio_memory = []  # Added to record portfolio values, reference from FinRL (env_stocktrading.py: asset_memory)
-        self.action_memory = []  # Added to record actions, reference from FinRL (env_stocktrading.py: actions_memory)
-        self.date_memory = []  # Added to record dates for memory alignment, reference from FinRL (env_stocktrading.py: date_memory)
-        self.reset()
-        self.infusion_strength = self.config_trading.infusion_strength  # For perturbation
-        self.alpha = self.config_trading.model_params.get('alpha', 0.05) if self.config_trading.model == 'CPPO' else None  # For CVaR
+        # Initial Tradng state
+        self.cash = self.initial_cash
+        self.symbol_owned = np.zeros(self.symbols_dim)
+        self.symbol_price = np.zeros(self.symbols_dim)
+        self.symbol_value = np.zeros(self.symbols_dim)
+
+        # Initial the structure of state recorder for each stock
+        self.symbol_info = {
+            symbol:{
+                'shares': 0,
+                'price': 0.0,
+                'value': 0.0
+            }
+            for symbol in self.symbols
+        }
+
+        # Initial Action Space
+        self.action_space = spaces.Box(low=-1, high=1, shape=(len(self.csymbols),), dtype=np.float32)  # Action per stock
+
+        # Initial State Space
+        self.state_space_dim = self.symbols_dim * self.feature_dim_per_stock + 1
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.state_space_dim, ), dtype=np.float32)  # State per stock * window + cash
+        logging.info(f"STE Modul - Env initialized: model={self.config_trading.model}, state_dim={self.state_space_dim}")
+
+        # # Adjust for multi-stock: features_per_time=15 * len(symbols), state_dim=features_per_time * window + len(symbols) +1 (positions vector + cash)
+        # self.features_per_time = 15 * len(self.config_trading.symbols)  # OHLCV 5 + ind 8 + sent/risk 2 per symbol
+        # self.feature_dim = self.features_per_time * self.config_trading.window_size
+        # self.state_dim = self.feature_dim + len(self.config_trading.symbols) + 1  # positions vector + cash
+        # self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.state_dim,), dtype=np.float32)
+
+        # self.portfolio_memory = []  # Added to record portfolio values, reference from FinRL (env_stocktrading.py: asset_memory)
+        # self.action_memory = []  # Added to record actions, reference from FinRL (env_stocktrading.py: actions_memory)
+        # self.date_memory = []  # Added to record dates for memory alignment, reference from FinRL (env_stocktrading.py: date_memory)
+        # self.reset()
+        # self.infusion_strength = self.config_trading.infusion_strength  # For perturbation
+        # self.alpha = self.config_trading.model_params.get('alpha', 0.05) if self.config_trading.model == 'CPPO' else None  # For CVaR
 
     def reset(self, *, seed=None, options=None):
         if seed is not None:
             np.random.seed(seed)
-        if not self.rl_data:
+        if not self.trading_df:
             logging.warning("STE Modul - No rl_data; returning dummy state")
             return np.zeros(self.state_dim), {}
         
-        self.current_window_idx = np.random.randint(0, len(self.rl_data))
-        self.current_window = self.rl_data[self.current_window_idx]
+        self.current_window_idx = np.random.randint(0, len(self.trading_df))
+        self.current_window = self.trading_df[self.current_window_idx]
         self.current_step = 0
         self.current_position = np.zeros(len(self.config_trading.symbols))  # Vector
         self.current_cash = self.config_trading.initial_cash

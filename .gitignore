@@ -42,6 +42,9 @@ model_cache/
 # results_cache
 results_cache/
 
+# exper_cache
+exper_cache/
+
 # logs
 logs/
 

@@ -373,7 +373,7 @@ class TradingAgent:
             logging.error(f"TA Module - Training error for {self.symbol}: {e}")
             raise
 
-    def train_for_experiment(self, exper_data, force_train=False):
+    def train_for_experiment(self, exper_data_dict, force_train=False):
         """
         Train models for each experiment mode (with cache check via force_train).
         Input: exper_data (dict of mode: split_dict with 'train', 'valid', 'test')
@@ -383,7 +383,7 @@ class TradingAgent:
         """
         logging.info("=========== Start to train for experiment ===========")
         models_paths = {}
-        for mode, split_dict in exper_data.items():
+        for mode, split_dict in exper_data_dict.items():
             train_rl_data = split_dict['train']
             valid_rl_data = split_dict['valid']
             model_type = split_dict.get('model_type', 'PPO')  # Default to PPO

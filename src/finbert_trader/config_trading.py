@@ -19,7 +19,7 @@ class ConfigTrading:
     SUPPORTED_MODELS = ['PPO', 'A2C', 'DDPG', 'TD3', 'SAC', 'CPPO']  # Added 'CPPO' for risk-sensitive, reference from FinRL_DeepSeek (4.1.2)
 
     # Default params per model (reference: FinRL for PPO, Stable-Baselines3 for others; extended for CPPO)
-    _model_defaults = {
+    _model_params = {
         'PPO': {  # From FinRL rl_model.py
             "n_steps": 2048,
             "ent_coef": 0.2,   # Increased to encourage action entropy, from 0.01 -> 0.02 -> 0.05 -> 0.2, prevent zero-action policies
@@ -68,7 +68,7 @@ class ConfigTrading:
         'CPPO': {'n_steps', 'ent_coef', 'learning_rate', 'batch_size', 'gamma', 'gae_lambda', 'vf_coef', 'alpha', 'lambda_', 'beta'},  # Extended for CPPO
     }
 
-    # config directory
+    # config default directory
     SCALER_SAVE_DIR = 'scaler_cache'
     MODEL_SAVE_DIR = 'model_cache'
     RESULTS_SAVE_DIR = 'results_cache'
@@ -101,12 +101,26 @@ class ConfigTrading:
         if self.model not in self.SUPPORTED_MODELS:
             logging.warning(f"CT Module - Unsupported model: {self.model}; falling back to 'PPO'")
             self.model = 'PPO'
-        self.model_params = self._model_defaults.get(self.model, {})
+        self.model_params = self._model_params.get(self.model, {})
         logging.info(f"CT Module - Selected model: {self.model} with params {self.model_params}")
 
         # Inherit from upstream_config if provided (linkage)
         if upstream_config:
-            shared_params = ['symbols', 'indicators', 'sentiment_keys', 'feature_dim_per_stock', 'window_size', 'prediction_days', 'split_ratio', 'k_folds', 'batch_size', 'exper_mode']
+            shared_params = ['symbols',
+                             'indicators',
+                             'sentiment_keys',
+                             'window_size',
+                             'prediction_days',
+                             'split_ratio',
+                             'k_folds',
+                             'batch_size',
+                             'exper_mode',
+                             'feature_dim_per_stock',
+                             'features_price',
+                             'features_ind',
+                             'features_senti',
+                             'features_risk',
+                             'features_all']
             for param in shared_params:
                 if hasattr(upstream_config, param):
                     setattr(self, param, getattr(upstream_config, param))
@@ -159,7 +173,7 @@ class ConfigTrading:
             'total_timesteps': 2000000,
             'infusion_strength': 0.001,
             'risk_mode': True,
-            'model_params': ConfigTrading._model_defaults.get(model, {})
+            'model_params': ConfigTrading._model_params.get(model, {})
         }
         return defaults
 

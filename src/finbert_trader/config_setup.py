@@ -62,7 +62,6 @@ class ConfigSetup:
             f"close_{self.timeperiods * 2}_sma"
         ]  # Reference from FinRL; dynamic indicators with timeperiods
         self.sentiment_keys = ['sentiment_score', 'risk_score']  # Keys for sentiment/risk features
-        self.feature_dim_per_stock = 0   # Expected: OHLCV + indicators + sentiment + risk; compute total features per stock in FeatureEngineer Module
         self.decay_lambda = 0.03  # From FNSPID paper; for potential decay in scoring
         self.window_size = 50  # For RL windows; observation history length
         self.prediction_days = 1  # For Short-term trading strategy; future days to predict
@@ -94,6 +93,15 @@ class ConfigSetup:
         }
 
         # Override with custom_config
+
+        # Initialize features attributes, updating in FeatureEngineer "prepare_rl_data()" function, inherited by ConfigTrading
+        self.features_dim_per_stock = None   # Expected: OHLCV + indicators + sentiment + risk; compute total features per stock in FeatureEngineer Module
+        self.features_price = {}
+        self.features_ind = {}
+        self.features_senti = {}
+        self.features_risk = {}
+        self.features_all = {}
+
         if custom_config:
             # Apply overrides from dict for flexibility
             for key, value in custom_config.items():

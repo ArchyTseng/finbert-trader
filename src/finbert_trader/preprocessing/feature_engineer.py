@@ -26,6 +26,10 @@
 # Updates: Added risk_score computation if config.risk_mode; merged with sentiment in fused_df; adjusted _check_and_adjust_sentiment for both scores (var<0.1 add noise); extended feature_cols to include 'risk_score'; prepare_rl_data includes risk in states, reference from FinRL_DeepSeek (4.3: aggregate R_f for returns adjustment).
 
 # %%
+import os
+os.chdir('/Users/archy/Projects/finbert_trader/')
+
+# %%
 import pandas as pd
 import numpy as np
 import torch
@@ -372,34 +376,40 @@ class FeatureEngineer:
 
         return df, means_stds  # Return normalized df and computed means_stds in fit mode
 
-    def prepare_rl_data(self, fused_df):
+    def prepare_rl_data(self, fused_df, symbols=None):
         """
         Introduction
         ------------
-        Prepare RL-compatible data from fused DataFrame by creating sliding windows of features as states and future adjusted close prices as targets.
-        Handles NaN filling, index setting, and padding for short windows.
+        Prepare RL-compatible data from fused DataFrame by creating sliding windows as 2D states and future prices as targets.
+        States shaped as (window_size, features_dim_per_symbol) via horizontal concat of per-symbol features; handles NaN filling and index setting.
+        Updates feature categories for trading env inheritance; yields list of dicts for downstream splitting and environment use.
 
         Parameters
         ----------
         fused_df : pd.DataFrame
             Fused DataFrame with features, indexed by Date if not already.
+        symbols : list of str, optional
+            List of symbols to process; defaults to self.config.symbols.
 
         Returns
         -------
         list of dict
             Each dict contains:
             - 'start_date': pd.Timestamp - Start date of the window.
-            - 'states': np.ndarray - Flattened 1D array of window features.
-            - 'targets': np.ndarray - Flattened array of future Adj_Close values for prediction_days.
+            - 'states': np.ndarray - 2D array (window_size, n_symbols * features_dim_per_symbol) of concatenated features.
+            - 'targets': np.ndarray - 2D array (prediction_days, n_symbols) of future Adj_Close values.
 
         Notes
         -----
-        - Asserts input is DataFrame; fills NaNs with 0 to ensure completeness.
+        - Asserts input is DataFrame; fills NaNs with 0 for completeness.
         - Sets 'Date' as index if present; excludes it from features.
-        - Windows are flattened to 1D; pads with zeros if window < window_size.
-        - Targets are Adj_Close for all symbols over prediction_days.
-        - Logs total prepared RL windows for verification.
+        - Calls _update_features_categories to update config for ConfigTrading inheritance.
+        - Concatenates per-symbol windows along axis=1 for unified 2D states.
+        - Targets extracted as matrix for multi-symbol prediction.
+        - Logs prepared RL data count; assumes symbols ordered for consistent concat.
         """
+        symbols = symbols or self.config.symbols  # Default to config symbols if not provided
+        logging.info(f"FE Module - Begin preparing RL data with window={self.window_size}, prediction_days={self.prediction_days}, symbols={symbols}")  # Log preparation params
         assert isinstance(fused_df, pd.DataFrame), f"FE Module - Expected DataFrame, got {type(fused_df)}"  # Assert input type to prevent invalid data processing
 
         if fused_df.isna().sum().sum() > 0:
@@ -411,25 +421,30 @@ class FeatureEngineer:
             fused_df = fused_df.set_index('Date')  # Set Date as index to exclude from features
         logging.info(f"FE Module - Feature Columns: {fused_df.columns.tolist()}")  # Log feature columns for debugging
 
+        self._update_features_categories(fused_df)       # Update features_* attributes to self.config for inheriting by ConfigTrading
+
         rl_data = []  # Initialize list to store RL data dicts
         dates = fused_df.index  # Extract dates for start_date assignment
+        
         for i in range(len(fused_df) - self.window_size - self.prediction_days + 1):
-            # Sliding window loop: Generate windows of size window_size, leaving room for prediction_days
-            full_features_per_time = len(fused_df.columns)  # Number of features per timestep
-            window = fused_df.iloc[i:i+self.window_size].values.flatten()  # Extract and flatten window to 1D array for RL state
-            # Test window shape 
-            expected_dim = self.window_size * fused_df.shape[1]  # Calculate expected flattened dimension
-            assert window.shape[0] == expected_dim, f"FE Module - Unexpected window shape: got {window.shape[0]}, expected {expected_dim}"  # Assert dimension to catch extraction errors
-            if window.shape[0] < self.window_size:
-                # Rare case: If window is shorter (e.g., at edges), pad with zero rows at the beginning
-                pad_rows = self.window_size - window.shape[0]
-                pad_array = np.zeros((pad_rows, full_features_per_time))  # Create zero padding array
-                window = np.vstack((pad_array, window))  # Stack padding on top
-            window = window.flatten()  # Ensure final flatten to 1D after potential padding
+            # Sliding window loop: Generate windows leaving room for prediction_days
+            window_parts = []  # List to collect per-symbol window arrays for concat
+            for symbol in symbols:
+                symbol_cols = self.config.features_all[symbol]  # Get all features for this symbol from config
+                symbol_window = fused_df.iloc[i:i+self.window_size][symbol_cols].values  # Extract (window_size, features_dim_per_symbol) array
+                window_parts.append(symbol_window)  # Append for later concat
 
-            target = fused_df.iloc[i+self.window_size:i+self.window_size+self.prediction_days][[f'Adj_Close_{symbol}' for symbol in self.config.symbols]].values.flatten()  # Extract flattened targets: future Adj_Close for all symbols
-            rl_data.append({'start_date': dates[i], 'states': window, 'targets': target})  # Append dict with start_date, states, and targets
-        logging.info(f"FE Module - Prepared {len(rl_data)} RL windows")  # Log total windows generated for verification
+            # Concatenate all symbol windows along axis=1 to form 2D states (window_size, n_symbols * features_dim_per_symbol)
+            states = np.concatenate(window_parts, axis=1)  # Unified 2D array for RL observation
+
+            # Target: future Adj_Close of each stock
+            target_cols = [f"Adj_Close_{symbol}" for symbol in symbols]  # Columns for targets
+            target = fused_df.iloc[i+self.window_size:i+self.window_size+self.prediction_days][target_cols].values  # Extract targets: future Adj_Close for all symbols; shape (prediction_days, n_symbols)
+            rl_data.append({'start_date': dates[i],
+                            'states': states,   # 2D ndarray (window_size, n_symbols * features_dim_per_symbol)
+                            'targets': target})     # 2D ndarray (prediction_days, n_stocks)
+
+        logging.info(f"FE Module - Prepared {len(rl_data)} RL data")  # Log total prepared items
         return rl_data  # Return list of RL data dicts
 
     def split_rl_data(self, rl_data):
@@ -458,6 +473,8 @@ class FeatureEngineer:
         - k-folds applies only to train set, using TimeSeriesSplit or KFold (no shuffle).
         - Logs split sizes; raises ValueError for invalid modes.
         """
+        assert isinstance(rl_data[0]['start_date'], pd.Timestamp), "FE Module - 'start_date' must be pandas.Timestamp"
+
         rl_data = sorted(rl_data, key=lambda x: x['start_date'])  # Sort RL data by start_date to maintain chronological order
         if self.split_mode == 'date':
             # Date-based split: Filter data within predefined date ranges for train/valid/test
@@ -549,7 +566,7 @@ class FeatureEngineer:
         
         return score_df  # Return the potentially adjusted DataFrame
     
-    def save_exper_data_dict_npz(self, data_dict):
+    def save_exper_data_dict_npz(self, exper_data_dict):
         """
         Save experiment data dictionary to .npz files (one per mode).
 
@@ -667,41 +684,64 @@ class FeatureEngineer:
         except Exception as e:
             logging.warning(f"FE Module - Load exper_data_dict failed: {e}")
         return exper_data_dict
-    
-    def _update_feature_dim_per_stock(self, fused_df):
+
+    def _update_features_categories(self, fused_df):
         """
         Introduction
         ------------
-        Update the feature_dim_per_stock in config based on columns in the fused DataFrame.
-        Computes average dimension per stock by filtering symbol-suffixed columns; ensures consistency across symbols.
+        Update feature categories in config based on fused DataFrame columns per symbol.
+        Categorizes into price, indicators, sentiment, risk, and all; computes dim per symbol for trading env monitoring.
+        Prepares global config for stock_trading_env state tracking after feature merging.
 
         Parameters
         ----------
         fused_df : pd.DataFrame
-            Fused DataFrame with symbol-suffixed columns (e.g., 'macd_AAPL').
+            Fused DataFrame with symbol-suffixed columns.
 
         Notes
         -----
-        - Requires config.symbols; raises ValueError if empty or dims inconsistent.
-        - Calculates per-stock cols ending with '_{symbol}'; averages for symmetric assumption.
-        - Fallback to 0 if no columns; logs final dim for verification.
+        - Asserts input type; filters columns ending with '_{symbol}'.
+        - Excludes price/senti/risk to derive indicators; logs counts per category.
+        - Updates config dicts: features_price, features_ind, features_senti, features_risk, features_all.
+        - Sets features_dim_per_symbol as len of first symbol's all features (assumes symmetry).
+        - Logs updates and warnings on exceptions for traceability.
         """
-        if not self.config.symbols:
-            raise ValueError("FE Module - No symbols defined; cannot compute feature_dim_per_stock")  # Ensure symbols exist to avoid invalid computation
+        assert isinstance(fused_df, pd.DataFrame), f"FE Module - Unexpected data type : {type(fused_df)}"  # Assert input is DataFrame to prevent invalid processing
         
-        per_stock_cols = []  # List to store column counts per symbol
-        for symbol in self.config.symbols:
-            # Filter and count columns specific to each symbol
-            symbol_cols = [col for col in fused_df.columns if col.endswith(f"_{symbol}")]  # Filter cols ending with _sym, e.g., 'macd_AAPL'
-            per_stock_cols.append(len(symbol_cols))  # Append count for this symbol
-        if per_stock_cols:
-            if len(set(per_stock_cols)) != 1:  # Check if all per-stock dims are equal to ensure symmetry
-                raise ValueError(f"FE Module - Inconsistent feature dims per stock: {per_stock_cols}; expected equal for all symbols")  # Raise on inconsistency
-            self.config.feature_dim_per_stock = int(sum(per_stock_cols) / len(per_stock_cols))  # Average per-stock dim (assume symmetric across symbols)
-        else:
-            self.config.feature_dim_per_stock = 0  # Fallback if no cols found (e.g., empty fused_df)
-        logging.info(f"FE Module - Stored feature_dim_per_stock dynamically: {self.config.feature_dim_per_stock}")  # Log updated dim for debugging and confirmation
-    
+        logging.info(f"FE Module - Start to update feature categories to ConfigSetup")  # Log start of update process
+        logging.info(f"FE Module - Symbols to process: {self.config.symbols}")  # Log symbols for context
+        try:
+            for symbol in self.config.symbols:
+                # Extract all columns for this symbol
+                symbol_cols = [col for col in fused_df.columns if col.endswith(f"_{symbol}")]  # Filter cols ending with _sym, e.g., 'macd_AAPL'
+
+                # Categorize: Price (Adj_Close), sentiment, risk
+                price_cols = [col for col in symbol_cols if "Adj_Close" in col]  # Price-related columns
+                senti_cols = [col for col in symbol_cols if "sentiment_score" in col]  # Sentiment columns
+                risk_cols = [col for col in symbol_cols if "risk_score" in col]  # Risk columns
+
+                # Derive indicators by exclusion
+                exclude_cols = set(price_cols + senti_cols + risk_cols)  # Set of excluded categories
+                ind_cols = [col for col in symbol_cols if col not in exclude_cols]  # Remaining as indicators
+
+                # Debug log category counts
+                logging.debug(f"{symbol} - price:{len(price_cols)}, ind:{len(ind_cols)}, senti:{len(senti_cols)}, risk:{len(risk_cols)}")
+                
+                # Update config with categorized lists per symbol
+                self.config.features_price[symbol] = price_cols  # Store price cols
+                self.config.features_ind[symbol] = ind_cols  # Store indicator cols
+                self.config.features_senti[symbol] = senti_cols  # Store sentiment cols
+                self.config.features_risk[symbol] = risk_cols  # Store risk cols
+                self.config.features_all[symbol] = price_cols + ind_cols + senti_cols + risk_cols  # Store all combined
+                logging.info(f"FE Module - Update feature categories for symbol: {symbol}")  # Log per-symbol update
+
+            # Compute and update dimension per symbol (use first for symmetry assumption)
+            self.features_dim_per_symbol = len(self.features_all.values[0]) # Update feautres dim per symbol to self.config for inheriting by ConfigTrading
+            logging.info(f"FE Module - Update Features dim per symbol : {self.features_dim_per_symbol}")  # Log computed dim
+            logging.info(f"FE Module - Successfully update all feature categories to ConfigSetup")  # Log overall success
+        except Exception as e:
+            logging.warning(f"FE Module - Failed to Update feature categories : {e} ")  # Log any exceptions without crashing
+
     def generate_experiment_data(self, stock_data_dict, news_chunks_gen, exper_mode=None, single_mode=None):
         """
         Introduction
@@ -857,9 +897,6 @@ class FeatureEngineer:
 
                 self.news_engineer.text_cols = original_exper_news_cols # Restore original text columns after mode processing
 
-            # Update feature dim per stock for Stock Trading Environment
-            self._update_feature_dim_per_stock(fused_df)
-
             # Release FinBERT resources
             if hasattr(self.news_engineer, 'model') and self.news_engineer.model is not None:
                 del self.news_engineer.model    # Delete model to free memory
@@ -922,11 +959,11 @@ import pandas as pd
 import os
 print(os.getcwd())
 
-# %%
-origin_dir = '/Users/archy/Projects/finbert_trader/'
-cache_path = origin_dir + cache_path
-filtered_cache_path = origin_dir + filtered_cache_path
-cache_path, filtered_cache_path
+# %% [markdown]
+# origin_dir = '/Users/archy/Projects/finbert_trader/'
+# cache_path = origin_dir + cache_path
+# filtered_cache_path = origin_dir + filtered_cache_path
+# cache_path, filtered_cache_path
 
 # %%
 filtered_df = pd.read_csv(filtered_cache_path)
@@ -941,5 +978,16 @@ fe = FeatureEngineer(setup_config)
 # %%
 exper_data_dict = fe.generate_experiment_data(stock_data_dict, news_chunks_gen, exper_mode='rl_algorithm')
 logging.info(f"Main - Generated experiment data for modes: {list(exper_data_dict.keys())}")
+
+# %%
+for mode, data_dict in exper_data_dict.items():
+    print(f"Mode: {mode}")
+    print(f"Data dict type: {type(data_dict)}")
+    for target, data_list in data_dict.items():
+        if target != 'model_type':
+            print(f"target data: {target}")
+            print(f"total data length: {len(data_list)}")
+            print(f"data list keys: {data_list[0].keys()}")
+            print(f"data shape: {data_list[0]['states'].shape, data_list[0]['targets'].shape}")
 
 # %%
