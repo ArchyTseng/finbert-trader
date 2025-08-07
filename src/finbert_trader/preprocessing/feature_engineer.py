@@ -436,7 +436,6 @@ class FeatureEngineer:
 
             # Concatenate all symbol windows along axis=1 to form 2D states (window_size, n_symbols * features_dim_per_symbol)
             states = np.concatenate(window_parts, axis=1)  # Unified 2D array for RL observation
-            logging.info(f"FE Module - Generate states shape : {states.shape}")
 
             # Target: future Adj_Close of each stock
             target_cols = [f"Adj_Close_{symbol}" for symbol in symbols]  # Columns for targets
