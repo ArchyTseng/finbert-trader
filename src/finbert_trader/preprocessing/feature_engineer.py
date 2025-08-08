@@ -565,7 +565,45 @@ class FeatureEngineer:
             logging.info(f"FE Module - Adjusted var for {col} in mode {mode}: {new_var:.4f}")  # Log new variance to verify adjustment
         
         return score_df  # Return the potentially adjusted DataFrame
-    
+
+    def _generate_path_suffix(self, file_format='.npz'):
+        """
+        Generate a unique path suffix for file caching, based on configuration settings.
+
+        Parameters
+        ----------
+        file_format : str, optional
+            The file extension to append to the suffix. Default is '.npz'.
+
+        Returns
+        -------
+        str or None
+            A string suffix in the format 'symbols_start_end.file_format' if configuration is available,
+            otherwise None (with a warning logged).
+
+        Notes
+        -----
+        This method relies on self.config being properly initialized. It is typically used internally
+        for generating cache file names to ensure uniqueness based on symbols and date range.
+        """
+        try:
+            if self.config:
+                # Extract key configuration values for suffix generation
+                start = self.config.start
+                end = self.config.end
+                symbols = "_".join(self.config.symbols)  # Join symbols with underscore for compact representation
+                # Construct the suffix by combining symbols, dates, and file format for unique identification
+                path_suffix = f"{symbols}_{start}_{end}" + f"{file_format}"
+                return path_suffix
+            else:
+                # Log warning if config is missing to alert for potential setup issues
+                logging.warning(f"FE Module - No ConfigSetup to generate path suffix")
+                return None  # Explicitly return None to handle missing config gracefully
+        except Exception as e:
+            # Catch any unexpected errors during suffix generation and log for debugging
+            logging.warning(f"FE Module - Fail to generate path suffix : {e}")
+            return None  # Return None on failure to prevent downstream errors
+
     def save_exper_data_dict_npz(self, exper_data_dict):
         """
         Save experiment data dictionary to .npz files (one per mode).
@@ -601,11 +639,9 @@ class FeatureEngineer:
         os.makedirs(self.exper_data_path, exist_ok=True)
         logging.info("FE Module - Initial exper_data_dict save path")
         try:
-            start = self.config.start
-            end = self.config.end
-            symbols = "_".join(self.config.symbols)
+            path_suffix = self._generate_path_suffix()
             for mode, data_dict in exper_data_dict.items():
-                mode_path = os.path.join(self.exper_data_path, f"{mode}_{symbols}_{start}_{end}.npz")
+                mode_path = os.path.join(self.exper_data_path, f"{mode}_{path_suffix}")
                 logging.info(f"FE Module - Initial exper_data_dict save path {mode_path} for mode {mode}")
                 npz_data = {}
 
@@ -656,13 +692,11 @@ class FeatureEngineer:
         """
         exper_data_dict = {}
         try:
-            start = self.config.start
-            end = self.config.end
-            symbols = "_".join(self.config.symbols)
+            path_suffix = self._generate_path_suffix()
             for filename in os.listdir(self.exper_data_path):
                 logging.info(f"FE Module - Loading exper_data_dict from {filename}")
                 if filename.endswith('.npz'):
-                    mode = filename.replace(f'_{symbols}_{start}_{end}.npz', '')
+                    mode = filename.replace(f'{path_suffix}', '')
                     file_path = os.path.join(self.exper_data_path, filename)
                     data = np.load(file_path, allow_pickle=True)
 
@@ -791,7 +825,9 @@ class FeatureEngineer:
         - Automatically reuses cached files if available.
         - Supports risk score injection and FinBERT sentiment adjustment.
         """
-        if os.listdir(self.exper_data_path):
+        path_suffix = self._generate_path_suffix()
+        exper_data_list = os.listdir(self.exper_data_path)
+        if exper_data_list and exper_data_list[0].endswith(path_suffix):
             # Check if experiment data directory is not empty; if so, load existing data to avoid regeneration
             logging.info("=========== Start to load experiment data dict ===========")
             logging.info(f"FE Module - Loading exper_data_dict from {self.exper_data_path}")
