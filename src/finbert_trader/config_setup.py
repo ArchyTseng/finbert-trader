@@ -95,7 +95,7 @@ class ConfigSetup:
         # Override with custom_config
 
         # Initialize features attributes, updating in FeatureEngineer "prepare_rl_data()" function, inherited by ConfigTrading
-        self.features_dim_per_symbol = None   # Expected: OHLCV + indicators + sentiment + risk; compute total features per stock in FeatureEngineer Module
+        self.features_dim_per_symbol = None   # Expected: Adj_Close + indicators + sentiment + risk; compute total features per stock in FeatureEngineer Module
         self.features_price = {}
         self.features_ind = {}
         self.features_senti = {}

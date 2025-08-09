@@ -31,7 +31,7 @@ class StockTradingEnv(gym.Env):
         
         self.symbols = self.config_trading.symbols
         self.symbols_dim = len(self.symbols)
-        self.feature_dim_per_stock = self.config_trading.feature_dim_per_stock
+        self.features_dim_per_symbol = self.config_trading.features_dim_per_symbol
         self.initial_cash = self.config_trading.initial_cash
         self.transaction_cost = self.config_trading.transaction_cost
         self.risk_aversion = self.config_trading.risk_aversion
@@ -69,19 +69,6 @@ class StockTradingEnv(gym.Env):
         self.state_space_dim = self.symbols_dim * self.feature_dim_per_stock + 1
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.state_space_dim, ), dtype=np.float32)  # State per stock * window + cash
         logging.info(f"STE Modul - Env initialized: model={self.config_trading.model}, state_dim={self.state_space_dim}")
-
-        # # Adjust for multi-stock: features_per_time=15 * len(symbols), state_dim=features_per_time * window + len(symbols) +1 (positions vector + cash)
-        # self.features_per_time = 15 * len(self.config_trading.symbols)  # OHLCV 5 + ind 8 + sent/risk 2 per symbol
-        # self.feature_dim = self.features_per_time * self.config_trading.window_size
-        # self.state_dim = self.feature_dim + len(self.config_trading.symbols) + 1  # positions vector + cash
-        # self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.state_dim,), dtype=np.float32)
-
-        # self.portfolio_memory = []  # Added to record portfolio values, reference from FinRL (env_stocktrading.py: asset_memory)
-        # self.action_memory = []  # Added to record actions, reference from FinRL (env_stocktrading.py: actions_memory)
-        # self.date_memory = []  # Added to record dates for memory alignment, reference from FinRL (env_stocktrading.py: date_memory)
-        # self.reset()
-        # self.infusion_strength = self.config_trading.infusion_strength  # For perturbation
-        # self.alpha = self.config_trading.model_params.get('alpha', 0.05) if self.config_trading.model == 'CPPO' else None  # For CVaR
 
     def reset(self, *, seed=None, options=None):
         if seed is not None:
