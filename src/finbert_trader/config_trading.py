@@ -118,19 +118,17 @@ class ConfigTrading:
         self.slippage_rate = 0.001  # Slippage factor to simulate market impact
         self.commission_rate = 0.0005  # Commission rate per trade
         self.reward_scaling = 1e-4  # Scale rewards to stabilize RL training gradients
-        self.action_clip_mode = 'continuous'  # Action space mode: continuous for fractional shares
         self.action_clip_range = (-1.0, 1.0)  # Clip actions within this range for bounded decisions
         self.cash_penalty_proportion = 0.01  # Penalty proportion for low cash to encourage balanced portfolios
 
         # Set risk and training hyperparameters with references for reproducibility
         self.risk_aversion = 0.0  # Default no aversion; can be tuned for conservative strategies
         self.total_timesteps = 2e6  # Increased to 2M for stability, reference from FinRL_DeepSeek (5.2: 2M steps for convergence)
-        self.infusion_strength = 0.001  # Default 0.1% for subtle injection, tunable 0.001-0.1, reference from FinRL_DeepSeek (5.3: 0.1% vs 10%)
         self.cvar_factor = 0.05 # Weight for CVaR downside risk adjustment, reference from FinRL_DeepSeek (4.1.2: CVaR shaping)
         self.cvar_alpha = 0.05  # CVaR confidence level, reference from FinRL_DeepSeek (4.1.2: alpha=0.05)
         self.cvar_min_history = 30 # CVaR minimum history, reference from FinRL_DeepSeek
         self.risk_mode = True  # Enable risk assessment prompt, reference from FinRL_DeepSeek (3: Risk Prompt)
-        self.turbulence_threshold = None  # Optional threshold for market turbulence detection
+        self.infusion_strength = 0.001  # Default 0.1% for subtle injection, tunable 0.001-0.1, reference from FinRL_DeepSeek (5.3: 0.1% vs 10%)
         
         # Ablation Experiment Controller
         self.use_senti_factor = True
@@ -138,6 +136,11 @@ class ConfigTrading:
 
         self.use_senti_features = True
         self.use_risk_features = True
+
+        self.use_senti_threshold = True
+        self.use_risk_threshold = True
+
+        self.use_dynamic_infusion = False
 
         # Set model and load params with fallback for unsupported models
         self.model = model
@@ -313,7 +316,6 @@ class ConfigTrading:
             'slippage_rate': 0.001,
             'commission_rate': 0.0005,
             'reward_scale': 1e-4,
-            'action_clip_mode': 'continuous',
             'action_clip_range': (-1.0, 1.0),
             'cash_penalty_proportion': 0.1,
             'risk_aversion': 0.0,
