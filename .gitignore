@@ -45,6 +45,9 @@ results_cache/
 # exper_cache
 exper_cache/
 
+# plot_cache
+plot_cache/
+
 # logs
 logs/
 
