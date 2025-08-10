@@ -102,6 +102,15 @@ class ConfigSetup:
         self.features_risk = {}
         self.features_all = {}
 
+        # Initialize thresholds for RL trading, updated in FeatureEngineer "prepare_rl_data()" function, inherited by ConfigTrading
+        self.senti_threshold = {'train': {},
+                                'valid': {},
+                                'test': {}}
+        self.risk_threshold = {'train': {},
+                                'valid': {},
+                                'test': {}}
+        self.threshold_factor = 0.5
+
         if custom_config:
             # Apply overrides from dict for flexibility
             for key, value in custom_config.items():

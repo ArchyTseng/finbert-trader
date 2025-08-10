@@ -310,7 +310,7 @@ class FeatureEngineer:
         logging.info(f"FE Module - _generate_scaler_path - Generated scaler path: {scaler_path}")
         return scaler_path
     
-    def normalize_features(self, df, fit=False, means_stds=None, scaler_path=None, force_recompute=False):
+    def normalize_features(self, df, fit=False, means_stds=None, scaler_path=None, force_recompute=False, data_type='train'):
         """
         Introduction
         ------------
@@ -368,7 +368,7 @@ class FeatureEngineer:
             if not means_stds or force_recompute:
                 means_stds = {}  # Initialize dict for column-wise means and stds
                 for col in filter_normalize_cols:
-                    logging.info(f"FE Module - normalize_features - Normalizing column : {col}")
+                    logging.info(f"FE Module - normalize_features - Normalizing column for {data_type} data: {col}")
                     mean = df[col].mean()  # Compute mean
                     std = df[col].std()  # Compute std
                     std = max(std, 1e-6)  # Enforce min std to prevent division by zero
@@ -397,7 +397,7 @@ class FeatureEngineer:
                 logging.warning("FE Module - normalize_features - No scaler found; defaulting to mean=0, std=1")
                 means_stds = {col: (0, 1) for col in filter_normalize_cols}
             for col in filter_normalize_cols:
-                logging.info(f"FE Module - normalize_features - Normalizing column : {col}")
+                logging.info(f"FE Module - normalize_features - Normalizing column for {data_type} data: {col}")
                 mean, std = means_stds.get(col, (0, 1))  # Get stats or default to no-op
                 std = max(std, 1e-6)  # Enforce min std
                 df[col] = (df[col] - mean) / std  # Apply normalization
@@ -405,7 +405,7 @@ class FeatureEngineer:
             logging.info(f"FE Module - normalize_features - Successfull Normalized columns: {filter_normalize_cols}, fit mode: {fit}")
             return df, means_stds  # Return normalized df and computed means_stds in fit mode
 
-    def prepare_rl_data(self, fused_df, symbols=None):
+    def prepare_rl_data(self, fused_df, symbols=None, data_type='train'):
         """
         Introduction
         ------------
@@ -451,6 +451,9 @@ class FeatureEngineer:
         logging.info(f"FE Module - prepare_rl_data - Feature Columns: {fused_df.columns.tolist()}")  # Log feature columns for debugging
 
         self._update_features_categories(fused_df)       # Update features_* attributes to self.config for inheriting by ConfigTrading
+        logging.info(f"FE Module - prepare_rl_data - Updated features_* attributes to self.config")
+        self._update_senti_risk_threshold(fused_df, data_type)     # Update senti/risk thresholds to self.config for inheriting by ConfigTrading
+        logging.info(f"FE Module - prepare_rl_data - Updated senti/risk thresholds to self.config")
 
         rl_data = []  # Initialize list to store RL data dicts
         dates = fused_df.index  # Extract dates for start_date assignment
@@ -755,6 +758,66 @@ class FeatureEngineer:
             logging.warning(f"FE Module - load_exper_data_dict_npz - Load exper_data_dict failed: {e}")
         return exper_data_dict
 
+    def _update_senti_risk_threshold(self, fused_df, data_type=None):
+        """
+        Introduction
+        ------------
+        Update sentiment / risk features threshold in config dynamiclly and prepare to be inherited by ConfigTrading in downstream pipeline.
+        Compute sentiment / risk mean and std values for introducing Senti_facor and Risk_facor dynamically.
+        Prepares global config for stock_trading_env state tracking after feature merging.
+
+        Parameters
+        ----------
+        fused_df : pd.DataFrame
+            Fused DataFrame with symbol-suffixed columns.
+
+        data_type : str
+            Type of data to process, expected: 'train', 'valid' or 'test'.
+
+        Notes
+        -----
+        - Asserts input type; filters columns with 'sentiment' or 'risk'.
+        - Updates config dicts: senti_threshold, risk_threshold.
+        - Logs updates and warnings on exceptions for traceability.
+        """
+        assert isinstance(fused_df, pd.DataFrame), f"FE Module - _update_senti_risk_threshold - Unexpected data type : {type(fused_df)}"  # Assert input is DataFrame to prevent invalid processing
+        
+        logging.info(f"FE Module - _update_senti_risk_threshold - Start to update senti / risk threshold to ConfigSetup")  # Log start of update process
+        logging.info(f"FE Module - _update_senti_risk_threshold - Symbols to process: {self.config.symbols}")  # Log symbols for context
+        try:
+            senti_cols = [col for col in fused_df.columns if 'sentiment' in col]
+            risk_cols = [col for col in fused_df.columns if 'risk' in col]
+            logging.info(f"FE Module - _update_senti_risk_threshold - Senti columns: {senti_cols}, Risk columns: {risk_cols}")
+
+            senti_values = fused_df[senti_cols].values.flatten()
+            risk_values = fused_df[risk_cols].values.flatten()
+            logging.info(f"FE Module - _update_senti_risk_threshold - Senti values: {len(senti_values)}, Risk values: {len(risk_values)}")
+            if len(senti_values) == 0 or len(risk_values) == 0:
+                # Early warning and return if DF is empty to avoid unnecessary grouping
+                logging.warning(f"FE Module - _update_senti_risk_threshold - Empty senti_values or risk_values at updating senti / risk threshold step ")
+                return
+            mean_senti = np.mean(senti_values)
+            std_senti = np.std(senti_values)
+            logging.info(f"FE Module - _update_senti_risk_threshold - Senti mean: {mean_senti}, Senti std: {std_senti}")
+            mean_risk = np.mean(risk_values)
+            std_risk = np.std(risk_values)
+            logging.info(f"FE Module - _update_senti_risk_threshold - Risk mean: {mean_risk}, Risk std: {std_risk}")
+            
+            T_f = getattr(self.config, 'threshold_factor', 0.5)
+            self.config.senti_threshold[data_type] = {'mean': mean_senti,
+                                                      'std': std_senti,
+                                                      'pos_threshold': mean_senti + T_f * std_senti,
+                                                      'neg_threshold': mean_senti - T_f * std_senti}
+            self.config.risk_threshold[data_type] = {'mean': mean_risk,
+                                                      'std': std_risk,
+                                                      'pos_threshold': mean_risk + T_f * std_risk,
+                                                      'neg_threshold': mean_risk - T_f * std_risk}
+            logging.info(f"FE Module - _update_senti_risk_threshold - Successfully Update senti / risk threshold to ConfigSetup")
+        except Exception as e:
+            logging.error(f"FE Module - _update_senti_risk_threshold - Fail to update senti / risk threshold : {e}")
+            raise ValueError(f"FE Module - _update_senti_risk_threshold - Fail to update senti / risk threshold")
+
+    
     def _update_features_categories(self, fused_df):
         """
         Introduction
@@ -938,15 +1001,15 @@ class FeatureEngineer:
 
                 # Normalize indicators + sentiment + risk columns for RL training
                 train_scaler_path = self._generate_scaler_path("scaler_cache", group, mode)   # Dynamic per-group/mode
-                train_df, means_stds = self.normalize_features(train_df, fit=True, scaler_path=train_scaler_path, force_recompute=True) # Load cache scaler if existed
-                valid_df, _ = self.normalize_features(valid_df, fit=False, means_stds=means_stds) # Load cache scaler if existed
-                test_df, _ = self.normalize_features(test_df, fit=False, means_stds=means_stds)   # Load cache scaler if existed
+                train_df, means_stds = self.normalize_features(train_df, fit=True, scaler_path=train_scaler_path, force_recompute=True, data_type='train') # Load cache scaler if existed
+                valid_df, _ = self.normalize_features(valid_df, fit=False, means_stds=means_stds, data_type='valid') # Load cache scaler if existed
+                test_df, _ = self.normalize_features(test_df, fit=False, means_stds=means_stds, data_type='test')   # Load cache scaler if existed
                 logging.info(f"FE Module - generate_experiment_data - Normalized features for mode {mode}")
 
                 # Prepare window for RL observation
-                train_rl_data = self.prepare_rl_data(train_df)  # Prepare RL-compatible data (e.g., windowed observations)
-                valid_rl_data = self.prepare_rl_data(valid_df)
-                test_rl_data = self.prepare_rl_data(test_df)
+                train_rl_data = self.prepare_rl_data(train_df, data_type='train')  # Prepare RL-compatible data (e.g., windowed observations)
+                valid_rl_data = self.prepare_rl_data(valid_df, data_type='valid')
+                test_rl_data = self.prepare_rl_data(test_df, data_type='test')
                 if not train_rl_data or not valid_rl_data or not test_rl_data:
                     raise ValueError(f"No RL data for mode {mode}")
                 logging.info(f"FE Module - generate_experiment_data - Prepared RL data for mode {mode}: train {len(train_rl_data)}, valid {len(valid_rl_data)}, test {len(test_rl_data)}")

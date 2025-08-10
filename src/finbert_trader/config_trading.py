@@ -163,7 +163,10 @@ class ConfigTrading:
                              'features_ind',  # Indicator features
                              'features_senti',  # Sentiment features
                              'features_risk',  # Risk features
-                             'features_all']  # All combined features
+                             'features_all',
+                             'senti_threshold',
+                             'risk_threshold',
+                             'threshold_factor']  # All combined features
             for param in shared_params:
                 if hasattr(upstream_config, param):  # Check if param exists in upstream
                     setattr(self, param, getattr(upstream_config, param))  # Inherit to maintain consistency
