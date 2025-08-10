@@ -289,6 +289,6 @@ class NewsFeatureEngineer:
             news_df[senti_col] = np.clip(news_df[senti_col] + np.random.normal(0, noise_std, len(news_df)),
                                                  1.0, 5.0)  # Add Gaussian noise and clip to range
             final_var = news_df[senti_col].var()  # Recalculate final variance
-            logging.info(f"NF Module - compute_sentiment_risk_score - fSentiment variance after adjustment: {final_var:.4f}")  # Log adjusted variance
+            logging.info(f"NF Module - compute_sentiment_risk_score - Sentiment variance after adjustment: {final_var:.4f}")  # Log adjusted variance
         
         return news_df  # Return aggregated and adjusted DF

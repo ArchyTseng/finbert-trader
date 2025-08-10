@@ -116,7 +116,7 @@ class StockFeatureEngineer:
 
             nan_count_after = stock_df[col].isna().sum()  # Count after filling
             if nan_count_before > nan_count_after:
-                logging.info(f"SF Module - Filled {nan_count_before - nan_count_after} NaNs in {ind}_{symbol}")  # Log filled count if any
+                logging.info(f"SF Module - compute_features - Filled {nan_count_before - nan_count_after} NaNs in {ind}_{symbol}")  # Log filled count if any
         logging.info(f"SF Module - compute_features - Successfully Compute features for {symbol}")
         logging.info(f"SF Module - compute_features - {symbol} stock_df shape: {stock_df.shape}, columns: {stock_df.columns.tolist()}")
         return stock_df  # Return updated DF with features

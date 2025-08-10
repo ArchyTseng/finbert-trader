@@ -161,9 +161,9 @@ class StockTradingEnv(gym.Env):
                 logging.info(f"STE Module - Env Step - Using sentiment factor, sentiment_per_stock: {sentiment_per_stock}")
                 for i in range(self.action_dim):
                     if (sentiment_per_stock[i] > 0 and actions[i] > 0) or (sentiment_per_stock[i] < 0 and actions[i] < 0):
-                        Senti_factor[i] = 1 + self.config.infusion_strength
+                        Senti_factor[i] = 1 + getattr(self.config, 'infusion_strength', 0.001)
                     elif (sentiment_per_stock[i] > 0 and actions[i] < 0) or (sentiment_per_stock[i] < 0 and actions[i] > 0):
-                        Senti_factor[i] = 1 - self.config.infusion_strength
+                        Senti_factor[i] = 1 - getattr(self.config, 'infusion_strength', 0.001)
 
             mod_actions = np.clip(Senti_factor * actions, -1, 1)  # Optional re-clip after infusion
 

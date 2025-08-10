@@ -303,7 +303,14 @@ class FeatureEngineer:
         logging.info(f"FE Module - merge_features - Prepared fused_df , Columns : {fused_df.columns.tolist()}")
         return fused_df  # Return the fully fused and cleaned DataFrame
 
-    def normalize_features(self, df, fit=False, means_stds=None, scaler_path=None):
+    def _generate_scaler_path(self, base_dir, group, mode):
+        """Generate scaler path dynamiclly"""
+        filename = f"scaler_{group}_{mode}_train.pkl"
+        scaler_path = os.path.join(base_dir, filename)
+        logging.info(f"FE Module - _generate_scaler_path - Generated scaler path: {scaler_path}")
+        return scaler_path
+    
+    def normalize_features(self, df, fit=False, means_stds=None, scaler_path=None, force_recompute=False):
         """
         Introduction
         ------------
@@ -352,19 +359,13 @@ class FeatureEngineer:
 
         if fit:
             # Fit mode: Compute or load means_stds
+            if scaler_path and os.path.exists(scaler_path) and force_recompute:
+                logging.info(f"FE Module - normalize_features - Removed old scaler at {scaler_path} to recompute.")
+                os.remove(scaler_path)  # Remove scaler cache and recompute
             if scaler_path and os.path.exists(scaler_path):
-                means_stds = joblib.load(scaler_path)  # Load existing scaler from cache to reuse stats
-                logging.info(f"FE Module - normalize_features - Removed old scaler at {scaler_path} to refit.")
-            if not means_stds:
-                # Fallback: If no means_stds, warn and use identity transform (mean=0, std=1)
-                logging.warning("FE Module - normalize_features - No scaler found; defaulting to mean=0, std=1")
-            if means_stds:
-                for col in filter_normalize_cols:
-                    logging.info(f"FE Module - normalize_features - Normalizing column : {col}")
-                    mean, std = means_stds.get(col, (0, 1))  # Get stats or default to no-op
-                    std = max(std, 1e-6)  # Enforce min std
-                    df[col] = (df[col] - mean) / std  # Apply normalization
-            else:
+                logging.info(f"FE Module - normalize_features - Loaded existing scaler from {scaler_path} (fit mode)")
+                means_stds = joblib.load(scaler_path)   # Load scaler if path provided
+            if not means_stds or force_recompute:
                 means_stds = {}  # Initialize dict for column-wise means and stds
                 for col in filter_normalize_cols:
                     logging.info(f"FE Module - normalize_features - Normalizing column : {col}")
@@ -377,22 +378,32 @@ class FeatureEngineer:
                     os.makedirs(os.path.dirname(scaler_path), exist_ok=True)  # Ensure directory exists for saving
                     joblib.dump(means_stds, scaler_path)  # Save scaler for future use
                     logging.info(f"FE Module - normalize_features - Saved new scaler to {scaler_path}")
+            else:
+                for col in filter_normalize_cols:
+                    mean, std = means_stds.get(col, (0, 1))
+                    std = max(std, 1e-6)
+                    df[col] = (df[col] - mean) / std
+
+            logging.info(f"FE Module - normalize_features - Successfull Normalized columns: {filter_normalize_cols}, fit mode: {fit}")
+            return df, means_stds  # Return normalized df and computed means_stds in fit mode
+        
         else:
             # Transform mode: Apply provided or loaded means_stds
             if scaler_path and os.path.exists(scaler_path):
-                means_stds = joblib.load(scaler_path)  # Load scaler if path provided
                 logging.info(f"FE Module - normalize_features - Loaded scaler from {scaler_path} for transform")
+                means_stds = joblib.load(scaler_path)  # Load scaler if path provided
             if not means_stds:
                 # Fallback: If no means_stds, warn and use identity transform (mean=0, std=1)
                 logging.warning("FE Module - normalize_features - No scaler found; defaulting to mean=0, std=1")
+                means_stds = {col: (0, 1) for col in filter_normalize_cols}
             for col in filter_normalize_cols:
                 logging.info(f"FE Module - normalize_features - Normalizing column : {col}")
                 mean, std = means_stds.get(col, (0, 1))  # Get stats or default to no-op
                 std = max(std, 1e-6)  # Enforce min std
                 df[col] = (df[col] - mean) / std  # Apply normalization
-            return df  # Return only df in transform mode
 
-        return df, means_stds  # Return normalized df and computed means_stds in fit mode
+            logging.info(f"FE Module - normalize_features - Successfull Normalized columns: {filter_normalize_cols}, fit mode: {fit}")
+            return df, means_stds  # Return normalized df and computed means_stds in fit mode
 
     def prepare_rl_data(self, fused_df, symbols=None):
         """
@@ -844,6 +855,7 @@ class FeatureEngineer:
         - Automatically reuses cached files if available.
         - Supports risk score injection and FinBERT sentiment adjustment.
         """
+        os.makedirs(self.exper_data_path, exist_ok=True)
         path_suffix = self._generate_path_suffix()
         exper_data_list = os.listdir(self.exper_data_path)
         if exper_data_list and exper_data_list[0].endswith(path_suffix):
@@ -925,10 +937,10 @@ class FeatureEngineer:
                 logging.info(f"FE Module - generate_experiment_data - Split for mode {mode}: train {len(train_df)}, valid {len(valid_df)}, test {len(test_df)}")
 
                 # Normalize indicators + sentiment + risk columns for RL training
-                scaler_path = f"scaler_cache/scaler_train_{group}_{mode}.pkl"   # Dynamic per-group/mode
-                train_df, means_stds = self.normalize_features(train_df, fit=True, scaler_path=scaler_path) # Load cache scaler if existed
-                valid_df = self.normalize_features(valid_df, fit=False, means_stds=means_stds, scaler_path=scaler_path) # Load cache scaler if existed
-                test_df = self.normalize_features(test_df, fit=False, means_stds=means_stds, scaler_path=scaler_path)   # Load cache scaler if existed
+                train_scaler_path = self._generate_scaler_path("scaler_cache", group, mode)   # Dynamic per-group/mode
+                train_df, means_stds = self.normalize_features(train_df, fit=True, scaler_path=train_scaler_path, force_recompute=True) # Load cache scaler if existed
+                valid_df, _ = self.normalize_features(valid_df, fit=False, means_stds=means_stds) # Load cache scaler if existed
+                test_df, _ = self.normalize_features(test_df, fit=False, means_stds=means_stds)   # Load cache scaler if existed
                 logging.info(f"FE Module - generate_experiment_data - Normalized features for mode {mode}")
 
                 # Prepare window for RL observation
@@ -1052,15 +1064,6 @@ for mode, data_dict in exper_data_dict.items():
             print(f"data sample: {data_list[50]['start_date'], data_list[50]['states'][0], data_list[50]['targets'][0]}")
 
 # %%
-setup_config.features_all
-
-# %%
-setup_config.features_dim_per_symbol
-
-# %%
-setup_config.features_ind
-
-# %%
 from finbert_trader.config_trading import ConfigTrading
 
 # %%
@@ -1169,19 +1172,19 @@ plot_senti_risk_distribution(
 # %%
 plot_senti_risk_distribution(
     exper_data_dict,
-    symbol="AAPL",
+    symbol="GOOGL",
     features_all_flatten=trading_config.features_all_flatten,
     senti_feature_index=trading_config.senti_feature_index,
-    risk_feature_index=trading_config.risk_feature_index
+    risk_feature_index=trading_config.risk_feature_index,
 )
 
 # %%
 plot_senti_risk_distribution(
     exper_data_dict,
-    symbol="GOOGL",
+    symbol="AAPL",
     features_all_flatten=trading_config.features_all_flatten,
     senti_feature_index=trading_config.senti_feature_index,
-    risk_feature_index=trading_config.risk_feature_index,
+    risk_feature_index=trading_config.risk_feature_index
 )
 
 # %%
@@ -1352,8 +1355,8 @@ save_path = plot_senti_risk_grid(
     exper_data_dict=exper_data_dict,
     trading_config=trading_config,
     dataset="train",
-    model_names=None,        # 默认采用 exper_data_dict 的顶层 keys
-    symbols=None,            # 默认采用 trading_config.symbols
+    model_names=None,        # Use exper_data_dict keys default
+    symbols=None,            # Use trading_config.symbols default
     save_folder="plot_cache",
     filename_prefix="senti_risk_grid_all_single",
     bins=60,
@@ -1366,8 +1369,22 @@ save_path = plot_senti_risk_grid(
     exper_data_dict=exper_data_dict,
     trading_config=trading_config,
     dataset="valid",
-    model_names=None,        # 默认采用 exper_data_dict 的顶层 keys
-    symbols=None,            # 默认采用 trading_config.symbols
+    model_names=None,        # Use exper_data_dict keys default
+    symbols=None,            # Use trading_config.symbols default
+    save_folder="plot_cache",
+    filename_prefix="senti_risk_grid_all_single",
+    bins=60,
+    auto_save=True,
+    show_fig=True
+)
+
+# %%
+save_path = plot_senti_risk_grid(
+    exper_data_dict=exper_data_dict,
+    trading_config=trading_config,
+    dataset="test",
+    model_names=None,        # Use exper_data_dict keys default
+    symbols=None,            # Use trading_config.symbols default
     save_folder="plot_cache",
     filename_prefix="senti_risk_grid_all_single",
     bins=60,
@@ -1384,7 +1401,7 @@ def summarize_feature_by_split(exper_data_dict, model='PPO', senti_idx=None, ris
         if split not in exper_data_dict[model]:
             continue
         data_list = exper_data_dict[model][split]
-        # 合并所有 episodes 的 states
+
         all_states = np.concatenate([ep['states'] for ep in data_list], axis=0)
         senti = all_states[:, senti_idx].ravel()
         risk = all_states[:, risk_idx].ravel()
