@@ -94,6 +94,8 @@ class ConfigTrading:
         model : str, optional
             The RL model to use (e.g., 'PPO', 'CPPO'). If unsupported, falls back to 'PPO'.
             Default is 'PPO'.
+        Ablation Experiment:
+            Introduce senti/risk_factor , senti/risk_features to switch different Ablation Experiment mode.
 
         Returns
         -------
@@ -113,19 +115,29 @@ class ConfigTrading:
         self.initial_cash = 1e6  # Initial capital; large value for stability in simulations
         self.buy_cost_pct = 1e-3  # Buy transaction cost as percentage (0.1%)
         self.sell_cost_pct = 1e-3  # Sell transaction cost as percentage (0.1%)
-        self.slippage = 0.001  # Slippage factor to simulate market impact
+        self.slippage_rate = 0.001  # Slippage factor to simulate market impact
         self.commission_rate = 0.0005  # Commission rate per trade
         self.reward_scaling = 1e-4  # Scale rewards to stabilize RL training gradients
         self.action_clip_mode = 'continuous'  # Action space mode: continuous for fractional shares
         self.action_clip_range = (-1.0, 1.0)  # Clip actions within this range for bounded decisions
-        self.cash_penalty_proportion = 0.1  # Penalty proportion for low cash to encourage balanced portfolios
+        self.cash_penalty_proportion = 0.01  # Penalty proportion for low cash to encourage balanced portfolios
 
         # Set risk and training hyperparameters with references for reproducibility
         self.risk_aversion = 0.0  # Default no aversion; can be tuned for conservative strategies
         self.total_timesteps = 2e6  # Increased to 2M for stability, reference from FinRL_DeepSeek (5.2: 2M steps for convergence)
         self.infusion_strength = 0.001  # Default 0.1% for subtle injection, tunable 0.001-0.1, reference from FinRL_DeepSeek (5.3: 0.1% vs 10%)
+        self.cvar_factor = 0.05 # Weight for CVaR downside risk adjustment, reference from FinRL_DeepSeek (4.1.2: CVaR shaping)
+        self.cvar_alpha = 0.05  # CVaR confidence level, reference from FinRL_DeepSeek (4.1.2: alpha=0.05)
+        self.cvar_min_history = 30 # CVaR minimum history, reference from FinRL_DeepSeek
         self.risk_mode = True  # Enable risk assessment prompt, reference from FinRL_DeepSeek (3: Risk Prompt)
         self.turbulence_threshold = None  # Optional threshold for market turbulence detection
+        
+        # Ablation Experiment Controller
+        self.use_senti_factor = True
+        self.ust_risk_factor = True
+
+        self.use_senti_features = True
+        self.use_risk_features = True
 
         # Set model and load params with fallback for unsupported models
         self.model = model
@@ -241,7 +253,7 @@ class ConfigTrading:
             )
 
             # Assert total length matches expected dimension to catch data inconsistencies early
-            assert len(self.features_all_flatten) == len(self.symbols) * len(self.features_dim_per_symbol), f"Error length of flattened all features: {len(self.features_all_flatten)}, Expected: {len(self.symbols) * len(self.features_dim_per_symbol)}"
+            assert len(self.features_all_flatten) == len(self.symbols) * self.features_dim_per_symbol, f"Error length of flattened all features: {len(self.features_all_flatten)}, Expected: {len(self.symbols) * self.features_dim_per_symbol}"
             # Log flattened size
             logging.info(f"CT Module - Flattened all features for symbol: {self.symbols}, size: {len(self.features_all_flatten)} ")
 
@@ -268,7 +280,7 @@ class ConfigTrading:
         return {"initial_cash": self.initial_cash,
                 "buy_cost_pct": self.buy_cost_pct,
                 "sell_cost_pct": self.sell_cost_pct,
-                "slippage": getattr(self, 'slippage', 0.001),
+                "slippage_rate": getattr(self, 'slippage_rate', 0.001),
                 "commission_rate": getattr(self, 'commission_rate', 0.0005),
                 "reward_scaling": self.reward_scaling,
                 "symbols": self.symbols,
@@ -276,6 +288,7 @@ class ConfigTrading:
                 "state_dim": self.state_dim,
                 "action_dim": self.action_dim,
                 "features_all_flatten": self.features_all_flatten,
+                "cvar_factor": self.cvar_factor,
                 "risk_mode": getattr(self, 'risk_mode', True),
                 "infusion_strength": getattr(self, 'infusion_strength', 0.001),}
 
@@ -294,7 +307,7 @@ class ConfigTrading:
             'initial_cash': 1e6,
             'buy_cost_pct': 1e-3,
             'sell_cost_pct': 1e-3,
-            'slippage': 0.001,
+            'slippage_rate': 0.001,
             'commission_rate': 0.0005,
             'reward_scale': 1e-4,
             'action_clip_mode': 'continuous',
@@ -303,6 +316,7 @@ class ConfigTrading:
             'risk_aversion': 0.0,
             'total_timesteps': 2000000,
             'infusion_strength': 0.001,
+            "cvar_factor": 0.05,
             'risk_mode': True,
             'model_params': ConfigTrading._model_params.get(model, {})
         }

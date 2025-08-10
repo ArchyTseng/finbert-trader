@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # ---
 # jupyter:
 #   jupytext:
@@ -132,9 +133,9 @@ class FeatureEngineer:
                 processed_chunks.append(cleaned_chunk)  # Append only non-empty cleaned chunks
         if processed_chunks:
             aggregated_df = pd.concat(processed_chunks, ignore_index=True)  # Concatenate all chunks into a single DF, reset index for clean aggregation
-            logging.info(f"FE Module - Aggregated cleaned news: {len(aggregated_df)} rows")  # Log aggregated row count for data volume tracking
+            logging.info(f"FE Module - _news_chunks - Aggregated cleaned news: {len(aggregated_df)} rows")  # Log aggregated row count for data volume tracking
             return aggregated_df  # Return the full aggregated DataFrame
-        logging.info("FE Module - No valid news chunks, returning empty DataFrame")  # Log if no data processed
+        logging.info("FE Module - _news_chunks - No valid news chunks, returning empty DataFrame")  # Log if no data processed
         return pd.DataFrame(columns=['Date', 'Symbol', 'Article_title', 'Full_Text', 'Lsa_summary', 'Luhn_summary', 'Textrank_summary', 'Lexrank_summary']) # Match original columns in FNSPID dataset for consistency
 
     def _fill_score_columns(self, df, prefix, fill_value=3.0):
@@ -170,7 +171,7 @@ class FeatureEngineer:
         df[score_cols] = df[score_cols].fillna(fill_value)  # Batch fill NaNs with specified value
         # Sum Nan values after filling
         nulls_after = df[score_cols].isna().sum().sum()  # Count post-fill to verify
-        logging.info(f"FE Module - Filled {nulls_before - nulls_after} NaNs in {prefix} columns")  # Log filled count for data quality tracking
+        logging.info(f"FE Module - _fill_score_columns - Filled {nulls_before - nulls_after} NaNs in {prefix} columns")  # Log filled count for data quality tracking
         return df  # Return the updated DataFrame
     
     def _fill_nan_after_merge(self, df):
@@ -202,13 +203,17 @@ class FeatureEngineer:
             if 'sentiment_score_' in col or 'risk_score_' in col:
                 # Handle sentiment/risk columns: Fill with neutral 3.0 if NaNs exist
                 if df[col].isna().any():
-                    logging.info(f"FE Module - Fillna with value 3.0 in {col}")
+                    nulls_before = df[col].isna().sum().sum() 
                     df[col] = df[col].fillna(3.0)  # Neutral value for scores (e.g., 1-5 scale)
-            elif any(keyword in col for keyword in ['macd', 'rsi', 'cci', 'sma', 'dx', 'boll', 'close']):
+                    nulls_after = df[col].isna().sum().sum() 
+                    logging.info(f"FE Module - _after_merge - Fillna {nulls_before - nulls_after} NaNs with value 3.0 in {col}")
+            elif any(keyword in col for keyword in ['macd', 'rsi', 'cci', 'sma', 'dx', 'boll', 'close_sma']):
                 # Handle technical indicator columns: Fill with 0 if NaNs exist
                 if df[col].isna().any():
-                    logging.info(f"FE Module - Fillna with value 0 in {col}")
+                    nulls_before = df[col].isna().sum().sum() 
                     df[col] = df[col].fillna(0)  # Zero for indicators to represent no signal
+                    nulls_after = df[col].isna().sum().sum() 
+                    logging.info(f"FE Module - _after_merge - Fillna {nulls_before - nulls_after} NaNs with value 0.0 in {col}")
         return df  # Return the filled DataFrame
 
     def merge_features(self, stock_data_dict, sentiment_df, risk_df=None, ind_mode=None):
@@ -279,7 +284,7 @@ class FeatureEngineer:
         # Ensures prices positive without altering core merge/normalize
         for symbol in self.config.symbols:
             fused_df = fused_df[fused_df[f'Adj_Close_{symbol}'] > 0]  # Filter rows where Adj_Close > 0 for each symbol
-        logging.info(f"FE Module - Filtered fused_df to positive Adj_Close: {fused_df.shape} rows")  # Log post-filter shape
+        logging.info(f"FE Module - merge_features - Filtered fused_df to positive Adj_Close: {fused_df.shape} rows")  # Log post-filter shape
 
         # Get columns without 'Date'
         cols = fused_df.columns.tolist()
@@ -291,10 +296,11 @@ class FeatureEngineer:
             ordered_cols += [col for col in cols if col.endswith(f'_{symbol}')]  # Append columns per symbol
 
         fused_df = fused_df[ordered_cols]  # Reorder DF for symbol-grouped columns
-        logging.info(f"FE Module - Fused features: {fused_df.shape} rows, with risk_mode={self.risk_mode}")  # Log final fused shape and mode
+        logging.info(f"FE Module - merge_features - Fused features: {fused_df.shape} rows, with risk_mode={self.risk_mode}")  # Log final fused shape and mode
 
         fused_df = self._fill_nan_after_merge(fused_df)  # Final NaN fill after all operations
 
+        logging.info(f"FE Module - merge_features - Prepared fused_df , Columns : {fused_df.columns.tolist()}")
         return fused_df  # Return the fully fused and cleaned DataFrame
 
     def normalize_features(self, df, fit=False, means_stds=None, scaler_path=None):
@@ -329,28 +335,39 @@ class FeatureEngineer:
         - Caches scaler to disk for reuse; logs loading/saving.
         - Returns empty dict if no columns to normalize.
         """
+        logging.info(f"FE Module - normalize_features - Full Data Columns : {df.columns.tolist()}")
         to_normalize = self.stock_engineer.indicators + ['sentiment_score', 'risk_score']  # List of base columns to target for normalization
-        present_cols = [col for col in df.columns 
+        filter_normalize_cols = [col for col in df.columns 
                         if any(ind in col for ind in to_normalize) 
-                        and not any(x in col.lower() for x in ['open', 'high', 'low', 'close', 'volume']) 
+                        and not any(x in col for x in ['Adj_Open', 'Adj_High', 'Adj_Low', 'Adj_Close', 'Volume']) 
                         and pd.api.types.is_numeric_dtype(df[col])]  # Filter columns: match targets, exclude raw prices/volumes, ensure numeric
-
+        logging.info(f"FE Module - normalize_features - Filtered Normalizing columns: {filter_normalize_cols}")
         if 'Date' in df.columns:
             df = df.set_index('Date')  # Set Date as index to exclude from features if present
 
-        if not present_cols:
+        if not filter_normalize_cols:
             # Early exit if no valid columns found; avoid unnecessary processing
-            logging.warning("FE Module - No valid columns to normalize.")
+            logging.warning("FE Module - normalize_features - No valid columns to normalize.")
             return df, {}  # Always return tuple for consistency in fit mode
 
         if fit:
             # Fit mode: Compute or load means_stds
             if scaler_path and os.path.exists(scaler_path):
                 means_stds = joblib.load(scaler_path)  # Load existing scaler from cache to reuse stats
-                logging.info(f"FE Module - Loaded scaler from {scaler_path}")
+                logging.info(f"FE Module - normalize_features - Removed old scaler at {scaler_path} to refit.")
+            if not means_stds:
+                # Fallback: If no means_stds, warn and use identity transform (mean=0, std=1)
+                logging.warning("FE Module - normalize_features - No scaler found; defaulting to mean=0, std=1")
+            if means_stds:
+                for col in filter_normalize_cols:
+                    logging.info(f"FE Module - normalize_features - Normalizing column : {col}")
+                    mean, std = means_stds.get(col, (0, 1))  # Get stats or default to no-op
+                    std = max(std, 1e-6)  # Enforce min std
+                    df[col] = (df[col] - mean) / std  # Apply normalization
             else:
                 means_stds = {}  # Initialize dict for column-wise means and stds
-                for col in present_cols:
+                for col in filter_normalize_cols:
+                    logging.info(f"FE Module - normalize_features - Normalizing column : {col}")
                     mean = df[col].mean()  # Compute mean
                     std = df[col].std()  # Compute std
                     std = max(std, 1e-6)  # Enforce min std to prevent division by zero
@@ -359,16 +376,17 @@ class FeatureEngineer:
                 if scaler_path:
                     os.makedirs(os.path.dirname(scaler_path), exist_ok=True)  # Ensure directory exists for saving
                     joblib.dump(means_stds, scaler_path)  # Save scaler for future use
-                    logging.info(f"FE Module - Saved new scaler to {scaler_path}")
+                    logging.info(f"FE Module - normalize_features - Saved new scaler to {scaler_path}")
         else:
             # Transform mode: Apply provided or loaded means_stds
             if scaler_path and os.path.exists(scaler_path):
                 means_stds = joblib.load(scaler_path)  # Load scaler if path provided
-                logging.info(f"FE Module - Loaded scaler from {scaler_path} for transform")
+                logging.info(f"FE Module - normalize_features - Loaded scaler from {scaler_path} for transform")
             if not means_stds:
                 # Fallback: If no means_stds, warn and use identity transform (mean=0, std=1)
-                logging.warning("FE Module - No scaler found; defaulting to mean=0, std=1")
-            for col in present_cols:
+                logging.warning("FE Module - normalize_features - No scaler found; defaulting to mean=0, std=1")
+            for col in filter_normalize_cols:
+                logging.info(f"FE Module - normalize_features - Normalizing column : {col}")
                 mean, std = means_stds.get(col, (0, 1))  # Get stats or default to no-op
                 std = max(std, 1e-6)  # Enforce min std
                 df[col] = (df[col] - mean) / std  # Apply normalization
@@ -409,17 +427,17 @@ class FeatureEngineer:
         - Logs prepared RL data count; assumes symbols ordered for consistent concat.
         """
         symbols = symbols or self.config.symbols  # Default to config symbols if not provided
-        logging.info(f"FE Module - Begin preparing RL data with window={self.window_size}, prediction_days={self.prediction_days}, symbols={symbols}")  # Log preparation params
+        logging.info(f"FE Module - prepare_rl_data - Begin preparing RL data with window={self.window_size}, prediction_days={self.prediction_days}, symbols={symbols}")  # Log preparation params
         assert isinstance(fused_df, pd.DataFrame), f"FE Module - Expected DataFrame, got {type(fused_df)}"  # Assert input type to prevent invalid data processing
 
         if fused_df.isna().sum().sum() > 0:
             # Check for NaNs; if found, fill with 0 to maintain data integrity for RL
-            logging.warning(f"FE Module - NaN values found in fused_df: {fused_df.isna().sum().sum()} before RL window generation")
+            logging.warning(f"FE Module - prepare_rl_data - NaN values found in fused_df: {fused_df.isna().sum().sum()} before RL window generation")
             fused_df = fused_df.fillna(0)  # Fill NaN with 0 to avoid NaN propagation in windows
         # Ensure excluded Date column
         if 'Date' in fused_df.columns:
             fused_df = fused_df.set_index('Date')  # Set Date as index to exclude from features
-        logging.info(f"FE Module - Feature Columns: {fused_df.columns.tolist()}")  # Log feature columns for debugging
+        logging.info(f"FE Module - prepare_rl_data - Feature Columns: {fused_df.columns.tolist()}")  # Log feature columns for debugging
 
         self._update_features_categories(fused_df)       # Update features_* attributes to self.config for inheriting by ConfigTrading
 
@@ -444,7 +462,7 @@ class FeatureEngineer:
                             'states': states,   # 2D ndarray (window_size, n_symbols * features_dim_per_symbol)
                             'targets': target})     # 2D ndarray (prediction_days, n_stocks)
 
-        logging.info(f"FE Module - Prepared {len(rl_data)} RL data")  # Log total prepared items
+        logging.info(f"FE Module - prepare_rl_data - Prepared {len(rl_data)} RL data")  # Log total prepared items
         return rl_data  # Return list of RL data dicts
 
     def split_rl_data(self, rl_data):
@@ -473,7 +491,7 @@ class FeatureEngineer:
         - k-folds applies only to train set, using TimeSeriesSplit or KFold (no shuffle).
         - Logs split sizes; raises ValueError for invalid modes.
         """
-        assert isinstance(rl_data[0]['start_date'], pd.Timestamp), "FE Module - 'start_date' must be pandas.Timestamp"
+        assert isinstance(rl_data[0]['start_date'], pd.Timestamp), "FE Module - split_rl_data - 'start_date' must be pandas.Timestamp"
 
         rl_data = sorted(rl_data, key=lambda x: x['start_date'])  # Sort RL data by start_date to maintain chronological order
         if self.split_mode == 'date':
@@ -481,7 +499,7 @@ class FeatureEngineer:
             train_rl_data = [data for data in rl_data if pd.to_datetime(self.train_start_date) <= data['start_date'] <= pd.to_datetime(self.train_end_date)]
             valid_rl_data = [data for data in rl_data if pd.to_datetime(self.valid_start_date) <= data['start_date'] <= pd.to_datetime(self.valid_end_date)]
             test_rl_data = [data for data in rl_data if pd.to_datetime(self.test_start_date) <= data['start_date'] <= pd.to_datetime(self.test_end_date)]
-            logging.info(f"FE Module - Split RL data: train {len(train_rl_data)}, valid {len(valid_rl_data)}, test {len(test_rl_data)}")  # Log split sizes for monitoring
+            logging.info(f"FE Module - split_rl_data - Split RL data: train {len(train_rl_data)}, valid {len(valid_rl_data)}, test {len(test_rl_data)}")  # Log split sizes for monitoring
         elif self.split_mode == 'ratio':
             # Ratio-based split: Divide data sequentially using split_ratio for train, then 0.1 for valid, rest for test
             n = len(rl_data)
@@ -490,13 +508,13 @@ class FeatureEngineer:
             train_rl_data = rl_data[:train_end_idx]
             valid_rl_data = rl_data[train_end_idx:valid_end_idx]
             test_rl_data = rl_data[valid_end_idx:]
-            logging.info(f"FE Module - Split RL data: train {len(train_rl_data)}, valid {len(valid_rl_data)}, test {len(test_rl_data)}")  # Log split sizes for monitoring
+            logging.info(f"FE Module - split_rl_data - Split RL data: train {len(train_rl_data)}, valid {len(valid_rl_data)}, test {len(test_rl_data)}")  # Log split sizes for monitoring
         else:
-            raise ValueError(f"FE Module - Invalid split mode: {self.split_mode}")  # Error for unsupported split mode
+            raise ValueError(f"FE Module - split_rl_data - Invalid split mode: {self.split_mode}")  # Error for unsupported split mode
 
         if len(train_rl_data) == 0 or len(valid_rl_data) == 0 or len(test_rl_data) == 0:
             # Fallback: If any split is empty, use all data as train to prevent training failure
-            logging.warning("FE Module - Empty data split. Falling back to all data as train")
+            logging.warning("FE Module - split_rl_data - Empty data split. Falling back to all data as train")
             return {'train': rl_data, 'valid': [], 'test': []}
 
         if self.k_folds and self.k_folds > 1:
@@ -514,7 +532,7 @@ class FeatureEngineer:
                 valid_fold = [train_rl_data[i] for i in valid_idx]  # Subset valid fold from train
                 train_folds.append((train_fold, valid_fold))  # Append fold pair
             return {'train_folds': train_folds, 'valid': valid_rl_data, 'test': test_rl_data}  # Return with folds for CV
-        
+        logging.info(f"FE Module - split_rl_data - Successfully split rl data")
         return {'train': train_rl_data, 'valid': valid_rl_data, 'test': test_rl_data}  # Standard return without folds
 
     def _check_and_adjust_sentiment(self, score_df, mode, col='sentiment_score'):
@@ -547,22 +565,22 @@ class FeatureEngineer:
         """
         if score_df.empty or col not in score_df.columns:
             # Early exit if DataFrame is empty or specified column is missing to avoid errors
-            logging.warning(f"FE Module - No {col} for mode {mode}; skipping check")
+            logging.warning(f"FE Module - _adjust_sentiment - No {col} for mode {mode}; skipping check")
             return score_df
         
         score_var = score_df[col].var()  # Calculate variance of the score column
         score_mean = score_df[col].mean()  # Calculate mean for logging stats
-        logging.info(f"FE Module - {col} stats for mode {mode}: var={score_var:.4f}, mean={score_mean:.4f}")  # Log initial statistics for debugging
+        logging.info(f"FE Module - _adjust_sentiment - {col} stats for mode {mode}: var={score_var:.4f}, mean={score_mean:.4f}")  # Log initial statistics for debugging
         
         if score_var < 0.1:    # Check if variance is below threshold (increased from 0.05 to 0.1 for leniency)
             # Low variance detected; proceed to add noise to enhance data variability
-            logging.warning(f"FE Module - Low var ({score_var:.4f}) for {col} in mode {mode}; adding mode-specific noise")
+            logging.warning(f"FE Module - _adjust_sentiment - Low var ({score_var:.4f}) for {col} in mode {mode}; adding mode-specific noise")
             seed = int(hashlib.sha256(mode.encode()).hexdigest(), 16) % (2**32) # Generate reproducible seed using hash of mode for consistency across runs
             np.random.seed(seed)  # Set seed for numpy random to ensure reproducibility
             # Add Gaussian noise and clip to maintain score range [1.0, 5.0] to prevent invalid values
             score_df[col] = np.clip(score_df[col] + np.random.normal(0, 0.3, len(score_df)), 1.0, 5.0)
             new_var = score_df[col].var()  # Recalculate variance after adjustment
-            logging.info(f"FE Module - Adjusted var for {col} in mode {mode}: {new_var:.4f}")  # Log new variance to verify adjustment
+            logging.info(f"FE Module - _adjust_sentiment - Adjusted var for {col} in mode {mode}: {new_var:.4f}")  # Log new variance to verify adjustment
         
         return score_df  # Return the potentially adjusted DataFrame
 
@@ -594,14 +612,15 @@ class FeatureEngineer:
                 symbols = "_".join(self.config.symbols)  # Join symbols with underscore for compact representation
                 # Construct the suffix by combining symbols, dates, and file format for unique identification
                 path_suffix = f"{symbols}_{start}_{end}" + f"{file_format}"
+                logging.info(f"FE Module - _generate_path_suffix - Successfully generate path suffix: {path_suffix}")
                 return path_suffix
             else:
                 # Log warning if config is missing to alert for potential setup issues
-                logging.warning(f"FE Module - No ConfigSetup to generate path suffix")
+                logging.warning(f"FE Module - _generate_path_suffix - No ConfigSetup to generate path suffix")
                 return None  # Explicitly return None to handle missing config gracefully
         except Exception as e:
             # Catch any unexpected errors during suffix generation and log for debugging
-            logging.warning(f"FE Module - Fail to generate path suffix : {e}")
+            logging.warning(f"FE Module - _generate_path_suffix - Fail to generate path suffix : {e}")
             return None  # Return None on failure to prevent downstream errors
 
     def save_exper_data_dict_npz(self, exper_data_dict):
@@ -637,12 +656,12 @@ class FeatureEngineer:
         Inside each file, train/valid/test will each be a numpy structured array.
         """
         os.makedirs(self.exper_data_path, exist_ok=True)
-        logging.info("FE Module - Initial exper_data_dict save path")
+        logging.info("FE Module - save_exper_data_dict_npz - Initial exper_data_dict save path")
         try:
             path_suffix = self._generate_path_suffix()
             for mode, data_dict in exper_data_dict.items():
                 mode_path = os.path.join(self.exper_data_path, f"{mode}_{path_suffix}")
-                logging.info(f"FE Module - Initial exper_data_dict save path {mode_path} for mode {mode}")
+                logging.info(f"FE Module - save_exper_data_dict_npz - Initial exper_data_dict save path {mode_path} for mode {mode}")
                 npz_data = {}
 
                 for target in ['train', 'valid', 'test']:
@@ -656,10 +675,10 @@ class FeatureEngineer:
                         npz_data[f"{target}_states"] = states
                         npz_data[f"{target}_targets"] = targets
                 np.savez_compressed(mode_path, **npz_data)
-                logging.info(f"FE Module - Saved {mode} data to {mode_path}")
-            logging.info(f"FE Module - Save exper_data_dict successfully")
+                logging.info(f"FE Module - save_exper_data_dict_npz - Saved {mode} data to {mode_path}")
+            logging.info(f"FE Module - save_exper_data_dict_npz - Save exper_data_dict successfully")
         except Exception as e:
-            logging.warning(f"FE Module - Save exper_data_dict failed: {e}")
+            logging.warning(f"FE Module - save_exper_data_dict_npz - Save exper_data_dict failed: {e}")
             raise
 
     def load_exper_data_dict_npz(self):
@@ -694,7 +713,7 @@ class FeatureEngineer:
         try:
             path_suffix = self._generate_path_suffix()
             for filename in os.listdir(self.exper_data_path):
-                logging.info(f"FE Module - Loading exper_data_dict from {filename}")
+                logging.info(f"FE Module - load_exper_data_dict_npz - Loading exper_data_dict from {filename}")
                 if filename.endswith('.npz'):
                     mode = filename.replace(f'{path_suffix}', '')
                     file_path = os.path.join(self.exper_data_path, filename)
@@ -702,7 +721,7 @@ class FeatureEngineer:
 
                     mode_dict = {}
                     for target in ['train', 'valid', 'test']:
-                        logging.info(f"FE Module - Loading exper_data_dict from {target} for mode {mode}")
+                        logging.info(f"FE Module - load_exper_data_dict_npz - Loading exper_data_dict from {target} for mode {mode}")
                         dates_key = f"{target}_dates"
                         states_key = f"{target}_states"
                         targets_key = f"{target}_targets"
@@ -719,10 +738,10 @@ class FeatureEngineer:
 
                     mode_dict['model_type'] = mode
                     exper_data_dict[mode] = mode_dict
-                    logging.info(f"FE Module - Loaded {mode} data from {filename} completely")
-            logging.info(f"FE Module - Load exper_data_dict successfully")
+                    logging.info(f"FE Module - load_exper_data_dict_npz - Loaded {mode} data from {filename} completely")
+            logging.info(f"FE Module - load_exper_data_dict_npz - Load exper_data_dict successfully")
         except Exception as e:
-            logging.warning(f"FE Module - Load exper_data_dict failed: {e}")
+            logging.warning(f"FE Module - load_exper_data_dict_npz - Load exper_data_dict failed: {e}")
         return exper_data_dict
 
     def _update_features_categories(self, fused_df):
@@ -746,10 +765,10 @@ class FeatureEngineer:
         - Sets features_dim_per_symbol as len of first symbol's all features (assumes symmetry).
         - Logs updates and warnings on exceptions for traceability.
         """
-        assert isinstance(fused_df, pd.DataFrame), f"FE Module - Unexpected data type : {type(fused_df)}"  # Assert input is DataFrame to prevent invalid processing
+        assert isinstance(fused_df, pd.DataFrame), f"FE Module - _update_features_categories - Unexpected data type : {type(fused_df)}"  # Assert input is DataFrame to prevent invalid processing
         
-        logging.info(f"FE Module - Start to update feature categories to ConfigSetup")  # Log start of update process
-        logging.info(f"FE Module - Symbols to process: {self.config.symbols}")  # Log symbols for context
+        logging.info(f"FE Module - _update_features_categories - Start to update feature categories to ConfigSetup")  # Log start of update process
+        logging.info(f"FE Module - _update_features_categories - Symbols to process: {self.config.symbols}")  # Log symbols for context
         try:
             for symbol in self.config.symbols:
                 # Extract all columns for this symbol
@@ -769,7 +788,7 @@ class FeatureEngineer:
                 features_cols_per_symbol = price_cols + ind_cols + senti_cols + risk_cols
 
                 # Debug log category counts
-                logging.debug(f"{symbol} - price:{len(price_cols)}, ind:{len(ind_cols)}, senti:{len(senti_cols)}, risk:{len(risk_cols)}")
+                logging.debug(f"FE Module - _update_features_categories - {symbol} - price:{len(price_cols)}, ind:{len(ind_cols)}, senti:{len(senti_cols)}, risk:{len(risk_cols)}")
                 
                 # Update config with categorized lists per symbol
                 self.config.features_price[symbol] = price_cols  # Store price cols
@@ -777,17 +796,17 @@ class FeatureEngineer:
                 self.config.features_senti[symbol] = senti_cols  # Store sentiment cols
                 self.config.features_risk[symbol] = risk_cols  # Store risk cols
                 self.config.features_all[symbol] = features_cols_per_symbol  # Store all combined
-                logging.info(f"FE Module - Update feature categories for symbol: {symbol}")  # Log per-symbol update
-                logging.info(f"FE Module - Features dim : features_price {price_cols}, features_ind {ind_cols}, features_senti {senti_cols}, features_risk {risk_cols}, features_all:{len(price_cols + ind_cols + senti_cols + risk_cols)}")
+                logging.info(f"FE Module - _update_features_categories - Update feature categories for symbol: {symbol}")  # Log per-symbol update
+                logging.info(f"FE Module - _update_features_categories - Features dim : features_price {price_cols}, features_ind {ind_cols}, features_senti {senti_cols}, features_risk {risk_cols}, features_all:{len(price_cols + ind_cols + senti_cols + risk_cols)}")
 
                 if self.config.features_dim_per_symbol is None:
                     # Compute and update dimension per symbol
                     self.config.features_dim_per_symbol = len(features_cols_per_symbol)
-                    logging.info(f"FE Module - Update Features dim per symbol : {self.config.features_dim_per_symbol}")  # Log computed dim
+                    logging.info(f"FE Module - _update_features_categories - Update Features dim per symbol : {self.config.features_dim_per_symbol}")  # Log computed dim
             
-            logging.info(f"FE Module - Successfully update all feature categories to ConfigSetup")  # Log overall success
+            logging.info(f"FE Module - _update_features_categories - Successfully update all feature categories to ConfigSetup")  # Log overall success
         except Exception as e:
-            logging.warning(f"FE Module - Failed to Update feature categories : {e} ")  # Log any exceptions without crashing
+            logging.warning(f"FE Module - _update_features_categories - Failed to Update feature categories : {e} ")  # Log any exceptions without crashing
 
     def generate_experiment_data(self, stock_data_dict, news_chunks_gen, exper_mode=None, single_mode=None):
         """
@@ -830,7 +849,7 @@ class FeatureEngineer:
         if exper_data_list and exper_data_list[0].endswith(path_suffix):
             # Check if experiment data directory is not empty; if so, load existing data to avoid regeneration
             logging.info("=========== Start to load experiment data dict ===========")
-            logging.info(f"FE Module - Loading exper_data_dict from {self.exper_data_path}")
+            logging.info(f"FE Module - generate_experiment_data - Loading exper_data_dict from {self.exper_data_path}")
             return self.load_exper_data_dict_npz()  # Load pre-generated data from NPZ files for efficiency
         else:
             # Directory is empty; proceed to generate new experiment data
@@ -845,28 +864,28 @@ class FeatureEngineer:
             ind_mode = self.ind_mode    # Retrieve indicator mode from instance
             if single_mode:
                 # Single mode: Run only one specific mode for testing
-                logging.info(f"FE Module - Running Single mode: {single_mode}")
+                logging.info(f"FE Module - generate_experiment_data - Running Single mode: {single_mode}")
                 exper_modes = [single_mode]
                 group = next((g for g, modes in self.exper_mode.items() if single_mode in modes), None) # Find group containing the single mode
                 if not group:
                     raise ValueError(f"Unknown single_mode: {single_mode}") # Error if mode not found in any group
             elif exper_mode:
                 # Experiment mode: Run all modes in a specified group
-                logging.info(f"FE Module - Running Experiment mode: {exper_mode}")
+                logging.info(f"FE Module - generate_experiment_data - Running Experiment mode: {exper_mode}")
                 exper_modes = self.exper_mode.get(exper_mode, [])
                 group = exper_mode
                 if not exper_modes:
                     raise ValueError(f"Unknown exper_mode group: {exper_mode}") # Error if group not defined
             else:
                 # No mode specified: Run all modes across all groups
-                logging.info("FE Module - Running All experiment modes")
+                logging.info("FE Module - generate_experiment_data - Running All experiment modes")
                 exper_modes = sum(self.exper_mode.values(), [])
                 group = None
 
-            logging.info(f"FE Module - Experiment modes: {exper_modes} from group: {group}")    # Log the modes to be processed
+            logging.info(f"FE Module - generate_experiment_data - Experiment modes: {exper_modes} from group: {group}")    # Log the modes to be processed
 
             cleaned_news = self.process_news_chunks(news_chunks_gen)    # Process news generator into cleaned DataFrame
-            logging.info(f"FE Module - Loaded and cleaned news: {len(cleaned_news)} rows")  # Log news data size after cleaning
+            logging.info(f"FE Module - generate_experiment_data - Loaded and cleaned news: {len(cleaned_news)} rows")  # Log news data size after cleaning
 
             for mode in exper_modes:
                 original_exper_news_cols = self.news_engineer.text_cols # Backup original text columns to restore later
@@ -878,7 +897,7 @@ class FeatureEngineer:
                 else:
                     self.news_engineer.text_cols = exper_news_cols.get(mode, [])    # Use mode-specific news columns
                     model_type = 'PPO'  # Default for indicator/news group
-                logging.info(f"FE Module - Mode {mode} in group {group}, model_type={model_type}, news_cols={self.news_engineer.text_cols}")    # Log configuration for this mode
+                logging.info(f"FE Module - generate_experiment_data - Mode {mode} in group {group}, model_type={model_type}, news_cols={self.news_engineer.text_cols}")    # Log configuration for this mode
 
                 # Compute sentiment
                 if group == 'rl_algorithm' or mode != 'benchmark':
@@ -886,7 +905,7 @@ class FeatureEngineer:
                     sentiment_score_df = self._check_and_adjust_sentiment(sentiment_score_df, mode, col='sentiment_score')  # Adjust sentiment if needed (e.g., FinBERT adjustment)
                 else:
                     sentiment_score_df = pd.DataFrame(columns=['Date', 'Symbol', 'sentiment_score'])    # Empty DF for benchmark mode
-                    logging.info("FE Module - Benchmark mode: no sentiment")    # Log skipping sentiment for benchmarkv
+                    logging.info("FE Module - generate_experiment_data - Benchmark mode: no sentiment")    # Log skipping sentiment for benchmarkv
 
                 # Compute risk if enabled
                 risk_score_df = None
@@ -903,14 +922,14 @@ class FeatureEngineer:
                 test_df = fused_df[(fused_df['Date'] >= pd.to_datetime(self.test_start_date)) & (fused_df['Date'] <= pd.to_datetime(self.test_end_date))]
                 if train_df.empty or valid_df.empty or test_df.empty:
                     raise ValueError(f"Empty split for mode {mode}")    
-                logging.info(f"FE Module - Split for mode {mode}: train {len(train_df)}, valid {len(valid_df)}, test {len(test_df)}")
+                logging.info(f"FE Module - generate_experiment_data - Split for mode {mode}: train {len(train_df)}, valid {len(valid_df)}, test {len(test_df)}")
 
                 # Normalize indicators + sentiment + risk columns for RL training
                 scaler_path = f"scaler_cache/scaler_train_{group}_{mode}.pkl"   # Dynamic per-group/mode
                 train_df, means_stds = self.normalize_features(train_df, fit=True, scaler_path=scaler_path) # Load cache scaler if existed
                 valid_df = self.normalize_features(valid_df, fit=False, means_stds=means_stds, scaler_path=scaler_path) # Load cache scaler if existed
                 test_df = self.normalize_features(test_df, fit=False, means_stds=means_stds, scaler_path=scaler_path)   # Load cache scaler if existed
-                logging.info(f"FE Module - Normalized features for mode {mode}")
+                logging.info(f"FE Module - generate_experiment_data - Normalized features for mode {mode}")
 
                 # Prepare window for RL observation
                 train_rl_data = self.prepare_rl_data(train_df)  # Prepare RL-compatible data (e.g., windowed observations)
@@ -918,7 +937,7 @@ class FeatureEngineer:
                 test_rl_data = self.prepare_rl_data(test_df)
                 if not train_rl_data or not valid_rl_data or not test_rl_data:
                     raise ValueError(f"No RL data for mode {mode}")
-                logging.info(f"FE Module - Prepared RL data for mode {mode}: train {len(train_rl_data)}, valid {len(valid_rl_data)}, test {len(test_rl_data)}")
+                logging.info(f"FE Module - generate_experiment_data - Prepared RL data for mode {mode}: train {len(train_rl_data)}, valid {len(valid_rl_data)}, test {len(test_rl_data)}")
 
                 # Form split_dict with model_type
                 split_dict = {
@@ -943,7 +962,7 @@ class FeatureEngineer:
 
                 exper_data_dict[mode] = split_dict  # Store split_dict in main dictionary
                 self.fused_dfs[mode] = {'train': train_df, 'valid': valid_df, 'test': test_df}
-                logging.info(f"FE Module - Generated data for mode {mode}: train {len(split_dict['train'])}, valid {len(split_dict['valid'])}, test {len(split_dict['test'])}")
+                logging.info(f"FE Module - generate_experiment_data - Generated data for mode {mode}: train {len(split_dict['train'])}, valid {len(split_dict['valid'])}, test {len(split_dict['test'])}")
 
                 self.news_engineer.text_cols = original_exper_news_cols # Restore original text columns after mode processing
 
@@ -952,15 +971,15 @@ class FeatureEngineer:
                 del self.news_engineer.model    # Delete model to free memory
                 del self.news_engineer.tokenizer    # Delete tokenizer
                 torch.cuda.empty_cache()    # Clear GPU cache if using CUDA
-                logging.info("Released FinBERT resources")
+                logging.info("FE Module - generate_experiment_data - Released FinBERT resources")
 
             if single_mode:
                 self.save_exper_data_dict_npz(exper_data_dict)  # Save single mode data to NPZ
-                logging.info(f"FE Module - Save single mode data for {single_mode} successfully")
-                logging.info(f"FE Module - Return single mode train/valid/test data for {single_mode}")
+                logging.info(f"FE Module - generate_experiment_data - Save single mode data for {single_mode} successfully")
+                logging.info(f"FE Module - generate_experiment_data - Return single mode train/valid/test data for {single_mode}")
                 return exper_data_dict[single_mode]['train'], exper_data_dict[single_mode]['valid'], exper_data_dict[single_mode]['test']
             self.save_exper_data_dict_npz(exper_data_dict)  # Save full dict to NPZ
-            logging.info(f"FE Module - Save exper_data_dict successfully")
+            logging.info(f"FE Module - generate_experiment_data - Save exper_data_dict successfully")
             return exper_data_dict  # Return the full experiment data dictionary
 
 # %%
@@ -1022,12 +1041,15 @@ logging.info(f"Main - Generated experiment data for modes: {list(exper_data_dict
 for mode, data_dict in exper_data_dict.items():
     print(f"Mode: {mode}")
     print(f"Data dict type: {type(data_dict)}")
+    print(f"Data dict length: {len(data_dict)}")
     for target, data_list in data_dict.items():
         if target != 'model_type':
             print(f"target data: {target}")
             print(f"total data length: {len(data_list)}")
             print(f"data list keys: {data_list[0].keys()}")
             print(f"data shape: {data_list[0]['states'].shape, data_list[0]['targets'].shape}")
+            print(f"data type: {type(data_list[0]['start_date']), type(data_list[0]['states']), type(data_list[0]['targets'])}")
+            print(f"data sample: {data_list[50]['start_date'], data_list[50]['states'][0], data_list[50]['targets'][0]}")
 
 # %%
 setup_config.features_all
@@ -1037,5 +1059,347 @@ setup_config.features_dim_per_symbol
 
 # %%
 setup_config.features_ind
+
+# %%
+from finbert_trader.config_trading import ConfigTrading
+
+# %%
+trading_config = ConfigTrading(upstream_config=setup_config)
+
+# %%
+import os
+import datetime
+import numpy as np
+import matplotlib.pyplot as plt
+
+def plot_senti_risk_distribution(
+    exper_data_dict,
+    senti_feature_index,
+    risk_feature_index,
+    symbol=None,
+    features_all_flatten=None,
+    model_name="PPO",
+    save_folder="plot_cache",
+    prefix="senti_risk_distribution",
+    auto_save=False,
+    show_plot=False
+):
+    """
+    Plot sentiment & risk feature distributions from exper_data_dict
+    and automatically save the figure.
+    """
+    os.makedirs(save_folder, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    datasets = ['train', 'valid', 'test']
+    
+    for dataset in datasets:
+        if dataset not in exper_data_dict[model_name]:
+            continue
+        
+        data_list = exper_data_dict[model_name][dataset]
+        all_states = np.concatenate([ep['states'] for ep in data_list], axis=0)
+
+        if symbol and features_all_flatten:
+            senti_col = f"sentiment_score_{symbol}"
+            risk_col = f"risk_score_{symbol}"
+            if senti_col not in features_all_flatten or risk_col not in features_all_flatten:
+                raise ValueError(f"Feature {senti_col} or {risk_col} not found")
+            senti_idx = features_all_flatten.index(senti_col)
+            risk_idx = features_all_flatten.index(risk_col)
+            sentiments = all_states[:, senti_idx]
+            risks = all_states[:, risk_idx]
+        else:
+            sentiments = all_states[:, senti_feature_index].flatten()
+            risks = all_states[:, risk_feature_index].flatten()
+
+        def stats(arr):
+            return {
+                "mean": np.mean(arr),
+                "std": np.std(arr),
+                "min": np.min(arr),
+                "max": np.max(arr),
+                "q25": np.percentile(arr, 25),
+                "q50": np.percentile(arr, 50),
+                "q75": np.percentile(arr, 75)
+            }
+        
+        print(f"\n==== {dataset.upper()} ====")
+        print("Sentiment Stats:", stats(sentiments))
+        print("Risk Stats:", stats(risks))
+
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+        axes[0].hist(sentiments, bins=50, color='skyblue', alpha=0.7, edgecolor="black")
+        axes[0].set_title(f"{dataset} Sentiment {symbol or ''}".strip())
+        axes[0].axvline(0, color='red', linestyle='--', linewidth=1)
+        axes[0].set_xlabel("Sentiment Score")
+        axes[0].set_ylabel("Frequency")
+
+        axes[1].hist(risks, bins=50, color='salmon', alpha=0.7, edgecolor="black")
+        axes[1].set_title(f"{dataset} Risk {symbol or ''}".strip())
+        axes[1].axvline(0, color='red', linestyle='--', linewidth=1)
+        axes[1].set_xlabel("Risk Score")
+        axes[1].set_ylabel("Frequency")
+
+        fig.tight_layout()
+
+        if auto_save:
+            safe_symbol = symbol or "ALL"
+            save_path = os.path.join(
+                save_folder, 
+                f"{prefix}_{model_name}_{dataset}_{safe_symbol}_{timestamp}.png"
+            )
+            fig.savefig(save_path, dpi=300, bbox_inches="tight")
+            print(f"[INFO] Plot saved to: {save_path}")
+
+        if show_plot:
+            plt.show()
+        else:
+            plt.close(fig)
+
+
+# %%
+plot_senti_risk_distribution(
+    exper_data_dict,
+    senti_feature_index=trading_config.senti_feature_index,
+    risk_feature_index=trading_config.risk_feature_index,
+    auto_save=True
+)
+
+# %%
+plot_senti_risk_distribution(
+    exper_data_dict,
+    symbol="AAPL",
+    features_all_flatten=trading_config.features_all_flatten,
+    senti_feature_index=trading_config.senti_feature_index,
+    risk_feature_index=trading_config.risk_feature_index
+)
+
+# %%
+plot_senti_risk_distribution(
+    exper_data_dict,
+    symbol="GOOGL",
+    features_all_flatten=trading_config.features_all_flatten,
+    senti_feature_index=trading_config.senti_feature_index,
+    risk_feature_index=trading_config.risk_feature_index,
+)
+
+# %%
+import os
+import datetime
+import numpy as np
+import matplotlib.pyplot as plt
+
+def plot_senti_risk_grid(
+    exper_data_dict,
+    trading_config,
+    dataset="train",               # 'train' / 'valid' / 'test'
+    model_names=None,              # list of models to plot (None -> use exper_data_dict keys)
+    symbols=None,                  # list of symbols to plot (None -> use trading_config.symbols)
+    save_folder="plot_cache",
+    filename_prefix="senti_risk_grid",
+    bins=50,
+    auto_save=True,
+    show_fig=False
+):
+    """
+    Plot a grid: rows = algorithms, cols = [ALL] + symbols.
+    Each cell overlays sentiment & risk histograms and prints basic stats.
+
+    Parameters
+    ----------
+    exper_data_dict : dict
+        your exper_data_dict (top-level keys = model names like 'PPO', 'CPPO', ...)
+    trading_config : object
+        config instance providing .symbols, .senti_feature_index (list of ints per symbol),
+        .risk_feature_index (list of ints per symbol)
+    dataset : str
+        which split to use: 'train' / 'valid' / 'test'
+    model_names : list[str] or None
+        which algorithms to include; defaults to all keys in exper_data_dict
+    symbols : list[str] or None
+        symbol list; defaults to trading_config.symbols
+    save_folder : str
+        where to save the generated image
+    filename_prefix : str
+    bins : int
+        histogram bins
+    auto_save : bool
+        whether to save the file
+    show_fig : bool
+        whether to plt.show() the figure (useful interactively)
+    Returns
+    -------
+    save_path (str) or (None)
+    """
+    # --- prepare inputs ---
+    os.makedirs(save_folder, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if model_names is None:
+        model_names = [k for k in exper_data_dict.keys()]
+
+    if symbols is None:
+        symbols = getattr(trading_config, "symbols", None)
+        if symbols is None:
+            raise ValueError("Provide symbols list either via argument or trading_config.symbols")
+
+    senti_idx_list = getattr(trading_config, "senti_feature_index", None)
+    risk_idx_list = getattr(trading_config, "risk_feature_index", None)
+    if senti_idx_list is None or risk_idx_list is None:
+        raise ValueError("trading_config must provide senti_feature_index and risk_feature_index (lists of indices)")
+
+    n_algos = len(model_names)
+    n_cols = 1 + len(symbols)   # ALL + each symbol
+    n_rows = n_algos
+
+    figsize = (4 * n_cols, 3 * max(1, n_rows))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
+
+    for i, algo in enumerate(model_names):
+        # guard if algo not present in dict
+        if algo not in exper_data_dict:
+            print(f"[WARN] Algorithm {algo} not in exper_data_dict, skipping.")
+            for j in range(n_cols):
+                axes[i, j].axis('off')
+            continue
+
+        model_dict = exper_data_dict[algo]
+        if dataset not in model_dict:
+            print(f"[WARN] {algo} has no dataset '{dataset}', skipping row.")
+            for j in range(n_cols):
+                axes[i, j].axis('off')
+            continue
+
+        data_list = model_dict[dataset]
+        if not isinstance(data_list, (list, tuple)) or len(data_list) == 0:
+            print(f"[WARN] {algo}/{dataset} empty or not list, skipping row.")
+            for j in range(n_cols):
+                axes[i, j].axis('off')
+            continue
+
+        # concat episodes into one big states array (T_total, D)
+        try:
+            all_states = np.concatenate([ep['states'] for ep in data_list], axis=0)
+        except Exception as e:
+            raise RuntimeError(f"Failed to concat states for {algo}/{dataset}: {e}")
+
+        # column 0: ALL (aggregate all symbols)
+        ax = axes[i, 0]
+        senti_all = all_states[:, senti_idx_list].flatten()    # flatten over symbols
+        risk_all = all_states[:, risk_idx_list].flatten()
+        _plot_two_hist(ax, senti_all, risk_all, bins=bins,
+                       title=f"{algo} - ALL ({dataset})")
+        _annotate_stats(ax, senti_all, risk_all)
+
+        # subsequent columns: per-symbol
+        for j, sym in enumerate(symbols, start=1):
+            ax = axes[i, j]
+            # get index for this symbol
+            try:
+                sym_idx = symbols.index(sym)
+            except ValueError:
+                # fallback: try to find the index by name mapping using features_all_flatten if available
+                raise ValueError(f"Symbol {sym} not found in provided symbols list")
+
+            senti_col_idx = senti_idx_list[sym_idx]
+            risk_col_idx = risk_idx_list[sym_idx]
+            senti_vals = all_states[:, senti_col_idx]
+            risk_vals = all_states[:, risk_col_idx]
+            _plot_two_hist(ax, senti_vals, risk_vals, bins=bins,
+                           title=f"{algo} - {sym} ({dataset})")
+            _annotate_stats(ax, senti_vals, risk_vals)
+
+    plt.tight_layout()
+
+    save_path = None
+    if auto_save:
+        safe_fname = f"{filename_prefix}_{dataset}_{timestamp}.png"
+        save_path = os.path.join(save_folder, safe_fname)
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
+        print(f"[INFO] Saved grid plot to: {save_path}")
+
+    if show_fig:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return save_path
+
+
+def _plot_two_hist(ax, arr1, arr2, bins=50, title=None):
+    """Helper: overlay two histograms on ax (arr1 blue, arr2 orange) and draw zero line."""
+    ax.hist(arr1, bins=bins, alpha=0.6, label="Sentiment", color="tab:blue", density=False)
+    ax.hist(arr2, bins=bins, alpha=0.5, label="Risk", color="tab:orange", density=False)
+    ax.axvline(0, color='red', linestyle='--', linewidth=1)
+    ax.set_title(title if title else "")
+    ax.legend(fontsize='small')
+    ax.grid(alpha=0.3, linestyle='--')
+
+
+def _annotate_stats(ax, senti_arr, risk_arr):
+    """Helper: annotate mean/std/median in the top-right of the axis."""
+    s_mean, s_std, s_med = np.mean(senti_arr), np.std(senti_arr), np.median(senti_arr)
+    r_mean, r_std, r_med = np.mean(risk_arr), np.std(risk_arr), np.median(risk_arr)
+    txt = (f"S mean={s_mean:.3f}, std={s_std:.3f}, med={s_med:.3f}\n"
+           f"R mean={r_mean:.3f}, std={r_std:.3f}, med={r_med:.3f}")
+    ax.text(0.98, 0.95, txt, transform=ax.transAxes, ha='right', va='top',
+            fontsize='small', bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'))
+
+
+# %%
+save_path = plot_senti_risk_grid(
+    exper_data_dict=exper_data_dict,
+    trading_config=trading_config,
+    dataset="train",
+    model_names=None,        # 默认采用 exper_data_dict 的顶层 keys
+    symbols=None,            # 默认采用 trading_config.symbols
+    save_folder="plot_cache",
+    filename_prefix="senti_risk_grid_all_single",
+    bins=60,
+    auto_save=False,
+    show_fig=True
+)
+
+# %%
+save_path = plot_senti_risk_grid(
+    exper_data_dict=exper_data_dict,
+    trading_config=trading_config,
+    dataset="valid",
+    model_names=None,        # 默认采用 exper_data_dict 的顶层 keys
+    symbols=None,            # 默认采用 trading_config.symbols
+    save_folder="plot_cache",
+    filename_prefix="senti_risk_grid_all_single",
+    bins=60,
+    auto_save=True,
+    show_fig=True
+)
+
+# %%
+import numpy as np
+import pandas as pd
+
+def summarize_feature_by_split(exper_data_dict, model='PPO', senti_idx=None, risk_idx=None, nsamples=1000):
+    for split in ['train','valid','test']:
+        if split not in exper_data_dict[model]:
+            continue
+        data_list = exper_data_dict[model][split]
+        # 合并所有 episodes 的 states
+        all_states = np.concatenate([ep['states'] for ep in data_list], axis=0)
+        senti = all_states[:, senti_idx].ravel()
+        risk = all_states[:, risk_idx].ravel()
+        print(f"=== {split} ===")
+        for name, arr in [('senti', senti), ('risk', risk)]:
+            arr = np.asarray(arr, dtype=np.float64)
+            n = len(arr)
+            n_zero = np.sum(arr == 0)
+            n_three = np.sum(arr == 3.0)
+            n_nan = np.sum(np.isnan(arr))
+            print(f"{name} -> mean={arr.mean():.4f}, std={arr.std():.4f}, min={arr.min():.4f}, max={arr.max():.4f}, n={n}, zeros={n_zero} ({n_zero/n*100:.2f}%), three={n_three} ({n_three/n*100:.2f}%), nans={n_nan}")
+        print()
+
+
+# %%
+summarize_feature_by_split(exper_data_dict,senti_idx=trading_config.senti_feature_index,risk_idx=trading_config.risk_feature_index)
 
 # %%

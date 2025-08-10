@@ -71,11 +71,14 @@ class StockFeatureEngineer:
         - Logs filled NaNs per indicator for data quality tracking.
         - Warns on unsupported indicators.
         """
+        logging.info(f"StockFeatureEngineer - compute_features - Start to Compute features for {symbol}")
         if f'Adj_Close_{symbol}' not in stock_df.columns:
+            logging.error(f"StockFeatureEngineer - compute_features - Missing 'Adj_Close_{symbol}' column in stock_df")
             raise ValueError(f"Stock DataFrame missing 'Adj_Close_{symbol}' column")  # Ensure required close column exists
         
         # Map mode to time periods
         if ind_mode :
+            logging.info(f"SF Module - compute_features - Indicator mode: {ind_mode}")
             tp = self.indicators_mode.get(ind_mode, 10)  # Default to short if unknown; retrieve timeperiod from mode
         else:
             tp = self.timeperiods  # Use full timeperiods list if no mode specified       
@@ -97,7 +100,7 @@ class StockFeatureEngineer:
                 func = indicator_funcs.get(ind, lambda df: np.nan)  # Get function or default to NaN if not found
                 stock_df[f'{ind}_{symbol}'] = func(stock_df)  # Add _{symbol} suffix to indicators; compute and assign
             except KeyError:
-                logging.warning(f"SF Module - Indicator {ind} not supported")  # Warn if indicator key missing in dict
+                logging.warning(f"SF Module - compute_features - Indicator {ind} not supported")  # Warn if indicator key missing in dict
         
         # NaN handling: ffill first, then fill remaining with mean (or 0 for neutral indicators like MACD)
         for ind in self.indicators:
@@ -114,5 +117,6 @@ class StockFeatureEngineer:
             nan_count_after = stock_df[col].isna().sum()  # Count after filling
             if nan_count_before > nan_count_after:
                 logging.info(f"SF Module - Filled {nan_count_before - nan_count_after} NaNs in {ind}_{symbol}")  # Log filled count if any
-        
+        logging.info(f"SF Module - compute_features - Successfully Compute features for {symbol}")
+        logging.info(f"SF Module - compute_features - {symbol} stock_df shape: {stock_df.shape}, columns: {stock_df.columns.tolist()}")
         return stock_df  # Return updated DF with features

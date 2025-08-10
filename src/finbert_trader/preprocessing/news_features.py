@@ -79,7 +79,7 @@ class NewsFeatureEngineer:
                 if col in news_df.columns:
                     news_df.drop(col, axis=1, inplace=True)  # Remove column if present to reduce data noise
                     logging.info(f"NF Module - Drop {col} column in news data")  # Log drop for auditing
-            logging.info(f"NF Module - Total columns of news_df : {news_df.shape[1]}")  # Log remaining columns after drops
+            logging.info(f"NF Module - clean_news_data - Total columns of news_df : {news_df.shape[1]}")  # Log remaining columns after drops
 
             news_df.rename(columns={'Article': 'Full_Text', 'Stock_symbol': 'Symbol'}, inplace=True)  # Standardize column names for consistency
             news_df['Date'] = pd.to_datetime(news_df['Date'], errors='coerce').dt.tz_localize(None).dt.normalize()  # Convert to datetime, remove timezone, normalize to date-only
@@ -99,10 +99,10 @@ class NewsFeatureEngineer:
                     news_df[col] = news_df[col].apply(clean_text)  # Apply cleaning function to each text column
                     news_df[col].fillna('', inplace=True)  # Fill any remaining NaNs with empty string to prevent issues downstream
             
-            logging.info(f"NF Module - Cleaned news chunk: {len(news_df)} rows")  # Log final row count after cleaning
+            logging.info(f"NF Module - clean_news_data - Cleaned news chunk: {len(news_df)} rows")  # Log final row count after cleaning
             return news_df  # Return the cleaned DataFrame
         except Exception as e:
-            logging.error(f"NF Module - Cleaning error in chunk: {e}")  # Log exception details for debugging
+            logging.error(f"NF Module - clean_news_data - Cleaning error in chunk: {e}")  # Log exception details for debugging
             return pd.DataFrame()  # Return empty DF on error to maintain pipeline flow without crash
 
     def filter_random_news(self, news_df):
@@ -130,7 +130,7 @@ class NewsFeatureEngineer:
         """
         if news_df.empty:
             # Early warning and return if DF is empty to avoid unnecessary grouping
-            logging.warning(f"NF Module - Empty news_df at filtering random news step ")
+            logging.warning(f"NF Module - filter_random_news - Empty news_df at filtering random news step ")
         return news_df.groupby(['Date', 'Symbol']).sample(n=1, random_state=42).reset_index(drop=True)  # Group by Date-Symbol, sample 1 per group reproducibly, reset index
 
     def sentiment_batch_scores(self, texts, senti_mode='sentiment'):
@@ -161,6 +161,7 @@ class NewsFeatureEngineer:
         - Clamps to [1.0, 5.0]; raises ValueError for invalid mode.
         - Inference with no_grad for efficiency; moves to CPU numpy for return.
         """
+        logging.info(f"NF Module - sentiment_batch_scores - Computing scores for {len(texts)} texts")  # Log input size for auditing
         inputs = self.tokenizer(texts, padding=True, truncation=True, return_tensors="pt", max_length=512)  # Tokenize batch texts with padding and truncation for model input
         # Compute without gradient
         with torch.no_grad():
@@ -172,7 +173,7 @@ class NewsFeatureEngineer:
         pos_idx = label2id['positive']  # Index for positive class
         neg_idx = label2id['negative']  # Index for negative class
         neu_idx = label2id['neutral']  # Index for neutral class
-
+        logging.info(f"NF Module - sentiment_batch_scores - pos_idx: {pos_idx}, neg_idx: {neg_idx}, neu_idx: {neu_idx}")  # Log indices for auditing
         probs = torch.nn.functional.softmax(outputs.logits, dim=-1)  # Apply softmax to logits for probabilities
         if senti_mode and senti_mode == 'sentiment':
             # Weighted score: pos*5 + neu*3 + neg*1 (continuous in 1-5) for sentiment mode (positive favored)
@@ -181,6 +182,7 @@ class NewsFeatureEngineer:
             # Weighted score: pos*1 + neu*3 + neg*5 (continuous in 1-5) for risk mode (negative emphasized)
             scores = probs[:, pos_idx] * 1 + probs[:, neu_idx] * 3 + probs[:, neg_idx] * 5
         else:
+            logging.error(f"NF Module - sentiment_batch_scores - Unknown sentiment_mode: {senti_mode}")
             raise ValueError(f"NF Module - Unknown sentiment_mode: {senti_mode}")  # Error for unsupported mode
         
         # Perturbation: 0.9-1.1 to add slight randomness and increase score variability
@@ -223,25 +225,25 @@ class NewsFeatureEngineer:
         - Raises ValueError for invalid senti_mode.
         """
         senti_col = f"{senti_mode}_score"  # Dynamic column name based on mode
-        logging.info(f"NF Module - Computing {senti_col} for mode {senti_mode}")  # Log start of computation
+        logging.info(f"NF Module - compute_sentiment_risk_score - Computing {senti_col} for mode {senti_mode}")  # Log start of computation
         if news_df.empty:
             # Early return for empty DF to avoid processing
-            logging.info(f"NF Module - Empty news_df, returning DataFrame with 'Date', 'Symbol', '{senti_col}'")
+            logging.info(f"NF Module - compute_sentiment_risk_score - Empty news_df, returning DataFrame with 'Date', 'Symbol', '{senti_col}'")
             return pd.DataFrame(columns=['Date', 'Symbol', senti_col])
         
         missing_cols = [col for col in self.text_cols if col not in news_df.columns]  # Check for missing specified text columns
         if missing_cols:
             # Handle missing columns: Use available or fallback to neutral
-            logging.warning(f"NF Module - Missing text cols: {missing_cols}, using available")
+            logging.warning(f"NF Module - compute_sentiment_risk_score - Missing text cols: {missing_cols}, using available")
             avail_cols = [col for col in self.text_cols if col in news_df.columns]  # Filter to existing columns
             if not avail_cols:
                 if senti_mode == 'sentiment':
                     # Fallback: Assign neutral 3.0 for sentiment if no text available
-                    logging.info("NF Module - No valid text columns; returning neutral 3.0 sentiment scores")
+                    logging.info("NF Module - compute_sentiment_risk_score - No valid text columns; returning neutral 3.0 sentiment scores")
                     return news_df.assign(sentiment_score=3.0)
                 elif senti_mode == 'risk':
                     # Fallback: Assign neutral 3.0 for risk if no text available
-                    logging.info("NF Module - No valid text columns; returning neutral 3.0 risk scores")
+                    logging.info("NF Module - compute_sentiment_risk_score - No valid text columns; returning neutral 3.0 risk scores")
                     return news_df.assign(risk_score=3.0)
                 else:
                     raise ValueError("No valid sentiment mode. Expected senti_mode :  'sentiment' or 'risk'")  # Error for invalid mode
@@ -254,7 +256,7 @@ class NewsFeatureEngineer:
 
         if news_df.empty:
             # Post-filter check: Return empty schema if all filtered out
-            logging.info(f"NF Module - Empty news_df, returning DataFrame with 'Date', 'Symbol', '{senti_col}'")
+            logging.info(f"NF Module - compute_sentiment_risk_score - Empty news_df, returning DataFrame with 'Date', 'Symbol', '{senti_col}'")
             return pd.DataFrame(columns=['Date', 'Symbol', senti_col])
         
         # Calculate sentiment/risk score
@@ -274,19 +276,19 @@ class NewsFeatureEngineer:
 
         # Aggregate mean sentiment/risk per Date/Symbol
         news_df = news_df.groupby(['Date', 'Symbol'])[senti_col].mean().reset_index()  # Compute average score per group
-        logging.info(f"NF Module - Computed weighted sentiment for chunk using cols: {avail_cols}")  # Log used columns
+        logging.info(f"NF Module - compute_sentiment_risk_score - Computed weighted sentiment for chunk using cols: {avail_cols}")  # Log used columns
 
         if not news_df.empty:
             score_var = news_df[senti_col].var()  # Calculate variance of scores
             noise_std = self.noise_std_base  # Base noise std from class init
             if score_var < self.min_variance:
                 # Low variance: Amplify noise for better data diversity
-                logging.warning(f"NF Module - Low {senti_mode} variance ({score_var:.4f}) < {self.min_variance}; amplifying noise")
+                logging.warning(f"NF Module - compute_sentiment_risk_score - Low {senti_mode} variance ({score_var:.4f}) < {self.min_variance}; amplifying noise")
                 noise_std *= 2.0  # Stronger amplify from 1.5 to 2.0 for better diversity
             # Keep the score range [1.0 , 5.0]
             news_df[senti_col] = np.clip(news_df[senti_col] + np.random.normal(0, noise_std, len(news_df)),
                                                  1.0, 5.0)  # Add Gaussian noise and clip to range
             final_var = news_df[senti_col].var()  # Recalculate final variance
-            logging.info(f"NF Module - Sentiment variance after adjustment: {final_var:.4f}")  # Log adjusted variance
+            logging.info(f"NF Module - compute_sentiment_risk_score - fSentiment variance after adjustment: {final_var:.4f}")  # Log adjusted variance
         
         return news_df  # Return aggregated and adjusted DF

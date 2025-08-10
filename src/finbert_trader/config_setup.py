@@ -107,9 +107,9 @@ class ConfigSetup:
             for key, value in custom_config.items():
                 if hasattr(self, key):
                     setattr(self, key, value)  # Set attribute if exists
-                    logging.info(f"CS Module - Overrode config: {key} = {value}")  # Log override for auditing
+                    logging.info(f"CS Module - __init__ - Overrode config: {key} = {value}")  # Log override for auditing
                 else:
-                    logging.warning(f"CS Module - Ignored unknown config key: {key}")  # Warn on unknown keys
+                    logging.warning(f"CS Module - __init__ - Ignored unknown config key: {key}")  # Warn on unknown keys
 
         # Fallback for train/valid/test dates if split_mode is 'ratio'
         if self.split_mode == 'ratio':
@@ -124,7 +124,7 @@ class ConfigSetup:
             test_days = total_days - train_days - valid_days  # Remaining for test
             if test_days < 0:
                 # Adjust if test negative
-                logging.warning("CS Module - Test days <= 0, adjusting valid_days")
+                logging.warning("CS Module - __init__ - Test days <= 0, adjusting valid_days")
                 valid_days = total_days - train_days - 1
                 test_days = 1  # Min 1 for test
             self.train_end_date = (start_date + datetime.timedelta(days=train_days)).strftime('%Y-%m-%d')  # Set train end
@@ -132,7 +132,7 @@ class ConfigSetup:
             self.valid_end_date = (start_date + datetime.timedelta(days=train_days + valid_days)).strftime('%Y-%m-%d')  # Set valid end
             self.test_start_date = self.valid_end_date  # Test starts after valid
             self.test_end_date = self.end  # Test ends at global end
-            logging.info(f"CS Module - Fallback dates set: train {self.train_start_date} to {self.train_end_date}, valid {self.valid_start_date} to {self.valid_end_date}, test {self.test_start_date} to {self.test_end_date}")  # Log computed dates
+            logging.info(f"CS Module - __init__ - Fallback dates set: train {self.train_start_date} to {self.train_end_date}, valid {self.valid_start_date} to {self.valid_end_date}, test {self.test_start_date} to {self.test_end_date}")  # Log computed dates
 
         # Basic validation
         if not isinstance(self.chunksize, int) or self.chunksize <= 0:
@@ -155,7 +155,7 @@ class ConfigSetup:
             if not (parsed[0] <= parsed[2] <= parsed[3] <= parsed[4] <= parsed[5] <= parsed[6] <= parsed[7] <= parsed[1]):
                 raise ValueError("Date sequence invalid: global start <= train <= valid <= test <= global end")  # Ensure logical order
         except Exception as e:
-            logging.error(f"CS Module - Invalid date format: {e}")  # Log parsing errors
+            logging.error(f"CS Module - __init__ - Invalid date format: {e}")  # Log parsing errors
             raise ValueError("Dates must be in 'YYYY-MM-DD' format")  # Raise on format issues
 
         # Validate symbols
