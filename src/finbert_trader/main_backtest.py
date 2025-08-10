@@ -523,6 +523,7 @@ def main():
             'valid_end_date': '2022-12-31',
             'test_start_date': '2023-01-01',
             'test_end_date': '2023-12-31',
+            'load_npz': False,
             'exper_mode': {
                 'rl_algorithm': ['PPO', 'CPPO', 'A2C']  # Includes CPPO, aligned with FinRL_DeepSeek
             }
@@ -549,6 +550,7 @@ def main():
         logging.error(f"Main - Pipeline execution failed: {e}")
         raise
 
+# %%
 # Main execution
 if __name__ == "__main__":
     try:

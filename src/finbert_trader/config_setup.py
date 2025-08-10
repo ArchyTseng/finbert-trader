@@ -118,6 +118,8 @@ class ConfigSetup:
 
         self._features_initialized = self.load_or_init_features()
 
+        self.load_npz = False
+
         if custom_config:
             # Apply overrides from dict for flexibility
             for key, value in custom_config.items():
@@ -219,7 +221,7 @@ class ConfigSetup:
     
     def load_or_init_features(self):
         """First Running Pipeline initials config features, otherwise load from cache"""
-        if self.load_config_cache():
+        if self.load_config_cache() and self.load_npz:
             print("[ConfigSetup] Features already cached, will skip recalculation.")
             return True
         return False

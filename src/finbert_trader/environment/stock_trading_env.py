@@ -177,16 +177,35 @@ class StockTradingEnv(gym.Env):
         # Call superclass reset for Gym compatibility and seed handling
         super().reset(seed=seed)
         try:
-            # Randomly select an episode index for multi-episode diversity
-            self.episode_idx = np.random.randint(len(self.data))  # Ensures varied starting points across resets
+            # Randomly select an episode with sufficient length
+            valid_episodes = []
+            for idx, episode_data in enumerate(self.data):
+                if len(episode_data['states']) > self.window_size:
+                    valid_episodes.append(idx)
+            
+            if not valid_episodes:
+                raise ValueError("No episodes with sufficient length found")
+                
+            self.episode_idx = np.random.choice(valid_episodes)
             # Extract data for the selected episode
             episode_data = self.data[self.episode_idx]
             self.trading_df = episode_data['states']  # [T, D]: Time x Features array
             self.targets = episode_data['targets']    # [T, N]: Time x Symbols price targets
-            # Set terminal step as the last index of the episode
+            
+            # Validate data size
+            if len(self.trading_df) <= self.window_size:
+                raise ValueError(f"STE Modul - Env Reset - Episode {self.episode_idx} has insufficient data: "
+                            f"data_length={len(self.trading_df)}, window_size={self.window_size}")
+            
+            # Set terminal step as the last valid index of the episode
             self.terminal_step = len(self.trading_df) - 1
-            # Start current step after window to include history
+            # Start current step after window to include history (ensure it's valid)
             self.current_step = self.window_size
+            # Ensure we have at least one step after the window for trading
+            if self.current_step >= self.terminal_step:
+                raise ValueError(f"STE Modul - Env Reset - Episode {self.episode_idx} too short for trading: "
+                            f"window_size={self.window_size}, data_length={len(self.trading_df)}")
+            
             # Reset agent state to initial values
             self.cash = 1.0  # Normalized initial cash (relative to portfolio value)
             self.position = np.zeros(self.action_dim, dtype=np.float32)  # Zero positions (no holdings)
@@ -201,7 +220,7 @@ class StockTradingEnv(gym.Env):
             info = {'Environment Type': self.env_type,  # Train/valid/test
                     'Episode Index': self.episode_idx,  # Selected episode
                     'Episode Length': self.terminal_step + 1,  # Full length including window
-                    'Targets': self.targets[:5],  # Sample targets for quick check
+                    'Targets': self.targets[:2] if len(self.targets) >= 2 else self.targets,  # Sample targets for quick check
                     'Cash': self.cash,
                     'Position': self.position,
                     'Total Asset': self.total_asset,
@@ -627,11 +646,25 @@ class StockTradingEnv(gym.Env):
         - Used in trade execution and return calculations for real-time valuation.
         - No boundary checks; assumes current_step is valid (handled upstream).
         """
-        # Fetch the entire feature row at current_step
-        last_row = self.trading_df[self.current_step]  # Shape: (D,) where D is total features
-        # Extract only price-related features using indices and convert to float32 for precision
-        prices = last_row[self.price_feature_index].astype(np.float32)  # Shape: (num_symbols,)
-        return prices
+        try:
+            # Ensure current_step is within valid bounds
+            if self.current_step >= len(self.trading_df):
+                logging.warning(f"STE Module - _get_current_prices - Current step {self.current_step} exceeds data length {len(self.trading_df)}")
+                # Use the last available step
+                safe_step = len(self.trading_df) - 1
+                last_row = self.trading_df[safe_step]  # Shape: (D,) where D is total features
+            else:
+                last_row = self.trading_df[self.current_step]  # Shape: (D,) where D is total features
+            # Extract only price-related features using indices and convert to float32 for precision
+            prices = last_row[self.price_feature_index].astype(np.float32)  # Shape: (num_symbols,)
+            return prices
+        except Exception as e:
+            logging.error(f"STE Module - _get_current_prices - Error in _get_current_prices at step {self.current_step}: {e}")
+            # Fallback to previous prices or zeros
+            if hasattr(self, 'last_prices') and self.last_prices is not None:
+                return self.last_prices.copy()
+            else:
+                return np.ones(len(self.symbols), dtype=np.float32)  # Fallback to ones
 
     def render(self, mode='human'):
         """
@@ -656,7 +689,7 @@ class StockTradingEnv(gym.Env):
         - Precision formatting (:.6f) ensures clean output for floats.
         """
         # Print formatted state summary for human-readable feedback
-        print(f"Step {self.current_step} / {self.terminal_step} | Asset: {self.total_asset:.6f} | Cash: {self.cash:.6f} | Positions: {self.position}")
+        print(f"STE Module - Render - Step {self.current_step} / {self.terminal_step} | Asset: {self.total_asset:.6f} | Cash: {self.cash:.6f} | Positions: {self.position}")
 
     def close(self):
         pass

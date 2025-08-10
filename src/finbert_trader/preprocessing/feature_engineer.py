@@ -98,6 +98,8 @@ class FeatureEngineer:
         self.test_start_date = self.config.test_start_date  # Start date for test data
         self.test_end_date = self.config.test_end_date  # End date for test data
 
+        self.load_npz = getattr(self.config, 'load_npz', False)  # Flag to load NPZ files)
+
     def process_news_chunks(self, news_chunks_gen):
         """
         Introduction
@@ -464,17 +466,28 @@ class FeatureEngineer:
 
         rl_data = []  # Initialize list to store RL data dicts
         dates = fused_df.index  # Extract dates for start_date assignment
+
+        min_episode_length = self.window_size + 5
+
+        if len(fused_df) < min_episode_length:
+            logging.warning(f"FE Module - Insufficient  {len(fused_df)} < {min_episode_length}")
+            return rl_data
         
-        for i in range(len(fused_df) - self.window_size - self.prediction_days + 1):
+        max_start_idx = len(fused_df) - min_episode_length
+        if max_start_idx < 0:
+            logging.warning("FE Module - No valid episodes can be created")
+            return rl_data
+
+        for i in range(max_start_idx + 1):
             # Sliding window loop: Generate windows leaving room for prediction_days
             window_parts = []  # List to collect per-symbol window arrays for concat
             for symbol in symbols:
                 symbol_cols = self.config.features_all[symbol]  # Get all features for this symbol from config
-                symbol_window = fused_df.iloc[i:i+self.window_size][symbol_cols].values  # Extract (window_size, features_dim_per_symbol) array
+                symbol_window = fused_df.iloc[i:i+min_episode_length][symbol_cols].values  # Extract (window_size, features_dim_per_symbol) array
                 window_parts.append(symbol_window)  # Append for later concat
 
             # Concatenate all symbol windows along axis=1 to form 2D states (window_size, n_symbols * features_dim_per_symbol)
-            states = np.concatenate(window_parts, axis=1)  # Unified 2D array for RL observation
+            states = np.concatenate(window_parts, axis=1)  # (min_episode_length, total_features)
 
             # Target: future Adj_Close of each stock
             target_cols = [f"Adj_Close_{symbol}" for symbol in symbols]  # Columns for targets
@@ -928,7 +941,7 @@ class FeatureEngineer:
         os.makedirs(self.exper_data_path, exist_ok=True)
         path_suffix = self._generate_path_suffix()
         exper_data_list = os.listdir(self.exper_data_path)
-        if exper_data_list and exper_data_list[0].endswith(path_suffix):
+        if exper_data_list and exper_data_list[0].endswith(path_suffix) and self.load_npz:
             # Check if experiment data directory is not empty; if so, load existing data to avoid regeneration
             logging.info("=========== Start to load experiment data dict ===========")
             logging.info(f"FE Module - generate_experiment_data - Loading exper_data_dict from {self.exper_data_path}")
