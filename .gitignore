@@ -48,6 +48,9 @@ exper_cache/
 # plot_cache
 plot_cache/
 
+# config_cache
+config_cache/
+
 # logs
 logs/
 

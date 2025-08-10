@@ -6,7 +6,9 @@
 # Robustness: Validate dates/order/format; ensure non-empty symbols list.
 # Reusability: get_defaults for export.
 # Updates: Modified exper_mode to include 'rl_algorithm' for RL comparison (PPO, CPPO, A2C, DDPG); retained indicator/news for extensibility; added 'risk_prompt' for news risk assessment, reference from FinRL_DeepSeek (3: Risk Assessment Prompt).
-
+import os
+import numpy as np
+import json
 from datetime import datetime
 import logging
 
@@ -111,6 +113,11 @@ class ConfigSetup:
                                 'test': {}}
         self.threshold_factor = 0.5
 
+        self.cache_dir = 'config_cache'
+        os.makedirs(self.cache_dir, exist_ok=True)
+
+        self._features_initialized = self.load_or_init_features()
+
         if custom_config:
             # Apply overrides from dict for flexibility
             for key, value in custom_config.items():
@@ -170,6 +177,52 @@ class ConfigSetup:
         # Validate symbols
         if not isinstance(self.symbols, list) or not self.symbols:
             raise ValueError("symbols must be a non-empty list")  # Ensure symbols valid
+
+    def save_config_cache(self, filename="config_cache.json"):
+        """Save dynamic attributes to cache file"""
+        data = {
+            "features_dim_per_symbol": self.features_dim_per_symbol,
+            "features_price": self.features_price,
+            "features_ind": self.features_ind,
+            "features_senti": self.features_senti,
+            "features_risk": self.features_risk,
+            "features_all": self.features_all,
+            "senti_threshold": self.senti_threshold,
+            "risk_threshold": self.risk_threshold,
+            "threshold_factor": self.threshold_factor
+        }
+        path = os.path.join(self.cache_dir, filename)
+        with open(path, 'w') as f:
+            json.dump(data, f, indent=4)
+        logging.info(f"CS Module - save_config_cache - [ConfigSetup] Saved config cache to {path}")
+
+    def load_config_cache(self, filename="config_cache.json"):
+        """Load dynamic attributes from cache file"""
+        path = os.path.join(self.cache_dir, filename)
+        if not os.path.exists(path):
+            logging.info(f"CS Module - load_config_cache - [ConfigSetup] No config cache found at {path}")
+            return False
+        with open(path, 'r') as f:
+            data = json.load(f)
+        # Recover cache attributes values
+        self.features_dim_per_symbol = data.get("features_dim_per_symbol")
+        self.features_price = data.get("features_price", {})
+        self.features_ind = data.get("features_ind", {})
+        self.features_senti = data.get("features_senti", {})
+        self.features_risk = data.get("features_risk", {})
+        self.features_all = data.get("features_all", {})
+        self.senti_threshold = data.get("senti_threshold", {})
+        self.risk_threshold = data.get("risk_threshold", {})
+        self.threshold_factor = data.get("threshold_factor", 0.5)
+        logging.info(f"CS Module - load_config_cache - [ConfigSetup] Loaded config cache from {path}")
+        return True
+    
+    def load_or_init_features(self):
+        """First Running Pipeline initials config features, otherwise load from cache"""
+        if self.load_config_cache():
+            print("[ConfigSetup] Features already cached, will skip recalculation.")
+            return True
+        return False
 
     @staticmethod
     def get_defaults():

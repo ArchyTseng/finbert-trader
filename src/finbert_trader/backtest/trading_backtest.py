@@ -1,434 +1,812 @@
 # trading_backtest.py
-# Module: Backtest
-# Purpose: Backtest models for modes on test data.
-# Design: Run bt.Strategy with model.predict; output logs df/figs like FinRL.
-# Linkage: config_trade; modes_data['test']; models_paths.
-# Robustness: Date filter in df; log errors.
-# Outputs: df to_string for tables; plt save for pics.
-# Updates: Added symbol to results_save_dir (results_cache/{symbol}) to avoid overwrite; enhanced logging with symbol; created subdir for per-symbol isolation.
-# Updates: Integrated DRL_prediction-like logic to simulate prediction in env (not backtrader), collect account_value/actions, reference from FinRL (DRL_prediction: run episode, save asset/action memory); added DJI benchmark comparison in run, reference from FinRL backtest.ipynb (dji index plot); plot account_value like FinRL.
-# Updates: Dynamic model loading based on exper_data[mode]['model_type'], using self.model_classes for flexibility; this allows loading different models without hardcoding, reference from FinRL (DRLAgent.DRL_prediction: load model dynamically).
-# Updates: Replaced Pendulum-v1 dummy_env with StockTradingEnv using empty rl_data to match observation/action spaces, fixing space mismatch error during model loading (ValueError: Observation spaces do not match).
-# Updates: Extended compute_metrics with Information Ratio (sharpe-like but vs benchmark), CVaR (worst alpha% mean), Rachev Ratio (CVaR_positive / CVaR_negative), reference from FinRL_DeepSeek (Table 1-3: IR, CVaR, Rachev); added benchmark (Nasdaq-100 or DJI) fetch in run; plot multiple curves like Figure 1-4; table with all metrics.
-
-import backtrader as bt
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
+# Module: TradingBacktest
+# Purpose: Comprehensive backtesting framework for multi-stock RL trading agents with detailed performance metrics.
+# Design:
+# - RL-optimized backtesting without Backtrader dependency
+# - Rich performance metrics including Sharpe, Max Drawdown, CAGR, CVaR
+# - Detailed trade logging and asset tracking
+# - Batch backtesting support for multiple algorithms
+# Linkage: Integrates with TradingAgent, StockTradingEnv, ConfigTrading
+# Robustness: Comprehensive error handling, data validation, metric computation
+# Extensibility: Easy to add new metrics or backtest modes
 import logging
 import os
-import yfinance as yf  # For benchmark download
-from collections import deque   # Import deque from collections for history buffer
-from stable_baselines3 import PPO, A2C, DDPG, TD3, SAC  # Import classes for dynamic load
-from finbert_trader.agent.trading_agent import CPPO     # reference from FinRL_DeepSeek
-from finbert_trader.environment.stock_trading_env import StockTradingEnv  # For dummy env and simulation
-
+import numpy as np
+import pandas as pd
+from typing import Dict, List, Tuple, Optional, Any
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime
+import warnings
+from scipy import stats
+# Suppress warnings for cleaner output
+warnings.filterwarnings('ignore')
+# Logging setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+class TradingBacktest:
+    """
+    Comprehensive backtesting framework for multi-stock RL trading agents.
 
-class RLStrategy(bt.Strategy):
-    params = (('model', None),)
+    This class provides a complete backtesting solution for RL-based trading agents,
+    including performance metrics computation, detailed trade logging, and batch testing
+    capabilities. It's designed specifically for reinforcement learning environments
+    and does not rely on traditional backtesting libraries like Backtrader.
 
-    def __init__(self):
-        self.model = self.p.model
-        self.actions = []  # Collect actions for entropy/win_rate
-        self.window_size = 50  # From config, align with env
-        self.features_per_time = 15  # OHLCV 5 + ind 8 + sent + risk
-        self.feature_history = deque(maxlen=self.window_size)  # Buffer for window
-        # Multi-stock: map datas by name=symbol
-        self.symbol_datas = {date._name: date for date in self.datas}  # Dict of per-symbol data
-        self.num_symbols = len(self.symbol_datas)  # Number of symbols
-        self.current_positions = np.zeros(self.num_symbols)  # Positions array (updated in next())
+    Attributes
+    ----------
+    config : ConfigTrading
+        Configuration object containing trading parameters
+    results_cache_dir : str
+        Directory for caching backtest results
+    metrics : dict
+        Computed performance metrics
+    trade_history : list
+        Detailed history of all trades
+    asset_history : list
+        Historical asset values over time
+    """
 
-    def next(self):
-        # Multi-stock: collect features per symbol into multi array
-        features_list = []
-        for symbol_idx, (symbol, data) in enumerate(self.symbol_datas.items()):
-            sym_features = np.array([
-                data.open[0],
-                data.high[0],
-                data.low[0],
-                data.close[0],
-                data.volume[0],
-                data.macd[0],
-                data.boll_ub[0],
-                data.boll_lb[0],
-                data.rsi_30[0],
-                data.cci_30[0],
-                data.dx_30[0],
-                data.close_30_sma[0],
-                data.close_60_sma[0],
-                data.sentiment_score[0],
-                data.risk_score[0]  # Added risk_score
-            ])
-            sym_features = np.nan_to_num(sym_features, nan=0.0)  # Clean NaN
-            features_list.append(sym_features)
-
-        features = np.concatenate(features_list)  # Concat to multi-features (15*num_symbols)
-        
-        # Append to history (now multi-features per time)
-        self.feature_history.append(features)
-        
-        # Build window with padding
-        if len(self.feature_history) < self.window_size:
-            pad = np.zeros((self.window_size - len(self.feature_history), self.features_per_time * self.num_symbols))
-            window = np.vstack((pad, np.array(self.feature_history)))
-        else:
-            window = np.array(self.feature_history)
-        
-        # Force NaN to 0 in window
-        window = np.nan_to_num(window, nan=0.0)
-
-        # Flatten window and append positions array + cash
-        cash = self.broker.getcash()
-        # Update positions from broker (multi-stock: getposition per data)
-        self.current_positions = np.array([self.getposition(data).size for data in self.symbol_datas.values()])
-        state = np.append(window.flatten(), np.append(self.current_positions, cash))  # Multi-state: flatten + positions vec + cash
-        
-        # Predict action vector
-        action, _ = self.model.predict(state, deterministic=True)
-        
-        # Clip small actions to 0 (hold) to prevent no-trades, reference from FinRL_DeepSeek (5.3: action threshold for stability)
-        action[np.abs(action) < 0.1] = 0.0  # Vector clip
-
-        # Multi trade loop: per symbol/action[i]
-        for i, (symbol, data) in enumerate(self.symbol_datas.items()):
-            act = action[i]
-            price = data.close[0]
-            if act > 0:
-                shares_to_buy = (cash * act) / price
-                # Fixes attribute error without altering trade logic.
-                cost = shares_to_buy * price * (1 + self.broker.get_commissioninfo(data).p.commission)  # Use get_commissioninfo(data).p.commission
-                if np.isfinite(cost) and cost <= cash:
-                    self.buy(data=data, size=shares_to_buy)  # Buy on specific data
-            elif act < 0:
-                shares_to_sell = self.current_positions[i] * abs(act)
-                revenue = shares_to_sell * price * (1 - self.broker.get_commissioninfo(data).p.commission)  # Use get_commissioninfo(data).p.commission
-                if np.isfinite(revenue):
-                    self.sell(data=data, size=shares_to_sell)  # Sell on specific data
-        
-        self.actions.append(action)  # Append vector action
-
-class CustomPandasData(bt.feeds.PandasData):
-    lines = ('macd', 'boll_ub', 'boll_lb', 'rsi_30', 'cci_30', 'dx_30', 'close_30_sma', 'close_60_sma', 'sentiment_score', 'risk_score')  # Added risk_score
-    params = (
-        ('macd', 'macd'),
-        ('boll_ub', 'boll_ub'),
-        ('boll_lb', 'boll_lb'),
-        ('rsi_30', 'rsi_30'),
-        ('cci_30', 'cci_30'),
-        ('dx_30', 'dx_30'),
-        ('close_30_sma', 'close_30_sma'),
-        ('close_60_sma', 'close_60_sma'),
-        ('sentiment_score', 'sentiment_score'),
-        ('risk_score', 'risk_score'),  # Added
-    )
-
-class PortfolioAnalyzer(bt.Analyzer):
-    def start(self):
-        self.portfolio_values = []
-
-    def next(self):
-        self.portfolio_values.append(self.strategy.broker.getvalue())
-
-    def get_analysis(self):
-        return self.portfolio_values
-
-class Backtest:
-    def __init__(self, config_trade, exper_data, models_paths, fused_dfs, stock_data_dict, symbol=''):
+    def __init__(self, config_trading):
         """
-        Initialize Backtest with config, experiment data, model paths, fused dataframes, stock data, and symbol.
-        Updates: Use StockTradingEnv with dummy rl_data as dummy_env to match observation/action spaces.
+        Initialize the TradingBacktest with configuration.
+
+        Parameters
+        ----------
+        config_trading : ConfigTrading
+            Configuration object containing trading parameters
+
+        Returns
+        -------
+        None
+            Initializes the instance in place.
         """
-        self.config_trade = config_trade
-        self.exper_data = exper_data
-        self.models_paths = models_paths
-        self.fused_dfs = fused_dfs
-        self.stock_data_dict = stock_data_dict
-        self.symbol = symbol
-        self.results_cache = os.path.join(self.config_trade.RESULTS_SAVE_DIR, self.symbol) if self.symbol else self.config_trade.RESULTS_SAVE_DIR
-        os.makedirs(self.results_cache, exist_ok=True)
-        logging.info(f"TB Module - Results cache for {self.symbol}: {self.results_cache}")
+        # Inherit configuration for pipeline consistency
+        self.config = config_trading
+        # Set results cache directory, default to 'results_cache'
+        self.results_cache_dir = getattr(self.config, 'RESULTS_SAVE_DIR', 'results_cache')
+        # Create directory if not exists for robust file handling
+        os.makedirs(self.results_cache_dir, exist_ok=True)
 
-        # Model classes dict for dynamic loading, reference from FinRL (DRLAgent.py: MODELS dict for dynamic class selection)
-        self.model_classes = {
-            'PPO': PPO,
-            'A2C': A2C,
-            'DDPG': DDPG,
-            'TD3': TD3,
-            'SAC': SAC,
-            'CPPO': CPPO,  # Custom from trading_agent.py
-        }
+        # Initialize result containers as empty
+        self.metrics = {}
+        self.trade_history = []
+        self.asset_history = []
+        self.position_history = []
+        self.action_history = []
 
-        # Dummy env for model loading (required for TD3/DDPG/SAC _setup_model)
-        # Use StockTradingEnv with minimal rl_data to match spaces
-        dummy_rl_data = [{'states': [[0.0] * 15], 'start_date': '2000-01-01'}]  # 15 features: OHLCV+8 ind+sentiment+risk
-        self.dummy_env = StockTradingEnv(self.config_trade, dummy_rl_data, env_type='test')
-        logging.info(f"TB Module - Initialized dummy_env with observation_space: {self.dummy_env.observation_space}, action_space: {self.dummy_env.action_space}")
+        # Log initialization for traceability
+        logging.info("TB Module - Initialized TradingBacktest")
+        logging.info(f"TB Module - Results cache directory: {self.results_cache_dir}")
 
-        if not isinstance(self.exper_data, dict) or not isinstance(self.fused_dfs, dict):
-            raise ValueError("Invalid input: exper_data and fused_dfs must be dictionaries")
-    
-    def compute_metrics(self, daily_rets, portfolio_series, actions, trade_rewards, benchmark_rets):
+    def run_backtest(self, agent, test_env, render=False, record_trades=True):
         """
-        Compute comprehensive metrics from daily returns, portfolio, actions, and benchmark.
-        Input: daily_rets (pd.Series), portfolio_series (pd.Series), actions (list), trade_rewards (list), benchmark_rets (pd.Series)
-        Output: dict of metrics
-        Logic: Calculate each metric with safeguards; annualized 252 days; added IR (mean excess / tracking error), CVaR (mean worst alpha%), Rachev (CVaR_pos / CVaR_neg), reference from FinRL_DeepSeek (Table 1: IR, CVaR, Rachev Ratio).
-        Robustness: Handle empty/zero with defaults; align index for benchmark.
+        Run backtest on test environment with trained agent.
+
+        Parameters
+        ----------
+        agent : TradingAgent
+            Trained trading agent
+        test_env : StockTradingEnv
+            Test environment for backtesting
+        render : bool, optional
+            Whether to render environment steps
+        record_trades : bool, optional
+            Whether to record detailed trade history
+
+        Returns
+        -------
+        dict
+            Backtest results including metrics and history
+
+        Notes
+        -----
+        - Uses deterministic predictions for consistent backtesting.
+        - Records comprehensive info from env.step for analysis.
+        - Computes metrics post-loop for efficiency.
         """
-        metrics = {}
-        alpha = 0.05  # For CVaR
-
-        # Use len() >0 for empty check to avoid ambiguous truth value, reference from FinRL_DeepSeek (5.2: safe metrics computation)
-        if len(benchmark_rets) > 0 and len(daily_rets) > 0:
-            # Align before subtraction
-            aligned_daily, aligned_bench = daily_rets.align(benchmark_rets, join='inner', method='ffill')
-            excess_rets = aligned_daily - aligned_bench.fillna(0)
-            tracking_error = excess_rets.std()
-            metrics['information_ratio'] = (excess_rets.mean() / tracking_error * np.sqrt(252)) if tracking_error != 0 else 0.0
-        else:
-            metrics['information_ratio'] = 0.0
-        
-        try: 
-            if len(portfolio_series) <= 1:
-                logging.warning("TB Module - No portfolio changes detected; setting metrics to 0")
-                metrics = {k: 0.0 for k in ['sharpe', 'information_ratio', 'total_returns', 'total_rewards', 'annualized_return', 'max_drawdown', 'cvar', 'rachev_ratio', 'action_entropy', 'win_rate', 'num_trades']}
-                return metrics  # Early return defaults without raise
-            
-            std_ret = daily_rets.std()
-            metrics['sharpe'] = (daily_rets.mean() / std_ret * np.sqrt(252)) if std_ret != 0 else 0.0
-            
-            metrics['total_returns'] = (portfolio_series.iloc[-1] / portfolio_series.iloc[0] - 1) if len(portfolio_series) > 1 else 0.0
-
-            metrics['total_rewards'] = portfolio_series.diff().sum() if not portfolio_series.empty else 0.0
-            
-            if len(portfolio_series) > 1:
-                years = (portfolio_series.index[-1] - portfolio_series.index[0]).days / 365.25
-                metrics['annualized_return'] = (1 + metrics['total_returns']) ** (1 / years) - 1 if years > 0 else 0.0
-            else:
-                metrics['annualized_return'] = 0.0
-
-            if not portfolio_series.empty:
-                peak = portfolio_series.cummax()
-                drawdown = (portfolio_series - peak) / peak
-                metrics['max_drawdown'] = drawdown.min() if not drawdown.empty else 0.0
-            else:
-                metrics['max_drawdown'] = 0.0
-        
-            # CVaR: mean of worst alpha% returns
-            if len(daily_rets) > 0:
-                sorted_rets = np.sort(daily_rets)
-                var_idx = int(alpha * len(sorted_rets))
-                metrics['cvar'] = np.mean(sorted_rets[:var_idx]) if var_idx > 0 else 0.0
-            else:
-                metrics['cvar'] = 0.0
-            
-            # Rachev Ratio: CVaR_positive (best (1-alpha)%) / CVaR_negative (worst alpha%)
-            if len(daily_rets) > 0:
-                pos_idx = int((1 - alpha) * len(sorted_rets))
-                cvar_pos = np.mean(sorted_rets[pos_idx:]) if pos_idx < len(sorted_rets) else 0.0
-                cvar_neg = abs(metrics['cvar']) if metrics['cvar'] < 0 else 1e-6  # Avoid div0
-                metrics['rachev_ratio'] = cvar_pos / cvar_neg if cvar_neg != 0 else 1.0
-            else:
-                metrics['rachev_ratio'] = 1.0
-            
-            if actions:
-                bins = np.array([np.sum(np.array(actions) > 0.05), np.sum(np.abs(np.array(actions)) <= 0.05), np.sum(np.array(actions) < -0.05)])
-                probs = bins / np.sum(bins) if np.sum(bins) > 0 else np.array([1/3, 1/3, 1/3])
-                metrics['action_entropy'] = -np.sum(probs * np.log(probs + 1e-10))
-                if metrics['action_entropy'] < 0.1:
-                    logging.warning(f"TB Module - Low entropy detected; scaling rewards in future runs suggested")
-            else:
-                metrics['action_entropy'] = 0.0
-            
-            metrics['win_rate'] = sum(np.array(trade_rewards) > 0) / len(trade_rewards) if len(trade_rewards) > 0 else 0.0
-
-            metrics['num_trades'] = sum(np.abs(np.array(actions)) > 0.1) if actions else 0
-            
-            logging.debug(f"TB Module - Action bins: buy={bins[0]}, hold={bins[1]}, sell={bins[2]}")
-
-        except Exception as e:
-            logging.error(f"TB Module - Error in computing metrics: {e}")
-            metrics = {k: 0.0 for k in metrics}  # Reset to 0 on failure
-        
-        return metrics
-
-    def simulate_prediction(self, mode):
-        """
-        Simulate prediction in env to collect account_value and actions.
-        Output: df_account_value (pd.DataFrame), df_actions (pd.DataFrame)
-        Logic: Run full episode in test_env, collect portfolio and actions, reference from FinRL (DRL_prediction.py: run step loop, save asset/action memory).
-        Robustness: Use test_rl_data from exper_data; handle empty data.
-        """
-        test_rl_data = self.exper_data.get(mode, {}).get('test', [])
-        model_path = self.models_paths.get(mode)
-        zip_path = f"{model_path}.zip" if model_path else None
-        logging.info(f"TB Module - Simulation for mode {mode} ({self.symbol}): test_rl_data len {len(test_rl_data)}, model_path {model_path}, zip exists {os.path.exists(zip_path) if zip_path else False}")
-
-        if not test_rl_data or not model_path or not os.path.exists(zip_path):
-            logging.warning(f"TB Module - Skipping simulation for mode {mode} ({self.symbol}): missing data or model")
-            return None, None
-
-        model_type = self.exper_data.get(mode, {}).get('model_type', 'PPO')
-        model_class = self.model_classes.get(model_type)
-        if not model_class:
-            logging.warning(f"TB Module - Unsupported model_type {model_type} for simulation {mode}; skipping")
-            return None, None
-
-        model = model_class.load(model_path, env=self.dummy_env)  # Use dummy_env for load
-
-        # Create test env from rl_data
-        test_env = StockTradingEnv(self.config_trade, test_rl_data, env_type='test')  # Use 'backtest' mode for full run
-
-        obs, _ = test_env.reset()
-        done = False
-        while not done:
-            action, _ = model.predict(obs, deterministic=True)
-            obs, reward, done, truncated, info = test_env.step(action)
-
-        # Save memories from env, reference from FinRL (DRL_prediction.py: collect after loop)
-        df_account_value = test_env.save_portfolio_memory()  # Get portfolio df
-        df_actions = test_env.save_action_memory()  # Get actions df
-        logging.info(f"TB Module - Simulation for mode {mode} ({self.symbol}): account_value shape {df_account_value.shape}, actions shape {df_actions.shape}")
-        return df_account_value, df_actions
-
-    def run_backtest_for_mode(self, mode):
-        """
-        Run backtest for a single mode on test data.
-        Updates: Dynamic model loading; use dummy_env for load; added benchmark fetch (NDX for Nasdaq-100, reference from FinRL_DeepSeek 5); passed to compute_metrics; plot with benchmark curve.
-        """
-        fused_test_df = self.fused_dfs.get(mode, {}).get('test', pd.DataFrame())
-        model_path = self.models_paths.get(mode)
-        zip_path = f"{model_path}.zip" if model_path else None
-        logging.info(f"TB Module - Backtest for mode {mode} ({self.symbol}): fused_test shape {fused_test_df.shape}, model_path {model_path}, zip exists {os.path.exists(zip_path) if zip_path else False}")
-
-        if fused_test_df.empty or not model_path or not os.path.exists(zip_path):
-            logging.warning(f"TB Module - Skipping backtest for mode {mode} ({self.symbol}): missing data or model")
-            return None, None
-        
-        # Dynamic model class selection
-        model_type = self.exper_data.get(mode, {}).get('model_type', 'PPO')
-        model_class = self.model_classes.get(model_type)
-        if not model_class:
-            logging.warning(f"TB Module - Unsupported model_type {model_type} for mode {mode}; skipping")
-            return None, None
-        
-        # Load model dynamically with dummy_env
         try:
-            model = model_class.load(model_path, env=self.dummy_env)
-            logging.info(f"TB Module - Loaded {model_type} from {model_path} for mode {mode} ({self.symbol})")
-        except Exception as e:
-            logging.error(f"TB Module - Model load failed for {model_type} in mode {mode} ({self.symbol}): {e}")
-            return None, None
-        
-        # Upstream repair: Filter test period
-        mode_df = fused_test_df.copy().sort_values('Date')  # Use test df directly
-        mode_df = mode_df.reset_index() # Ensure 'Date' as columns
-        
-        cerebro = bt.Cerebro()
-        
-        # Split wide df to per-symbol sub-df with generic columns
-        symbol_cols = {symbol: [col for col in mode_df.columns if col.endswith(f'_{symbol}')] for symbol in self.config_trade.symbols}
-        global_ind_cols = [col for col in mode_df.columns if col != 'Date' and not any(col.endswith(f'_{symbol}') for symbol in self.config_trade.symbols)]
-        for symbol in self.config_trade.symbols:
-            if not symbol_cols[symbol]:
-                logging.warning(f"TB Module - No columns for symbol {symbol} in mode {mode}; skipping")
-                continue
-            # Merge symbol-specific and global indicator columns
-            all_symbol_cols = symbol_cols[symbol] + global_ind_cols
-            # Rename symbol-specific columns to generic names (remove suffix)
-            symbol_df = mode_df[['Date'] + all_symbol_cols].rename(columns={col: col.replace(f'_{symbol}', '') for col in all_symbol_cols if col.endswith(f'_{symbol}')})
+            # Log backtest start
+            logging.info("TB Module - Starting backtest")
 
-            data = CustomPandasData(dataname=symbol_df.set_index('Date'))
-            cerebro.adddata(data, name=symbol)  # Name per symbol for strategy access
-        
-        cerebro.addstrategy(RLStrategy, model=model)
-        cerebro.broker.setcash(self.config_trade.initial_cash)
-        cerebro.broker.setcommission(self.config_trade.commission_rate)
-        cerebro.addanalyzer(PortfolioAnalyzer, _name='portfolio')
-        
+            # Reset environment to initial state
+            state, _ = test_env.reset()
+
+            # Initialize loop variables
+            done = False
+            truncated = False
+            step_count = 0
+
+            # Clear histories if recording
+            if record_trades:
+                self.trade_history = []
+                self.asset_history = []
+                self.position_history = []
+                self.action_history = []
+
+            # Main backtest loop
+            while not (done or truncated):
+                # Get deterministic action from agent
+                action, _ = agent.predict(state, deterministic=True)
+
+                # Step environment with action
+                next_state, reward, done, truncated, info = test_env.step(action)
+
+                # Record detailed trade info if enabled
+                if record_trades:
+                    trade_record = {
+                        'step': step_count,
+                        'action': action.copy(),  # Copy to avoid reference changes
+                        'reward': reward,
+                        'total_asset': info.get('Total Asset', 0),
+                        'cash': info.get('Cash', 0),
+                        'position': info.get('Position', np.zeros(len(self.config.symbols))).copy(),
+                        'cost': info.get('Cost', 0),
+                        'sentiment_factor': info.get('Sentiment Factor', np.ones(len(self.config.symbols))).copy(),
+                        'risk_factor': info.get('Risk Factor', np.ones(len(self.config.symbols))).copy(),
+                        'done': done,
+                        'truncated': truncated
+                    }
+                    self.trade_history.append(trade_record)
+                    self.asset_history.append(info.get('Total Asset', 0))
+                    self.position_history.append(info.get('Position', np.zeros(len(self.config.symbols))).copy())
+                    self.action_history.append(action.copy())
+
+                # Render if requested (e.g., console output)
+                if render:
+                    test_env.render()
+
+                # Update state and counter
+                state = next_state
+                step_count += 1
+
+                # Periodic progress logging for long runs
+                if step_count % 100 == 0:
+                    logging.info(f"TB Module - Backtest progress: {step_count} steps completed")
+
+            # Log completion
+            logging.info(f"TB Module - Backtest completed with {step_count} steps")
+
+            # Compute and store metrics
+            metrics = self._compute_metrics()
+            self.metrics = metrics
+
+            # Compile results dict
+            results = {
+                'metrics': metrics,
+                'trade_history': self.trade_history if record_trades else [],
+                'asset_history': self.asset_history if record_trades else [],
+                'position_history': self.position_history if record_trades else [],
+                'action_history': self.action_history if record_trades else [],
+                'total_steps': step_count,
+                'episode_length': len(test_env.asset_memory) if hasattr(test_env, 'asset_memory') else 0
+            }
+
+            return results
+
+        except Exception as e:
+            # Log and re-raise for upstream handling
+            logging.error(f"TB Module - Error during backtest: {e}")
+            raise
+
+    def _compute_metrics(self):
+        """
+        Compute comprehensive performance metrics from backtest results.
+
+        Returns
+        -------
+        dict
+            Dictionary of computed performance metrics
+
+        Notes
+        -----
+        - Assumes daily data (252 trading days) for annualization.
+        - Handles edge cases like zero returns or divisions.
+        - Metrics include performance (CAGR), risk (CVaR, Drawdown), adjusted (Sharpe/Sortino), trade (Win Rate).
+        - Extensible: Add new metrics here with similar numpy/scipy ops.
+        """
         try:
-            thestrats = cerebro.run()
-            portfolio_values = thestrats[0].analyzers.portfolio.get_analysis()
-            actions = thestrats[0].actions
-            trade_rewards = []
-            for i in range(1, len(portfolio_values)):
-                # Fixes ambiguous error without altering logic.
-                if (np.abs(actions[i-1]) > 0.05).any(): # Use .any() for array condition, check if any action > threshold
-                    delta = portfolio_values[i] - portfolio_values[i-1]
-                    trade_rewards.append(delta)
-            portfolio_series = pd.Series(portfolio_values, index=mode_df['Date'])
-            daily_rets = portfolio_series.pct_change().dropna()
-            
-            # Fetch benchmark (Nasdaq-100 '^NDX', reference from FinRL_DeepSeek 5)
-            benchmark_df = yf.download('^NDX', start=portfolio_series.index[0], end=portfolio_series.index[-1])
-            benchmark_rets = benchmark_df['Close'].pct_change().dropna()
-            benchmark_series = benchmark_df['Close'] / benchmark_df['Close'].iloc[0] * self.config_trade.initial_cash  # Normalize to initial_cash for plot/comparison
-            
-            metrics = self.compute_metrics(daily_rets, portfolio_series, actions, trade_rewards, benchmark_rets)
-            logging.info(f"TB Module - Backtest for mode {mode} ({self.symbol}): {metrics}")
-            
-            fig, ax = plt.subplots()
-            ax.plot(portfolio_series.index, portfolio_series, label=mode)
-            ax.plot(benchmark_series.index, benchmark_series, label='Nasdaq-100', linestyle='--')
-            ax.legend()
-            fig_path = f"{self.results_cache}/{mode}_portfolio.png"
-            fig.savefig(fig_path)
-            plt.close(fig)
-            logging.info(f"TB Module - Saved fig to {fig_path} for {self.symbol}")
-            
-            return {'metrics': metrics, 'portfolio_series': portfolio_series}, fig_path
+            # Validate asset history
+            if not self.asset_history:
+                raise ValueError("TB Module - No asset history available for metrics computation")
+
+            # Convert to numpy for vectorized ops
+            assets = np.array(self.asset_history)
+            # Compute daily returns
+            returns = np.diff(assets) / assets[:-1] if len(assets) > 1 else np.array([0.0])
+
+            # Handle no returns case
+            if len(returns) == 0:
+                returns = np.array([0.0])
+
+            # Log computation start
+            logging.info(f"TB Module - Computing metrics for {len(returns)} returns")
+
+            # 1. Total Return: overall growth
+            total_return = (assets[-1] / assets[0] - 1) if len(assets) > 1 else 0.0
+
+            # 2. CAGR: annualized compounding
+            if len(assets) > 1:
+                total_days = len(assets)
+                cagr = (assets[-1] / assets[0]) ** (252 / total_days) - 1  # 252 trading days
+            else:
+                cagr = 0.0
+
+            # 3. Volatility: std dev annualized
+            volatility = np.std(returns) * np.sqrt(252) if len(returns) > 1 else 0.0
+
+            # 4. Sharpe Ratio: risk-adjusted, assume rf=0
+            risk_free_rate = 0.0  # Simplification; can be from config
+            sharpe_ratio = (np.mean(returns) - risk_free_rate) / (np.std(returns) + 1e-8) * np.sqrt(252) \
+                          if len(returns) > 1 and np.std(returns) > 0 else 0.0
+
+            # 5. Maximum Drawdown: peak-to-trough
+            if len(assets) > 1:
+                rolling_max = np.maximum.accumulate(assets)
+                drawdown = (assets - rolling_max) / (rolling_max + 1e-8)
+                max_drawdown = np.min(drawdown)
+            else:
+                max_drawdown = 0.0
+
+            # 6. Calmar Ratio: CAGR / |MDD|
+            calmar_ratio = cagr / (abs(max_drawdown) + 1e-8) if max_drawdown < 0 else 0.0
+
+            # 7. Profit Factor and Win Rate: trade efficiency
+            positive_returns = returns[returns > 0]
+            negative_returns = returns[returns < 0]
+
+            total_positive = np.sum(positive_returns) if len(positive_returns) > 0 else 0.0
+            total_negative = abs(np.sum(negative_returns)) if len(negative_returns) > 0 else 1e-8
+
+            profit_factor = total_positive / total_negative if total_negative > 0 else 0.0
+            win_rate = len(positive_returns) / len(returns) if len(returns) > 0 else 0.0
+
+            # 8. CVaR at 5%: tail risk
+            if len(returns) > 10:  # Sufficient data threshold
+                alpha = 0.05  # 5% CVaR
+                var_index = int(alpha * len(returns))
+                sorted_returns = np.sort(returns)
+                cvar = np.mean(sorted_returns[:var_index]) if var_index > 0 else np.min(returns)
+            else:
+                cvar = np.min(returns) if len(returns) > 0 else 0.0
+
+            # 9. Additional: Annual Return
+            annual_return = np.mean(returns) * 252 if len(returns) > 0 else 0.0
+
+            # Sortino Ratio: downside-focused
+            negative_returns_squared = np.square(returns[returns < 0])
+            downside_deviation = np.sqrt(np.mean(negative_returns_squared)) * np.sqrt(252) \
+                               if len(negative_returns_squared) > 0 else 1e-8
+            sortino_ratio = (annual_return - risk_free_rate) / downside_deviation \
+                          if downside_deviation > 0 else 0.0
+
+            # Max Consecutive Wins/Losses: streak analysis
+            consecutive_wins = 0
+            consecutive_losses = 0
+            max_consecutive_wins = 0
+            max_consecutive_losses = 0
+            current_win_streak = 0
+            current_loss_streak = 0
+
+            for ret in returns:
+                if ret > 0:
+                    current_win_streak += 1
+                    current_loss_streak = 0
+                    max_consecutive_wins = max(max_consecutive_wins, current_win_streak)
+                elif ret < 0:
+                    current_loss_streak += 1
+                    current_win_streak = 0
+                    max_consecutive_losses = max(max_consecutive_losses, current_loss_streak)
+                else:
+                    current_win_streak = 0
+                    current_loss_streak = 0
+
+            # Volatility-Adjusted Return: return per vol unit
+            volatility_adjusted_return = annual_return / (volatility + 1e-8) if volatility > 0 else 0.0
+
+            # Compile metrics dict (cast to float/int for serialization)
+            metrics = {
+                'total_return': float(total_return),
+                'cagr': float(cagr),
+                'annual_return': float(annual_return),
+                'volatility': float(volatility),
+                'sharpe_ratio': float(sharpe_ratio),
+                'sortino_ratio': float(sortino_ratio),
+                'max_drawdown': float(max_drawdown),
+                'calmar_ratio': float(calmar_ratio),
+                'profit_factor': float(profit_factor),
+                'win_rate': float(win_rate),
+                'cvar_5_percent': float(cvar),
+                'max_consecutive_wins': int(max_consecutive_wins),
+                'max_consecutive_losses': int(max_consecutive_losses),
+                'volatility_adjusted_return': float(volatility_adjusted_return),
+                'total_steps': len(returns),
+                'final_asset': float(assets[-1]) if len(assets) > 0 else 0.0,
+                'initial_asset': float(assets[0]) if len(assets) > 0 else 0.0
+            }
+
+            # Log key metrics summary
+            logging.info("TB Module - Metrics computation completed")
+            logging.info(f"TB Module - Key metrics - CAGR: {cagr:.4f}, Sharpe: {sharpe_ratio:.4f}, Max Drawdown: {max_drawdown:.4f}")
+
+            return metrics
+
         except Exception as e:
-            logging.error(f"TB Module - Backtest error for mode {mode} ({self.symbol}): {e}")
-            return None, None
+            # Log and re-raise
+            logging.error(f"TB Module - Error computing metrics: {e}")
+            raise
 
-    def run(self):
-        logging.info("=========== Start to run Backtest ===========")
-        all_results = {}
-        
-        # Simplified plotting loop:
-        for group, modes in self.config_trade.exper_mode.items():
-            logging.info(f"TB Module - Running backtest for group {group} ({self.symbol})")
-            for mode in modes:
-                results_dict, fig_path = self.run_backtest_for_mode(mode)
-                if results_dict:
-                    all_results[mode] = (results_dict, fig_path)
+    def batch_backtest(self, agent_configs: List[Tuple], test_env):
+        """
+        Run batch backtest for multiple agent configurations.
 
-        # Aggregate plot/table across symbols per mode
-        all_series = {}  # {mode: {symbol: series}}
-        all_metrics = []  # list of {'mode':, 'symbol':, **metrics}
-        for mode in sum(self.config_trade.exper_mode.values(), []):
-            mode_series = {}
-            for symbol in self.config_trade.symbols:
-                symbol_results = all_results.get(symbol, {}).get(mode, (None, None))[0]
-                if symbol_results and 'portfolio_series' in symbol_results:
-                    mode_series[symbol] = symbol_results['portfolio_series']
-                    all_metrics.append({'mode': mode, 'symbol': symbol, **symbol_results['metrics']})
-            all_series[mode] = mode_series
+        Parameters
+        ----------
+        agent_configs : list of tuples
+            List of (agent, name) tuples for batch testing
+        test_env : StockTradingEnv
+            Test environment for backtesting
 
-        # Plot multi-symbol per mode
-        for mode, mode_series in all_series.items():
-            if mode_series:
-                fig_multi, ax_multi = plt.subplots()
-                for sym, ser in mode_series.items():
-                    ax_multi.plot(ser.index, ser, label=f'{mode}-{sym}')
-                # Add benchmark (fetch once outside if needed)
-                benchmark_df = yf.download('^NDX', start=min(s.index[0] for s in mode_series.values()), end=max(s.index[-1] for s in mode_series.values()))
-                benchmark_series = benchmark_df['Close'] / benchmark_df['Close'].iloc[0] * self.config_trade.initial_cash
-                ax_multi.plot(benchmark_series.index, benchmark_series, label='Nasdaq-100', linestyle='--')
-                ax_multi.set_title(f'Portfolio Value Comparison - {mode} (Multi-Symbol)')
-                ax_multi.legend()
-                multi_fig_path = f"{self.results_cache}/{mode}_multi_portfolio.png"
-                fig_multi.savefig(multi_fig_path)
-                plt.close(fig_multi)
-                logging.info(f"TB Module - Saved multi-symbol portfolio fig to {multi_fig_path} for {mode}")
+        Returns
+        -------
+        dict
+            Batch backtest results with comparison metrics
 
-        # Combined metrics table across all
-        if all_metrics:
-            results_df = pd.DataFrame(all_metrics).sort_values(by=['mode', 'sharpe'], ascending=[True, False])
-            logging.info(f"TB Module - Multi-symbol results table:\n{results_df.to_string()}")
-            table_path = f"{self.results_cache}/metrics_table_multi.csv"
-            results_df.to_csv(table_path, index=False)
-            logging.info(f"TB Module - Saved multi-symbol metrics table to {table_path}")
-        
-        return all_results
+        Notes
+        -----
+        - Runs independent backtests per agent, stores individual results.
+        - Generates comparison report with rankings.
+        """
+        try:
+            # Log batch start
+            logging.info(f"TB Module - Starting batch backtest for {len(agent_configs)} agents")
+
+            # Initialize results dict
+            batch_results = {}
+
+            # Loop over agents
+            for i, (agent, name) in enumerate(agent_configs):
+                # Log current agent
+                logging.info(f"TB Module - Running backtest {i+1}/{len(agent_configs)}: {name}")
+
+                # Run single backtest
+                results = self.run_backtest(agent, test_env, record_trades=True)
+
+                # Store in batch
+                batch_results[name] = {
+                    'metrics': results['metrics'],
+                    'trade_history': results['trade_history'],
+                    'asset_history': results['asset_history']
+                }
+
+                # Log agent summary
+                logging.info(f"TB Module - Completed backtest for {name}")
+                logging.info(f"TB Module - {name} - CAGR: {results['metrics']['cagr']:.4f}, Sharpe: {results['metrics']['sharpe_ratio']:.4f}")
+
+            # Generate and add comparison
+            comparison_report = self._generate_comparison_report(batch_results)
+
+            final_results = {
+                'individual_results': batch_results,
+                'comparison_report': comparison_report
+            }
+
+            return final_results
+
+        except Exception as e:
+            # Log and re-raise
+            logging.error(f"TB Module - Error during batch backtest: {e}")
+            raise
+
+    def _generate_comparison_report(self, batch_results):
+        """
+        Generate comparison report from batch backtest results.
+
+        Parameters
+        ----------
+        batch_results : dict
+            Results from batch backtest
+
+        Returns
+        -------
+        dict
+            Comparison report with rankings and statistics
+
+        Notes
+        -----
+        - Uses pd.DataFrame for easy ranking (ascending/descending per metric).
+        - Overall Rank as mean of key ranks; sorts df by it.
+        - Extensible: Add metrics to key_metrics list.
+        """
+        try:
+            # Collect data for df
+            comparison_data = []
+            for name, results in batch_results.items():
+                metrics = results['metrics']
+                comparison_data.append({
+                    'Algorithm': name,
+                    'CAGR': metrics['cagr'],
+                    'Sharpe Ratio': metrics['sharpe_ratio'],
+                    'Max Drawdown': metrics['max_drawdown'],
+                    'Calmar Ratio': metrics['calmar_ratio'],
+                    'Profit Factor': metrics['profit_factor'],
+                    'Win Rate': metrics['win_rate'],
+                    'CVaR (5%)': metrics['cvar_5_percent'],
+                    'Volatility': metrics['volatility'],
+                    'Total Return': metrics['total_return']
+                })
+
+            # Create df
+            df = pd.DataFrame(comparison_data)
+
+            # Define key metrics for ranking
+            rankings = {}
+            key_metrics = ['CAGR', 'Sharpe Ratio', 'Calmar Ratio', 'Profit Factor']
+
+            for metric in key_metrics:
+                # Rank higher-better metrics descending
+                if metric in ['CAGR', 'Sharpe Ratio', 'Calmar Ratio', 'Profit Factor']:
+                    df[f'{metric} Rank'] = df[metric].rank(ascending=False)
+                # Rank lower-better ascending (though not in key, for completeness)
+                elif metric in ['Max Drawdown', 'CVaR (5%)']:
+                    df[f'{metric} Rank'] = df[metric].rank(ascending=True)
+
+            # Compute overall rank as mean of rank columns
+            rank_columns = [col for col in df.columns if 'Rank' in col]
+            if rank_columns:
+                df['Overall Rank'] = df[rank_columns].mean(axis=1)
+                df = df.sort_values('Overall Rank')
+
+            # Compile report
+            comparison_report = {
+                'summary_table': df.to_dict('records'),
+                'best_performer': df.iloc[0]['Algorithm'] if len(df) > 0 else None,
+                'rankings': df.set_index('Algorithm')[rank_columns + ['Overall Rank']].to_dict('index') if rank_columns else {}
+            }
+
+            # Log success
+            logging.info("TB Module - Comparison report generated")
+            return comparison_report
+
+        except Exception as e:
+            # Log and re-raise
+            logging.error(f"TB Module - Error generating comparison report: {e}")
+            raise
+
+    def save_results(self, results, filename=None):
+        """
+        Save backtest results to file.
+
+        Parameters
+        ----------
+        results : dict
+            Backtest results to save
+        filename : str, optional
+            Custom filename (defaults to auto-generated)
+
+        Returns
+        -------
+        str
+            Path to saved results file
+
+        Notes
+        -----
+        - Uses pickle for dict serialization.
+        - Timestamped filename for versioning.
+        """
+        try:
+            # Generate timestamped name if none
+            if filename is None:
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                filename = f"backtest_results_{timestamp}.pkl"
+
+            # Construct path
+            save_path = os.path.join(self.results_cache_dir, filename)
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+            # Save with pickle
+            with open(save_path, 'wb') as f:
+                import pickle
+                pickle.dump(results, f)
+
+            # Log path
+            logging.info(f"TB Module - Results saved to: {save_path}")
+            return save_path
+
+        except Exception as e:
+            # Log and re-raise
+            logging.error(f"TB Module - Error saving results: {e}")
+            raise
+
+    def load_results(self, filepath):
+        """
+        Load backtest results from file.
+
+        Parameters
+        ----------
+        filepath : str
+            Path to saved results file
+
+        Returns
+        -------
+        dict
+            Loaded backtest results
+        """
+        try:
+            # Load with pickle
+            with open(filepath, 'rb') as f:
+                import pickle
+                results = pickle.load(f)
+
+            # Log success
+            logging.info(f"TB Module - Results loaded from: {filepath}")
+            return results
+
+        except Exception as e:
+            # Log and re-raise
+            logging.error(f"TB Module - Error loading results: {e}")
+            raise
+
+    def generate_detailed_report(self, results, report_name=None):
+        """
+        Generate detailed backtest report with metrics and analysis.
+
+        Parameters
+        ----------
+        results : dict
+            Backtest results
+        report_name : str, optional
+            Custom report name
+
+        Returns
+        -------
+        dict
+            Detailed report with formatted metrics and analysis
+
+        Notes
+        -----
+        - Formats metrics with %/$ for readability.
+        - Includes qualitative analysis_summary and recommendation.
+        """
+        try:
+            metrics = results.get('metrics', {})
+
+            # Format metrics into readable dict
+            formatted_metrics = {
+                'Performance Metrics': {
+                    'Total Return': f"{metrics.get('total_return', 0)*100:.2f}%",
+                    'CAGR': f"{metrics.get('cagr', 0)*100:.2f}%",
+                    'Annual Return': f"{metrics.get('annual_return', 0)*100:.2f}%",
+                    'Final Asset Value': f"${metrics.get('final_asset', 0):,.2f}",
+                    'Initial Asset Value': f"${metrics.get('initial_asset', 0):,.2f}"
+                },
+                'Risk Metrics': {
+                    'Volatility (Annualized)': f"{metrics.get('volatility', 0)*100:.2f}%",
+                    'Maximum Drawdown': f"{metrics.get('max_drawdown', 0)*100:.2f}%",
+                    'CVaR (5%)': f"{metrics.get('cvar_5_percent', 0)*100:.2f}%",
+                    'Max Consecutive Losses': f"{metrics.get('max_consecutive_losses', 0)}"
+                },
+                'Risk-Adjusted Metrics': {
+                    'Sharpe Ratio': f"{metrics.get('sharpe_ratio', 0):.4f}",
+                    'Sortino Ratio': f"{metrics.get('sortino_ratio', 0):.4f}",
+                    'Calmar Ratio': f"{metrics.get('calmar_ratio', 0):.4f}",
+                    'Volatility-Adjusted Return': f"{metrics.get('volatility_adjusted_return', 0):.4f}"
+                },
+                'Trade Metrics': {
+                    'Profit Factor': f"{metrics.get('profit_factor', 0):.4f}",
+                    'Win Rate': f"{metrics.get('win_rate', 0)*100:.2f}%",
+                    'Max Consecutive Wins': f"{metrics.get('max_consecutive_wins', 0)}",
+                    'Total Trading Steps': f"{metrics.get('total_steps', 0)}"
+                }
+            }
+
+            # Generate summary
+            analysis_summary = self._generate_analysis_summary(metrics)
+
+            # Compile report
+            detailed_report = {
+                'report_name': report_name or f"Backtest Report - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                'generated_at': datetime.now().isoformat(),
+                'formatted_metrics': formatted_metrics,
+                'raw_metrics': metrics,
+                'analysis_summary': analysis_summary,
+                'trade_history': results.get('trade_history', []),
+                'asset_history': results.get('asset_history', [])
+            }
+
+            return detailed_report
+
+        except Exception as e:
+            # Log and re-raise
+            logging.error(f"TB Module - Error generating detailed report: {e}")
+            raise
+
+    def _generate_analysis_summary(self, metrics):
+        """
+        Generate analysis summary based on computed metrics.
+
+        Parameters
+        ----------
+        metrics : dict
+            Computed performance metrics
+
+        Returns
+        -------
+        dict
+            Analysis summary with interpretations
+
+        Notes
+        -----
+        - Threshold-based qualitative assessments (e.g., 'Excellent' for CAGR >20%).
+        - Calls _generate_recommendation for final advice.
+        """
+        try:
+            summary = {}
+
+            # Performance: threshold on CAGR
+            cagr = metrics.get('cagr', 0)
+            if cagr > 0.2:
+                performance = "Excellent"
+            elif cagr > 0.1:
+                performance = "Good"
+            elif cagr > 0.05:
+                performance = "Moderate"
+            elif cagr > 0:
+                performance = "Poor"
+            else:
+                performance = "Negative"
+
+            # Risk: on abs(MDD)
+            max_dd = abs(metrics.get('max_drawdown', 0))
+            if max_dd < 0.1:
+                risk_level = "Low"
+            elif max_dd < 0.2:
+                risk_level = "Moderate"
+            elif max_dd < 0.3:
+                risk_level = "High"
+            else:
+                risk_level = "Very High"
+
+            # Risk-Return: on Sharpe
+            sharpe = metrics.get('sharpe_ratio', 0)
+            if sharpe > 2:
+                risk_return = "Excellent"
+            elif sharpe > 1:
+                risk_return = "Good"
+            elif sharpe > 0.5:
+                risk_return = "Moderate"
+            else:
+                risk_return = "Poor"
+
+            # Consistency: on win_rate/profit_factor
+            win_rate = metrics.get('win_rate', 0)
+            profit_factor = metrics.get('profit_factor', 0)
+            if win_rate > 0.6 and profit_factor > 2:
+                consistency = "High"
+            elif win_rate > 0.5 and profit_factor > 1.5:
+                consistency = "Moderate"
+            else:
+                consistency = "Low"
+
+            summary = {
+                'performance_assessment': f"{performance} - CAGR of {cagr*100:.2f}%",
+                'risk_assessment': f"{risk_level} - Max Drawdown of {max_dd*100:.2f}%",
+                'risk_return_assessment': f"{risk_return} - Sharpe Ratio of {sharpe:.2f}",
+                'consistency_assessment': f"{consistency} - Win Rate: {win_rate*100:.1f}%, Profit Factor: {profit_factor:.2f}",
+                'recommendation': self._generate_recommendation(performance, risk_level, risk_return, consistency)
+            }
+
+            return summary
+
+        except Exception as e:
+            # Log and return empty
+            logging.error(f"TB Module - Error generating analysis summary: {e}")
+            return {}
+
+    def _generate_recommendation(self, performance, risk_level, risk_return, consistency):
+        """
+        Generate recommendation based on assessment.
+
+        Parameters
+        ----------
+        performance : str
+            Performance assessment
+        risk_level : str
+            Risk level assessment
+        risk_return : str
+            Risk-return assessment
+        consistency : str
+            Consistency assessment
+
+        Returns
+        -------
+        str
+            Recommendation
+
+        Notes
+        -----
+        - Rule-based: combines assessments for 'Buy'/'Sell' advice.
+        """
+        try:
+            # Rule-based logic
+            if performance in ["Excellent", "Good"] and risk_level in ["Low", "Moderate"] and risk_return in ["Excellent", "Good"]:
+                return "Strong Buy - Excellent risk-adjusted returns with acceptable risk levels"
+            elif performance in ["Moderate"] and risk_level in ["Low", "Moderate"] and risk_return in ["Moderate", "Good"]:
+                return "Buy - Good performance with reasonable risk"
+            elif performance in ["Poor", "Negative"] or risk_level in ["High", "Very High"]:
+                return "Sell/Hold - Poor performance or excessive risk"
+            else:
+                return "Hold - Mixed signals, monitor closely"
+
+        except Exception as e:
+            # Log and default
+            logging.error(f"TB Module - Error generating recommendation: {e}")
+            return "Hold - Unable to generate recommendation"
+# Utility functions for common backtest scenarios
+def run_single_backtest(config_trading, agent, test_env, save_results=True):
+    """
+    Utility function to run a single backtest with standard configuration.
+
+    Parameters
+    ----------
+    config_trading : ConfigTrading
+        Trading configuration
+    agent : TradingAgent
+        Trained agent
+    test_env : StockTradingEnv
+        Test environment
+    save_results : bool, optional
+        Whether to save results
+
+    Returns
+    -------
+    dict
+        Backtest results
+
+    Notes
+    -----
+    - Wrapper for TradingBacktest.run_backtest with defaults.
+    """
+    # Instantiate backtester
+    backtester = TradingBacktest(config_trading)
+    # Run and optionally save
+    results = backtester.run_backtest(agent, test_env, record_trades=True)
+
+    if save_results:
+        backtester.save_results(results)
+
+    return results
+def run_batch_comparison(config_trading, agent_configs, test_env, save_results=True):
+    """
+    Utility function to run batch comparison of multiple agents.
+
+    Parameters
+    ----------
+    config_trading : ConfigTrading
+        Trading configuration
+    agent_configs : list
+        List of (agent, name) tuples
+    test_env : StockTradingEnv
+        Test environment
+    save_results : bool, optional
+        Whether to save results
+
+    Returns
+    -------
+    dict
+        Batch comparison results
+
+    Notes
+    -----
+    - Wrapper for batch_backtest with timestamped save.
+    """
+    # Instantiate
+    backtester = TradingBacktest(config_trading)
+    # Run
+    results = backtester.batch_backtest(agent_configs, test_env)
+
+    if save_results:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"batch_backtest_results_{timestamp}.pkl"
+        backtester.save_results(results, filename)
+
+    return results

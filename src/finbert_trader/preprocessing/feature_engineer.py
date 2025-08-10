@@ -27,8 +27,8 @@
 # Updates: Added risk_score computation if config.risk_mode; merged with sentiment in fused_df; adjusted _check_and_adjust_sentiment for both scores (var<0.1 add noise); extended feature_cols to include 'risk_score'; prepare_rl_data includes risk in states, reference from FinRL_DeepSeek (4.3: aggregate R_f for returns adjustment).
 
 # %%
-import os
-os.chdir('/Users/archy/Projects/finbert_trader/')
+# import os
+# os.chdir('/Users/archy/Projects/finbert_trader/')
 
 # %%
 import pandas as pd
@@ -449,11 +449,18 @@ class FeatureEngineer:
         if 'Date' in fused_df.columns:
             fused_df = fused_df.set_index('Date')  # Set Date as index to exclude from features
         logging.info(f"FE Module - prepare_rl_data - Feature Columns: {fused_df.columns.tolist()}")  # Log feature columns for debugging
-
-        self._update_features_categories(fused_df)       # Update features_* attributes to self.config for inheriting by ConfigTrading
-        logging.info(f"FE Module - prepare_rl_data - Updated features_* attributes to self.config")
-        self._update_senti_risk_threshold(fused_df, data_type)     # Update senti/risk thresholds to self.config for inheriting by ConfigTrading
-        logging.info(f"FE Module - prepare_rl_data - Updated senti/risk thresholds to self.config")
+        
+        if self.config._features_initialized:
+            logging.info(f"FE Module - prepare_rl_data - Skipping features/threshold update "
+                        f"data_type={data_type}) because they are loaded from cache.")
+        else:
+            if not self.config.features_all or all(not v for v in self.config.features_all.values()):
+                self._update_features_categories(fused_df)  # Update features_* attributes to self.config for inheriting by ConfigTrading
+                self._update_senti_risk_threshold(fused_df, data_type)  # Update senti/risk thresholds to self.config for inheriting by ConfigTrading
+                self.config.save_config_cache()
+                self.config._features_initialized = True
+                logging.info(f"FE Module - prepare_rl_data - Features and thresholds updated "
+                            f"data_type={data_type} and cached to config.")
 
         rl_data = []  # Initialize list to store RL data dicts
         dates = fused_df.index  # Extract dates for start_date assignment
@@ -925,7 +932,8 @@ class FeatureEngineer:
             # Check if experiment data directory is not empty; if so, load existing data to avoid regeneration
             logging.info("=========== Start to load experiment data dict ===========")
             logging.info(f"FE Module - generate_experiment_data - Loading exper_data_dict from {self.exper_data_path}")
-            return self.load_exper_data_dict_npz()  # Load pre-generated data from NPZ files for efficiency
+            exper_data_dict = self.load_exper_data_dict_npz()  # Load pre-generated data from NPZ files for efficiency
+            return exper_data_dict
         else:
             # Directory is empty; proceed to generate new experiment data
             logging.info("=========== Start to generate experiment data dict ===========")
@@ -1058,428 +1066,428 @@ class FeatureEngineer:
             return exper_data_dict  # Return the full experiment data dictionary
 
 # %%
-from finbert_trader.data.data_resource import DataResource
-from finbert_trader.config_setup import ConfigSetup
+# from finbert_trader.data.data_resource import DataResource
+# from finbert_trader.config_setup import ConfigSetup
 
 # %%
 # %load_ext autoreload
 # %autoreload 2
 
-# %%
-custom_setup = {
-    'symbols': ['GOOGL', 'AAPL'],  # Multi-stock for portfolio test
-    # Optional: ['GOOGL', 'AAPL', 'MSFT', 'AMZN', 'NVDA', 'AMD', 'TSLA', 'META']
-    'start': '2015-01-01',
-    'end': '2023-12-31',
-    'train_start_date': '2015-01-01',
-    'train_end_date': '2021-12-31',
-    'valid_start_date': '2022-01-01',
-    'valid_end_date': '2022-12-31',
-    'test_start_date': '2023-01-01',
-    'test_end_date': '2023-12-31',
-    'exper_mode': {
-        'rl_algorithm': ['PPO', 'CPPO', 'A2C']  # Includes CPPO, aligned with FinRL_DeepSeek
-    }
-}
-setup_config = ConfigSetup(custom_setup)
-logging.info(f"Main - ConfigSetup initialized with symbols: {setup_config.symbols}")
+# # %%
+# custom_setup = {
+#     'symbols': ['GOOGL', 'AAPL'],  # Multi-stock for portfolio test
+#     # Optional: ['GOOGL', 'AAPL', 'MSFT', 'AMZN', 'NVDA', 'AMD', 'TSLA', 'META']
+#     'start': '2015-01-01',
+#     'end': '2023-12-31',
+#     'train_start_date': '2015-01-01',
+#     'train_end_date': '2021-12-31',
+#     'valid_start_date': '2022-01-01',
+#     'valid_end_date': '2022-12-31',
+#     'test_start_date': '2023-01-01',
+#     'test_end_date': '2023-12-31',
+#     'exper_mode': {
+#         'rl_algorithm': ['PPO', 'CPPO', 'A2C']  # Includes CPPO, aligned with FinRL_DeepSeek
+#     }
+# }
+# setup_config = ConfigSetup(custom_setup)
+# logging.info(f"Main - ConfigSetup initialized with symbols: {setup_config.symbols}")
 
-# %%
-dr = DataResource(setup_config)
-stock_data_dict = dr.fetch_stock_data()
-if not stock_data_dict:
-    raise ValueError("No stock data fetched")
-logging.info(f"Main - Prepared stock data for next step")
-stock_data_dict
+# # %%
+# dr = DataResource(setup_config)
+# stock_data_dict = dr.fetch_stock_data()
+# if not stock_data_dict:
+#     raise ValueError("No stock data fetched")
+# logging.info(f"Main - Prepared stock data for next step")
+# stock_data_dict
 
-# %% [markdown]
-# origin_dir = '/Users/archy/Projects/finbert_trader/'
-# cache_path = origin_dir + cache_path
-# filtered_cache_path = origin_dir + filtered_cache_path
+# # %% [markdown]
+# # origin_dir = '/Users/archy/Projects/finbert_trader/'
+# # cache_path = origin_dir + cache_path
+# # filtered_cache_path = origin_dir + filtered_cache_path
+# # cache_path, filtered_cache_path
+
+# # %%
+# cache_path, filtered_cache_path = dr.cache_path_config()
 # cache_path, filtered_cache_path
 
-# %%
-cache_path, filtered_cache_path = dr.cache_path_config()
-cache_path, filtered_cache_path
+# # %%
+# news_chunks_gen = dr.load_news_data(cache_path, filtered_cache_path)
 
-# %%
-news_chunks_gen = dr.load_news_data(cache_path, filtered_cache_path)
+# # %%
+# fe = FeatureEngineer(setup_config)
 
-# %%
-fe = FeatureEngineer(setup_config)
+# # %%
+# exper_data_dict = fe.generate_experiment_data(stock_data_dict, news_chunks_gen, exper_mode='rl_algorithm')
+# logging.info(f"Main - Generated experiment data for modes: {list(exper_data_dict.keys())}")
 
-# %%
-exper_data_dict = fe.generate_experiment_data(stock_data_dict, news_chunks_gen, exper_mode='rl_algorithm')
-logging.info(f"Main - Generated experiment data for modes: {list(exper_data_dict.keys())}")
+# # %%
+# for mode, data_dict in exper_data_dict.items():
+#     print(f"Mode: {mode}")
+#     print(f"Data dict type: {type(data_dict)}")
+#     print(f"Data dict length: {len(data_dict)}")
+#     for target, data_list in data_dict.items():
+#         if target != 'model_type':
+#             print(f"target data: {target}")
+#             print(f"total data length: {len(data_list)}")
+#             print(f"data list keys: {data_list[0].keys()}")
+#             print(f"data shape: {data_list[0]['states'].shape, data_list[0]['targets'].shape}")
+#             print(f"data type: {type(data_list[0]['start_date']), type(data_list[0]['states']), type(data_list[0]['targets'])}")
+#             print(f"data sample: {data_list[50]['start_date'], data_list[50]['states'][0], data_list[50]['targets'][0]}")
 
-# %%
-for mode, data_dict in exper_data_dict.items():
-    print(f"Mode: {mode}")
-    print(f"Data dict type: {type(data_dict)}")
-    print(f"Data dict length: {len(data_dict)}")
-    for target, data_list in data_dict.items():
-        if target != 'model_type':
-            print(f"target data: {target}")
-            print(f"total data length: {len(data_list)}")
-            print(f"data list keys: {data_list[0].keys()}")
-            print(f"data shape: {data_list[0]['states'].shape, data_list[0]['targets'].shape}")
-            print(f"data type: {type(data_list[0]['start_date']), type(data_list[0]['states']), type(data_list[0]['targets'])}")
-            print(f"data sample: {data_list[50]['start_date'], data_list[50]['states'][0], data_list[50]['targets'][0]}")
+# # %%
+# from finbert_trader.config_trading import ConfigTrading
 
-# %%
-from finbert_trader.config_trading import ConfigTrading
+# # %%
+# trading_config = ConfigTrading(upstream_config=setup_config)
 
-# %%
-trading_config = ConfigTrading(upstream_config=setup_config)
+# # %%
+# import os
+# import datetime
+# import numpy as np
+# import matplotlib.pyplot as plt
 
-# %%
-import os
-import datetime
-import numpy as np
-import matplotlib.pyplot as plt
+# def plot_senti_risk_distribution(
+#     exper_data_dict,
+#     senti_feature_index,
+#     risk_feature_index,
+#     symbol=None,
+#     features_all_flatten=None,
+#     model_name="PPO",
+#     save_folder="plot_cache",
+#     prefix="senti_risk_distribution",
+#     auto_save=False,
+#     show_plot=False
+# ):
+#     """
+#     Plot sentiment & risk feature distributions from exper_data_dict
+#     and automatically save the figure.
+#     """
+#     os.makedirs(save_folder, exist_ok=True)
+#     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-def plot_senti_risk_distribution(
-    exper_data_dict,
-    senti_feature_index,
-    risk_feature_index,
-    symbol=None,
-    features_all_flatten=None,
-    model_name="PPO",
-    save_folder="plot_cache",
-    prefix="senti_risk_distribution",
-    auto_save=False,
-    show_plot=False
-):
-    """
-    Plot sentiment & risk feature distributions from exper_data_dict
-    and automatically save the figure.
-    """
-    os.makedirs(save_folder, exist_ok=True)
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    datasets = ['train', 'valid', 'test']
+#     datasets = ['train', 'valid', 'test']
     
-    for dataset in datasets:
-        if dataset not in exper_data_dict[model_name]:
-            continue
+#     for dataset in datasets:
+#         if dataset not in exper_data_dict[model_name]:
+#             continue
         
-        data_list = exper_data_dict[model_name][dataset]
-        all_states = np.concatenate([ep['states'] for ep in data_list], axis=0)
+#         data_list = exper_data_dict[model_name][dataset]
+#         all_states = np.concatenate([ep['states'] for ep in data_list], axis=0)
 
-        if symbol and features_all_flatten:
-            senti_col = f"sentiment_score_{symbol}"
-            risk_col = f"risk_score_{symbol}"
-            if senti_col not in features_all_flatten or risk_col not in features_all_flatten:
-                raise ValueError(f"Feature {senti_col} or {risk_col} not found")
-            senti_idx = features_all_flatten.index(senti_col)
-            risk_idx = features_all_flatten.index(risk_col)
-            sentiments = all_states[:, senti_idx]
-            risks = all_states[:, risk_idx]
-        else:
-            sentiments = all_states[:, senti_feature_index].flatten()
-            risks = all_states[:, risk_feature_index].flatten()
+#         if symbol and features_all_flatten:
+#             senti_col = f"sentiment_score_{symbol}"
+#             risk_col = f"risk_score_{symbol}"
+#             if senti_col not in features_all_flatten or risk_col not in features_all_flatten:
+#                 raise ValueError(f"Feature {senti_col} or {risk_col} not found")
+#             senti_idx = features_all_flatten.index(senti_col)
+#             risk_idx = features_all_flatten.index(risk_col)
+#             sentiments = all_states[:, senti_idx]
+#             risks = all_states[:, risk_idx]
+#         else:
+#             sentiments = all_states[:, senti_feature_index].flatten()
+#             risks = all_states[:, risk_feature_index].flatten()
 
-        def stats(arr):
-            return {
-                "mean": np.mean(arr),
-                "std": np.std(arr),
-                "min": np.min(arr),
-                "max": np.max(arr),
-                "q25": np.percentile(arr, 25),
-                "q50": np.percentile(arr, 50),
-                "q75": np.percentile(arr, 75)
-            }
+#         def stats(arr):
+#             return {
+#                 "mean": np.mean(arr),
+#                 "std": np.std(arr),
+#                 "min": np.min(arr),
+#                 "max": np.max(arr),
+#                 "q25": np.percentile(arr, 25),
+#                 "q50": np.percentile(arr, 50),
+#                 "q75": np.percentile(arr, 75)
+#             }
         
-        print(f"\n==== {dataset.upper()} ====")
-        print("Sentiment Stats:", stats(sentiments))
-        print("Risk Stats:", stats(risks))
+#         print(f"\n==== {dataset.upper()} ====")
+#         print("Sentiment Stats:", stats(sentiments))
+#         print("Risk Stats:", stats(risks))
 
-        fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-        axes[0].hist(sentiments, bins=50, color='skyblue', alpha=0.7, edgecolor="black")
-        axes[0].set_title(f"{dataset} Sentiment {symbol or ''}".strip())
-        axes[0].axvline(0, color='red', linestyle='--', linewidth=1)
-        axes[0].set_xlabel("Sentiment Score")
-        axes[0].set_ylabel("Frequency")
+#         fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+#         axes[0].hist(sentiments, bins=50, color='skyblue', alpha=0.7, edgecolor="black")
+#         axes[0].set_title(f"{dataset} Sentiment {symbol or ''}".strip())
+#         axes[0].axvline(0, color='red', linestyle='--', linewidth=1)
+#         axes[0].set_xlabel("Sentiment Score")
+#         axes[0].set_ylabel("Frequency")
 
-        axes[1].hist(risks, bins=50, color='salmon', alpha=0.7, edgecolor="black")
-        axes[1].set_title(f"{dataset} Risk {symbol or ''}".strip())
-        axes[1].axvline(0, color='red', linestyle='--', linewidth=1)
-        axes[1].set_xlabel("Risk Score")
-        axes[1].set_ylabel("Frequency")
+#         axes[1].hist(risks, bins=50, color='salmon', alpha=0.7, edgecolor="black")
+#         axes[1].set_title(f"{dataset} Risk {symbol or ''}".strip())
+#         axes[1].axvline(0, color='red', linestyle='--', linewidth=1)
+#         axes[1].set_xlabel("Risk Score")
+#         axes[1].set_ylabel("Frequency")
 
-        fig.tight_layout()
+#         fig.tight_layout()
 
-        if auto_save:
-            safe_symbol = symbol or "ALL"
-            save_path = os.path.join(
-                save_folder, 
-                f"{prefix}_{model_name}_{dataset}_{safe_symbol}_{timestamp}.png"
-            )
-            fig.savefig(save_path, dpi=300, bbox_inches="tight")
-            print(f"[INFO] Plot saved to: {save_path}")
+#         if auto_save:
+#             safe_symbol = symbol or "ALL"
+#             save_path = os.path.join(
+#                 save_folder, 
+#                 f"{prefix}_{model_name}_{dataset}_{safe_symbol}_{timestamp}.png"
+#             )
+#             fig.savefig(save_path, dpi=300, bbox_inches="tight")
+#             print(f"[INFO] Plot saved to: {save_path}")
 
-        if show_plot:
-            plt.show()
-        else:
-            plt.close(fig)
-
-
-# %%
-plot_senti_risk_distribution(
-    exper_data_dict,
-    senti_feature_index=trading_config.senti_feature_index,
-    risk_feature_index=trading_config.risk_feature_index,
-    auto_save=True
-)
-
-# %%
-plot_senti_risk_distribution(
-    exper_data_dict,
-    symbol="GOOGL",
-    features_all_flatten=trading_config.features_all_flatten,
-    senti_feature_index=trading_config.senti_feature_index,
-    risk_feature_index=trading_config.risk_feature_index,
-)
-
-# %%
-plot_senti_risk_distribution(
-    exper_data_dict,
-    symbol="AAPL",
-    features_all_flatten=trading_config.features_all_flatten,
-    senti_feature_index=trading_config.senti_feature_index,
-    risk_feature_index=trading_config.risk_feature_index
-)
-
-# %%
-import os
-import datetime
-import numpy as np
-import matplotlib.pyplot as plt
-
-def plot_senti_risk_grid(
-    exper_data_dict,
-    trading_config,
-    dataset="train",               # 'train' / 'valid' / 'test'
-    model_names=None,              # list of models to plot (None -> use exper_data_dict keys)
-    symbols=None,                  # list of symbols to plot (None -> use trading_config.symbols)
-    save_folder="plot_cache",
-    filename_prefix="senti_risk_grid",
-    bins=50,
-    auto_save=True,
-    show_fig=False
-):
-    """
-    Plot a grid: rows = algorithms, cols = [ALL] + symbols.
-    Each cell overlays sentiment & risk histograms and prints basic stats.
-
-    Parameters
-    ----------
-    exper_data_dict : dict
-        your exper_data_dict (top-level keys = model names like 'PPO', 'CPPO', ...)
-    trading_config : object
-        config instance providing .symbols, .senti_feature_index (list of ints per symbol),
-        .risk_feature_index (list of ints per symbol)
-    dataset : str
-        which split to use: 'train' / 'valid' / 'test'
-    model_names : list[str] or None
-        which algorithms to include; defaults to all keys in exper_data_dict
-    symbols : list[str] or None
-        symbol list; defaults to trading_config.symbols
-    save_folder : str
-        where to save the generated image
-    filename_prefix : str
-    bins : int
-        histogram bins
-    auto_save : bool
-        whether to save the file
-    show_fig : bool
-        whether to plt.show() the figure (useful interactively)
-    Returns
-    -------
-    save_path (str) or (None)
-    """
-    # --- prepare inputs ---
-    os.makedirs(save_folder, exist_ok=True)
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    if model_names is None:
-        model_names = [k for k in exper_data_dict.keys()]
-
-    if symbols is None:
-        symbols = getattr(trading_config, "symbols", None)
-        if symbols is None:
-            raise ValueError("Provide symbols list either via argument or trading_config.symbols")
-
-    senti_idx_list = getattr(trading_config, "senti_feature_index", None)
-    risk_idx_list = getattr(trading_config, "risk_feature_index", None)
-    if senti_idx_list is None or risk_idx_list is None:
-        raise ValueError("trading_config must provide senti_feature_index and risk_feature_index (lists of indices)")
-
-    n_algos = len(model_names)
-    n_cols = 1 + len(symbols)   # ALL + each symbol
-    n_rows = n_algos
-
-    figsize = (4 * n_cols, 3 * max(1, n_rows))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
-
-    for i, algo in enumerate(model_names):
-        # guard if algo not present in dict
-        if algo not in exper_data_dict:
-            print(f"[WARN] Algorithm {algo} not in exper_data_dict, skipping.")
-            for j in range(n_cols):
-                axes[i, j].axis('off')
-            continue
-
-        model_dict = exper_data_dict[algo]
-        if dataset not in model_dict:
-            print(f"[WARN] {algo} has no dataset '{dataset}', skipping row.")
-            for j in range(n_cols):
-                axes[i, j].axis('off')
-            continue
-
-        data_list = model_dict[dataset]
-        if not isinstance(data_list, (list, tuple)) or len(data_list) == 0:
-            print(f"[WARN] {algo}/{dataset} empty or not list, skipping row.")
-            for j in range(n_cols):
-                axes[i, j].axis('off')
-            continue
-
-        # concat episodes into one big states array (T_total, D)
-        try:
-            all_states = np.concatenate([ep['states'] for ep in data_list], axis=0)
-        except Exception as e:
-            raise RuntimeError(f"Failed to concat states for {algo}/{dataset}: {e}")
-
-        # column 0: ALL (aggregate all symbols)
-        ax = axes[i, 0]
-        senti_all = all_states[:, senti_idx_list].flatten()    # flatten over symbols
-        risk_all = all_states[:, risk_idx_list].flatten()
-        _plot_two_hist(ax, senti_all, risk_all, bins=bins,
-                       title=f"{algo} - ALL ({dataset})")
-        _annotate_stats(ax, senti_all, risk_all)
-
-        # subsequent columns: per-symbol
-        for j, sym in enumerate(symbols, start=1):
-            ax = axes[i, j]
-            # get index for this symbol
-            try:
-                sym_idx = symbols.index(sym)
-            except ValueError:
-                # fallback: try to find the index by name mapping using features_all_flatten if available
-                raise ValueError(f"Symbol {sym} not found in provided symbols list")
-
-            senti_col_idx = senti_idx_list[sym_idx]
-            risk_col_idx = risk_idx_list[sym_idx]
-            senti_vals = all_states[:, senti_col_idx]
-            risk_vals = all_states[:, risk_col_idx]
-            _plot_two_hist(ax, senti_vals, risk_vals, bins=bins,
-                           title=f"{algo} - {sym} ({dataset})")
-            _annotate_stats(ax, senti_vals, risk_vals)
-
-    plt.tight_layout()
-
-    save_path = None
-    if auto_save:
-        safe_fname = f"{filename_prefix}_{dataset}_{timestamp}.png"
-        save_path = os.path.join(save_folder, safe_fname)
-        fig.savefig(save_path, dpi=300, bbox_inches="tight")
-        print(f"[INFO] Saved grid plot to: {save_path}")
-
-    if show_fig:
-        plt.show()
-    else:
-        plt.close(fig)
-
-    return save_path
+#         if show_plot:
+#             plt.show()
+#         else:
+#             plt.close(fig)
 
 
-def _plot_two_hist(ax, arr1, arr2, bins=50, title=None):
-    """Helper: overlay two histograms on ax (arr1 blue, arr2 orange) and draw zero line."""
-    ax.hist(arr1, bins=bins, alpha=0.6, label="Sentiment", color="tab:blue", density=False)
-    ax.hist(arr2, bins=bins, alpha=0.5, label="Risk", color="tab:orange", density=False)
-    ax.axvline(0, color='red', linestyle='--', linewidth=1)
-    ax.set_title(title if title else "")
-    ax.legend(fontsize='small')
-    ax.grid(alpha=0.3, linestyle='--')
+# # %%
+# plot_senti_risk_distribution(
+#     exper_data_dict,
+#     senti_feature_index=trading_config.senti_feature_index,
+#     risk_feature_index=trading_config.risk_feature_index,
+#     auto_save=True
+# )
+
+# # %%
+# plot_senti_risk_distribution(
+#     exper_data_dict,
+#     symbol="GOOGL",
+#     features_all_flatten=trading_config.features_all_flatten,
+#     senti_feature_index=trading_config.senti_feature_index,
+#     risk_feature_index=trading_config.risk_feature_index,
+# )
+
+# # %%
+# plot_senti_risk_distribution(
+#     exper_data_dict,
+#     symbol="AAPL",
+#     features_all_flatten=trading_config.features_all_flatten,
+#     senti_feature_index=trading_config.senti_feature_index,
+#     risk_feature_index=trading_config.risk_feature_index
+# )
+
+# # %%
+# import os
+# import datetime
+# import numpy as np
+# import matplotlib.pyplot as plt
+
+# def plot_senti_risk_grid(
+#     exper_data_dict,
+#     trading_config,
+#     dataset="train",               # 'train' / 'valid' / 'test'
+#     model_names=None,              # list of models to plot (None -> use exper_data_dict keys)
+#     symbols=None,                  # list of symbols to plot (None -> use trading_config.symbols)
+#     save_folder="plot_cache",
+#     filename_prefix="senti_risk_grid",
+#     bins=50,
+#     auto_save=True,
+#     show_fig=False
+# ):
+#     """
+#     Plot a grid: rows = algorithms, cols = [ALL] + symbols.
+#     Each cell overlays sentiment & risk histograms and prints basic stats.
+
+#     Parameters
+#     ----------
+#     exper_data_dict : dict
+#         your exper_data_dict (top-level keys = model names like 'PPO', 'CPPO', ...)
+#     trading_config : object
+#         config instance providing .symbols, .senti_feature_index (list of ints per symbol),
+#         .risk_feature_index (list of ints per symbol)
+#     dataset : str
+#         which split to use: 'train' / 'valid' / 'test'
+#     model_names : list[str] or None
+#         which algorithms to include; defaults to all keys in exper_data_dict
+#     symbols : list[str] or None
+#         symbol list; defaults to trading_config.symbols
+#     save_folder : str
+#         where to save the generated image
+#     filename_prefix : str
+#     bins : int
+#         histogram bins
+#     auto_save : bool
+#         whether to save the file
+#     show_fig : bool
+#         whether to plt.show() the figure (useful interactively)
+#     Returns
+#     -------
+#     save_path (str) or (None)
+#     """
+#     # --- prepare inputs ---
+#     os.makedirs(save_folder, exist_ok=True)
+#     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+#     if model_names is None:
+#         model_names = [k for k in exper_data_dict.keys()]
+
+#     if symbols is None:
+#         symbols = getattr(trading_config, "symbols", None)
+#         if symbols is None:
+#             raise ValueError("Provide symbols list either via argument or trading_config.symbols")
+
+#     senti_idx_list = getattr(trading_config, "senti_feature_index", None)
+#     risk_idx_list = getattr(trading_config, "risk_feature_index", None)
+#     if senti_idx_list is None or risk_idx_list is None:
+#         raise ValueError("trading_config must provide senti_feature_index and risk_feature_index (lists of indices)")
+
+#     n_algos = len(model_names)
+#     n_cols = 1 + len(symbols)   # ALL + each symbol
+#     n_rows = n_algos
+
+#     figsize = (4 * n_cols, 3 * max(1, n_rows))
+#     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
+
+#     for i, algo in enumerate(model_names):
+#         # guard if algo not present in dict
+#         if algo not in exper_data_dict:
+#             print(f"[WARN] Algorithm {algo} not in exper_data_dict, skipping.")
+#             for j in range(n_cols):
+#                 axes[i, j].axis('off')
+#             continue
+
+#         model_dict = exper_data_dict[algo]
+#         if dataset not in model_dict:
+#             print(f"[WARN] {algo} has no dataset '{dataset}', skipping row.")
+#             for j in range(n_cols):
+#                 axes[i, j].axis('off')
+#             continue
+
+#         data_list = model_dict[dataset]
+#         if not isinstance(data_list, (list, tuple)) or len(data_list) == 0:
+#             print(f"[WARN] {algo}/{dataset} empty or not list, skipping row.")
+#             for j in range(n_cols):
+#                 axes[i, j].axis('off')
+#             continue
+
+#         # concat episodes into one big states array (T_total, D)
+#         try:
+#             all_states = np.concatenate([ep['states'] for ep in data_list], axis=0)
+#         except Exception as e:
+#             raise RuntimeError(f"Failed to concat states for {algo}/{dataset}: {e}")
+
+#         # column 0: ALL (aggregate all symbols)
+#         ax = axes[i, 0]
+#         senti_all = all_states[:, senti_idx_list].flatten()    # flatten over symbols
+#         risk_all = all_states[:, risk_idx_list].flatten()
+#         _plot_two_hist(ax, senti_all, risk_all, bins=bins,
+#                        title=f"{algo} - ALL ({dataset})")
+#         _annotate_stats(ax, senti_all, risk_all)
+
+#         # subsequent columns: per-symbol
+#         for j, sym in enumerate(symbols, start=1):
+#             ax = axes[i, j]
+#             # get index for this symbol
+#             try:
+#                 sym_idx = symbols.index(sym)
+#             except ValueError:
+#                 # fallback: try to find the index by name mapping using features_all_flatten if available
+#                 raise ValueError(f"Symbol {sym} not found in provided symbols list")
+
+#             senti_col_idx = senti_idx_list[sym_idx]
+#             risk_col_idx = risk_idx_list[sym_idx]
+#             senti_vals = all_states[:, senti_col_idx]
+#             risk_vals = all_states[:, risk_col_idx]
+#             _plot_two_hist(ax, senti_vals, risk_vals, bins=bins,
+#                            title=f"{algo} - {sym} ({dataset})")
+#             _annotate_stats(ax, senti_vals, risk_vals)
+
+#     plt.tight_layout()
+
+#     save_path = None
+#     if auto_save:
+#         safe_fname = f"{filename_prefix}_{dataset}_{timestamp}.png"
+#         save_path = os.path.join(save_folder, safe_fname)
+#         fig.savefig(save_path, dpi=300, bbox_inches="tight")
+#         print(f"[INFO] Saved grid plot to: {save_path}")
+
+#     if show_fig:
+#         plt.show()
+#     else:
+#         plt.close(fig)
+
+#     return save_path
 
 
-def _annotate_stats(ax, senti_arr, risk_arr):
-    """Helper: annotate mean/std/median in the top-right of the axis."""
-    s_mean, s_std, s_med = np.mean(senti_arr), np.std(senti_arr), np.median(senti_arr)
-    r_mean, r_std, r_med = np.mean(risk_arr), np.std(risk_arr), np.median(risk_arr)
-    txt = (f"S mean={s_mean:.3f}, std={s_std:.3f}, med={s_med:.3f}\n"
-           f"R mean={r_mean:.3f}, std={r_std:.3f}, med={r_med:.3f}")
-    ax.text(0.98, 0.95, txt, transform=ax.transAxes, ha='right', va='top',
-            fontsize='small', bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'))
+# def _plot_two_hist(ax, arr1, arr2, bins=50, title=None):
+#     """Helper: overlay two histograms on ax (arr1 blue, arr2 orange) and draw zero line."""
+#     ax.hist(arr1, bins=bins, alpha=0.6, label="Sentiment", color="tab:blue", density=False)
+#     ax.hist(arr2, bins=bins, alpha=0.5, label="Risk", color="tab:orange", density=False)
+#     ax.axvline(0, color='red', linestyle='--', linewidth=1)
+#     ax.set_title(title if title else "")
+#     ax.legend(fontsize='small')
+#     ax.grid(alpha=0.3, linestyle='--')
 
 
-# %%
-save_path = plot_senti_risk_grid(
-    exper_data_dict=exper_data_dict,
-    trading_config=trading_config,
-    dataset="train",
-    model_names=None,        # Use exper_data_dict keys default
-    symbols=None,            # Use trading_config.symbols default
-    save_folder="plot_cache",
-    filename_prefix="senti_risk_grid_all_single",
-    bins=60,
-    auto_save=False,
-    show_fig=True
-)
-
-# %%
-save_path = plot_senti_risk_grid(
-    exper_data_dict=exper_data_dict,
-    trading_config=trading_config,
-    dataset="valid",
-    model_names=None,        # Use exper_data_dict keys default
-    symbols=None,            # Use trading_config.symbols default
-    save_folder="plot_cache",
-    filename_prefix="senti_risk_grid_all_single",
-    bins=60,
-    auto_save=True,
-    show_fig=True
-)
-
-# %%
-save_path = plot_senti_risk_grid(
-    exper_data_dict=exper_data_dict,
-    trading_config=trading_config,
-    dataset="test",
-    model_names=None,        # Use exper_data_dict keys default
-    symbols=None,            # Use trading_config.symbols default
-    save_folder="plot_cache",
-    filename_prefix="senti_risk_grid_all_single",
-    bins=60,
-    auto_save=True,
-    show_fig=True
-)
-
-# %%
-import numpy as np
-import pandas as pd
-
-def summarize_feature_by_split(exper_data_dict, model='PPO', senti_idx=None, risk_idx=None, nsamples=1000):
-    for split in ['train','valid','test']:
-        if split not in exper_data_dict[model]:
-            continue
-        data_list = exper_data_dict[model][split]
-
-        all_states = np.concatenate([ep['states'] for ep in data_list], axis=0)
-        senti = all_states[:, senti_idx].ravel()
-        risk = all_states[:, risk_idx].ravel()
-        print(f"=== {split} ===")
-        for name, arr in [('senti', senti), ('risk', risk)]:
-            arr = np.asarray(arr, dtype=np.float64)
-            n = len(arr)
-            n_zero = np.sum(arr == 0)
-            n_three = np.sum(arr == 3.0)
-            n_nan = np.sum(np.isnan(arr))
-            print(f"{name} -> mean={arr.mean():.4f}, std={arr.std():.4f}, min={arr.min():.4f}, max={arr.max():.4f}, n={n}, zeros={n_zero} ({n_zero/n*100:.2f}%), three={n_three} ({n_three/n*100:.2f}%), nans={n_nan}")
-        print()
+# def _annotate_stats(ax, senti_arr, risk_arr):
+#     """Helper: annotate mean/std/median in the top-right of the axis."""
+#     s_mean, s_std, s_med = np.mean(senti_arr), np.std(senti_arr), np.median(senti_arr)
+#     r_mean, r_std, r_med = np.mean(risk_arr), np.std(risk_arr), np.median(risk_arr)
+#     txt = (f"S mean={s_mean:.3f}, std={s_std:.3f}, med={s_med:.3f}\n"
+#            f"R mean={r_mean:.3f}, std={r_std:.3f}, med={r_med:.3f}")
+#     ax.text(0.98, 0.95, txt, transform=ax.transAxes, ha='right', va='top',
+#             fontsize='small', bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'))
 
 
-# %%
-summarize_feature_by_split(exper_data_dict,senti_idx=trading_config.senti_feature_index,risk_idx=trading_config.risk_feature_index)
+# # %%
+# save_path = plot_senti_risk_grid(
+#     exper_data_dict=exper_data_dict,
+#     trading_config=trading_config,
+#     dataset="train",
+#     model_names=None,        # Use exper_data_dict keys default
+#     symbols=None,            # Use trading_config.symbols default
+#     save_folder="plot_cache",
+#     filename_prefix="senti_risk_grid_all_single",
+#     bins=60,
+#     auto_save=False,
+#     show_fig=True
+# )
 
-# %%
+# # %%
+# save_path = plot_senti_risk_grid(
+#     exper_data_dict=exper_data_dict,
+#     trading_config=trading_config,
+#     dataset="valid",
+#     model_names=None,        # Use exper_data_dict keys default
+#     symbols=None,            # Use trading_config.symbols default
+#     save_folder="plot_cache",
+#     filename_prefix="senti_risk_grid_all_single",
+#     bins=60,
+#     auto_save=True,
+#     show_fig=True
+# )
+
+# # %%
+# save_path = plot_senti_risk_grid(
+#     exper_data_dict=exper_data_dict,
+#     trading_config=trading_config,
+#     dataset="test",
+#     model_names=None,        # Use exper_data_dict keys default
+#     symbols=None,            # Use trading_config.symbols default
+#     save_folder="plot_cache",
+#     filename_prefix="senti_risk_grid_all_single",
+#     bins=60,
+#     auto_save=True,
+#     show_fig=True
+# )
+
+# # %%
+# import numpy as np
+# import pandas as pd
+
+# def summarize_feature_by_split(exper_data_dict, model='PPO', senti_idx=None, risk_idx=None, nsamples=1000):
+#     for split in ['train','valid','test']:
+#         if split not in exper_data_dict[model]:
+#             continue
+#         data_list = exper_data_dict[model][split]
+
+#         all_states = np.concatenate([ep['states'] for ep in data_list], axis=0)
+#         senti = all_states[:, senti_idx].ravel()
+#         risk = all_states[:, risk_idx].ravel()
+#         print(f"=== {split} ===")
+#         for name, arr in [('senti', senti), ('risk', risk)]:
+#             arr = np.asarray(arr, dtype=np.float64)
+#             n = len(arr)
+#             n_zero = np.sum(arr == 0)
+#             n_three = np.sum(arr == 3.0)
+#             n_nan = np.sum(np.isnan(arr))
+#             print(f"{name} -> mean={arr.mean():.4f}, std={arr.std():.4f}, min={arr.min():.4f}, max={arr.max():.4f}, n={n}, zeros={n_zero} ({n_zero/n*100:.2f}%), three={n_three} ({n_three/n*100:.2f}%), nans={n_nan}")
+#         print()
+
+
+# # %%
+# summarize_feature_by_split(exper_data_dict,senti_idx=trading_config.senti_feature_index,risk_idx=trading_config.risk_feature_index)
+
+# # %%

@@ -26,8 +26,8 @@
 # Robustness: Handles invalid prices; logs state/action/reward.
 
 # %%
-import os
-os.chdir('/Users/archy/Projects/finbert_trader/')
+# import os
+# os.chdir('/Users/archy/Projects/finbert_trader/')
 
 # %%
 import gymnasium as gym
@@ -663,7 +663,7 @@ class StockTradingEnv(gym.Env):
 
 
 # %%
-from finbert_trader.config_trading import ConfigTrading
+# from finbert_trader.config_trading import ConfigTrading
 
 
 # %%
@@ -671,49 +671,49 @@ from finbert_trader.config_trading import ConfigTrading
 # %autoreload 2
 
 # %%
-class MockConfig:
-    symbols = ['GOOGL', 'AAPL']
-    window_size = 10
-    features_all_flatten = [f'features_{i}_{symbol}' for symbol in symbols for i in range(11)]
-    features_price_flatten = [f'Adj_Close_{symbol}' for symbol in symbols]
-    features_ind_flatten = [f'ind_{i}_{symbol}' for symbol in symbols for i in range(8)]
-    features_senti_flatten = [f'sentiment_score_{symbol}' for symbol in symbols]
-    features_risk_flatten = [f'risk_score_{symbol}' for symbol in symbols]
-    price_feature_index = [0, 11]
-    ind_feature_index = list(range(1,9)) + list(range(12,20))
-    senti_feature_index = [9, 20]
-    risk_feature_index = [10, 21]
-    state_dim = 10 * 22 + 3
-    action_dim = 2
-    model = 'PPO'
-    infusion_strength = 0.001
-    cvar_factor = 0.05
-    commission_rate = 0.005
+# class MockConfig:
+#     symbols = ['GOOGL', 'AAPL']
+#     window_size = 10
+#     features_all_flatten = [f'features_{i}_{symbol}' for symbol in symbols for i in range(11)]
+#     features_price_flatten = [f'Adj_Close_{symbol}' for symbol in symbols]
+#     features_ind_flatten = [f'ind_{i}_{symbol}' for symbol in symbols for i in range(8)]
+#     features_senti_flatten = [f'sentiment_score_{symbol}' for symbol in symbols]
+#     features_risk_flatten = [f'risk_score_{symbol}' for symbol in symbols]
+#     price_feature_index = [0, 11]
+#     ind_feature_index = list(range(1,9)) + list(range(12,20))
+#     senti_feature_index = [9, 20]
+#     risk_feature_index = [10, 21]
+#     state_dim = 10 * 22 + 3
+#     action_dim = 2
+#     model = 'PPO'
+#     infusion_strength = 0.001
+#     cvar_factor = 0.05
+#     commission_rate = 0.005
 
 
 # %%
-mock_config = MockConfig()
+# mock_config = MockConfig()
 
-# %%
-mock_rl_data = [{'start_date': '2015-01-01', 'states': np.random.rand(50, 22), 'targets': np.random.rand(50, 2)} for _ in range(3)]
-mock_rl_data
+# # %%
+# mock_rl_data = [{'start_date': '2015-01-01', 'states': np.random.rand(50, 22), 'targets': np.random.rand(50, 2)} for _ in range(3)]
+# mock_rl_data
 
-# %%
-env = StockTradingEnv(mock_config, mock_rl_data, env_type='test')
+# # %%
+# env = StockTradingEnv(mock_config, mock_rl_data, env_type='test')
 
-# %%
-obs, info = env.reset()
+# # %%
+# obs, info = env.reset()
 
-# %%
-actions = np.random.rand(env.action_dim) - 0.5
+# # %%
+# actions = np.random.rand(env.action_dim) - 0.5
 
-# %%
-next_obs, reward, done, truncated, info = env.step(actions)
+# # %%
+# next_obs, reward, done, truncated, info = env.step(actions)
 
-# %%
-env.render()
+# # %%
+# env.render()
 
-# %%
-env.close()
+# # %%
+# env.close()
 
-# %%
+
