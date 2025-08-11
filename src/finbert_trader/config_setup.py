@@ -50,7 +50,8 @@ class ConfigSetup:
         self.chunksize = 100000  # For large data loading to manage memory in chunk processing
         self.indicators_mode = {'short': 10,
                                 'middle': 20,
-                                'long': 30}  # Mapping of indicator modes to timeperiods
+                                'long': 30,
+                                'custom': None}  # Mapping of indicator modes to timeperiods
         self.ind_mode = 'short'  # Default indicator mode
         self.timeperiods = self.indicators_mode.get(self.ind_mode, 10)  # Default as short mode; retrieve timeperiod
         self.indicators = [
@@ -116,9 +117,9 @@ class ConfigSetup:
         self.cache_dir = 'config_cache'
         os.makedirs(self.cache_dir, exist_ok=True)
 
-        self._features_initialized = self.load_or_init_features()
-
         self.load_npz = False
+
+        self._features_initialized = self.load_or_init_features()
 
         if custom_config:
             # Apply overrides from dict for flexibility

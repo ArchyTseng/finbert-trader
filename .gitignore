@@ -51,6 +51,9 @@ plot_cache/
 # config_cache
 config_cache/
 
+# tensorboard
+tensorboard/
+
 # logs
 logs/
 
