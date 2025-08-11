@@ -42,8 +42,8 @@ import json
 import joblib
 
 # %%
-from finbert_trader.preprocessing.stock_features import StockFeatureEngineer
-from finbert_trader.preprocessing.news_features import NewsFeatureEngineer
+from .stock_features import StockFeatureEngineer
+from .news_features import NewsFeatureEngineer
 
 # %%
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -73,8 +73,12 @@ class FeatureEngineer:
         """
         self.config = config  
         self.decay_lambda = self.config.decay_lambda  # Decay factor for potential time-weighted features
-        self.window_size = self.config.window_size  # Window size for RL observation states
-        self.prediction_days = self.config.prediction_days  # Number of future days for target prediction
+
+        self.window_size = getattr(self.config, 'window_size', 50)  # Window size for RL observation states
+        self.W_f = getattr(self.config, 'window_factor', 2)    # For scale window size
+        self.W_e = getattr(self.config, 'window_extend', 10)     # For extend window size
+        self.prediction_days = getattr(self.config, 'prediction_days', 1)  # Number of future days for target prediction
+
         self.split_ratio = self.config.split_ratio  # Ratio for data splitting if split_mode='ratio'
         self.k_folds = self.config.k_folds  # Number of folds for cross-validation
         self.split_mode = self.config.split_mode  # Mode for data splitting ('date' or 'ratio')
@@ -89,6 +93,7 @@ class FeatureEngineer:
 
         # Config exper_data_dict save dir
         self.exper_data_path = self.config.EXPER_DATA_DIR  # Path for saving/loading experiment data (e.g., NPZ files)
+        self.scaler_cache_path = self.config.SCALER_CACHE_DIR   # Path for saving/loading scaler data (e.g., PKL files)
 
         # Config train/valid/test date , reference from FinRL
         self.train_start_date = self.config.train_start_date  # Start date for training data
@@ -456,7 +461,7 @@ class FeatureEngineer:
             logging.info(f"FE Module - prepare_rl_data - Skipping features/threshold update "
                         f"data_type={data_type}) because they are loaded from cache.")
         else:
-            if not self.config.features_all or all(not v for v in self.config.features_all.values()):
+            if not self.config.features_all or all(not v for v in self.config.risk_threshold.values()):
                 self._update_features_categories(fused_df)  # Update features_* attributes to self.config for inheriting by ConfigTrading
                 self._update_senti_risk_threshold(fused_df, data_type)  # Update senti/risk thresholds to self.config for inheriting by ConfigTrading
                 self.config.save_config_cache()
@@ -467,18 +472,21 @@ class FeatureEngineer:
         rl_data = []  # Initialize list to store RL data dicts
         dates = fused_df.index  # Extract dates for start_date assignment
 
-        min_episode_length = self.window_size + 5
+        min_episode_length = self.W_f * self.window_size + self.W_e # More winsow for explore
+        logging.info(f"FE Module - prepare_rl_data - Data length: {len(fused_df)}, "
+                f"Required minimum: {min_episode_length} "
+                f"(W_f={self.W_f} * window_size={self.window_size} + W_e={self.W_e})")
 
         if len(fused_df) < min_episode_length:
             logging.warning(f"FE Module - Insufficient  {len(fused_df)} < {min_episode_length}")
             return rl_data
         
-        max_start_idx = len(fused_df) - min_episode_length
-        if max_start_idx < 0:
-            logging.warning("FE Module - No valid episodes can be created")
+        max_episodes = len(fused_df) - min_episode_length + 1
+        if max_episodes < 0:
+            logging.warning(f"FE Module - No valid episodes can be created: {max_episodes}")
             return rl_data
 
-        for i in range(max_start_idx + 1):
+        for i in range(max_episodes + 1):
             # Sliding window loop: Generate windows leaving room for prediction_days
             window_parts = []  # List to collect per-symbol window arrays for concat
             for symbol in symbols:
@@ -490,11 +498,16 @@ class FeatureEngineer:
             states = np.concatenate(window_parts, axis=1)  # (min_episode_length, total_features)
 
             # Target: future Adj_Close of each stock
-            target_cols = [f"Adj_Close_{symbol}" for symbol in symbols]  # Columns for targets
-            target = fused_df.iloc[i+self.window_size:i+self.window_size+self.prediction_days][target_cols].values  # Extract targets: future Adj_Close for all symbols; shape (prediction_days, n_symbols)
-            rl_data.append({'start_date': dates[i],
-                            'states': states,   # 2D ndarray (window_size, n_symbols * features_dim_per_symbol)
-                            'targets': target})     # 2D ndarray (prediction_days, n_stocks)
+            target_cols = [f"Adj_Close_{symbol}" for symbol in symbols]
+            target_start = i + self.window_size
+            target_end = target_start + self.prediction_days
+            if target_end <= len(fused_df):
+                target = fused_df.iloc[target_start:target_end][target_cols].values
+                rl_data.append({'start_date': dates[i],
+                                'states': states,
+                                'targets': target})
+            else:
+                logging.debug(f"FE Module - Skipping episode {i} due to insufficient target data")
 
         logging.info(f"FE Module - prepare_rl_data - Prepared {len(rl_data)} RL data")  # Log total prepared items
         return rl_data  # Return list of RL data dicts
@@ -1021,7 +1034,7 @@ class FeatureEngineer:
                 logging.info(f"FE Module - generate_experiment_data - Split for mode {mode}: train {len(train_df)}, valid {len(valid_df)}, test {len(test_df)}")
 
                 # Normalize indicators + sentiment + risk columns for RL training
-                train_scaler_path = self._generate_scaler_path("scaler_cache", group, mode)   # Dynamic per-group/mode
+                train_scaler_path = self._generate_scaler_path(self.scaler_cache_path, group, mode)   # Dynamic per-group/mode
                 train_df, means_stds = self.normalize_features(train_df, fit=True, scaler_path=train_scaler_path, force_recompute=True, data_type='train') # Load cache scaler if existed
                 valid_df, _ = self.normalize_features(valid_df, fit=False, means_stds=means_stds, data_type='valid') # Load cache scaler if existed
                 test_df, _ = self.normalize_features(test_df, fit=False, means_stds=means_stds, data_type='test')   # Load cache scaler if existed

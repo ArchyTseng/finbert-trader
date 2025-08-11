@@ -27,7 +27,7 @@ class DataResource:
         Parameters
         ----------
         config : object
-            Configuration object containing start/end dates, train_start_date, test_end_date, and DATA_SAVE_DIR.
+            Configuration object containing start/end dates, train_start_date, test_end_date, and RAW_DATA_DIR.
 
         Notes
         -----
@@ -41,7 +41,7 @@ class DataResource:
         self.test_end_date = self.config.end  # End date for testing (note: reused from config.end)
         self.train_start_date = self.config.train_start_date  # Start date specifically for training
         self.test_end_date = self.config.test_end_date  # End date for testing (overwritten if config.end differs)
-        self.raw_data_cache_dir = config.DATA_SAVE_DIR  # Directory for caching downloaded/processed data
+        self.raw_data_cache_dir = config.RAW_DATA_DIR  # Directory for caching downloaded/processed data
         self.fnspid_url = 'https://huggingface.co/datasets/Zihan1004/FNSPID/resolve/main/Stock_news/nasdaq_exteral_data.csv'  # URL for FNSPID NASDAQ news dataset on Hugging Face
         os.makedirs(self.raw_data_cache_dir, exist_ok=True)  # Create cache directory if it doesn't exist, with exist_ok to avoid errors
 

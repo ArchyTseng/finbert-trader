@@ -17,10 +17,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 class ConfigSetup:
     # Config directories, from FinRL reference
-    DATA_SAVE_DIR = 'raw_data_cache'
+    RAW_DATA_DIR = 'raw_data_cache'
     EXPER_DATA_DIR = 'exper_data_cache'
     PLOT_CACHE_DIR = 'plot_cache'
+    RESULTS_CACHE_DIR = 'results_cache'
     EXPERIMENT_CACHE_DIR = 'exper_cache'
+    SCALER_CACHE_DIR = 'scaler_cache'
     LOG_SAVE_DIR = 'logs'
 
     def __init__(self, custom_config=None):
@@ -68,7 +70,11 @@ class ConfigSetup:
         ]  # Reference from FinRL; dynamic indicators with timeperiods
         self.sentiment_keys = ['sentiment_score', 'risk_score']  # Keys for sentiment/risk features
         self.decay_lambda = 0.03  # From FNSPID paper; for potential decay in scoring
+
         self.window_size = 50  # For RL windows; observation history length
+        self.window_factor = 2  # For scale RL window size in FeatureEngineer
+        self.window_extend = 10 # For extend RL window size in FeatureEngineer
+
         self.prediction_days = 1  # For Short-term trading strategy; future days to predict
         self.batch_size = 32  # For FinBERT inference; balance memory and speed
         self.text_cols = ['Article_title', 'Textrank_summary']  # Default scheme from FNSPID; text fields for sentiment
@@ -254,6 +260,8 @@ class ConfigSetup:
                            "close_20_sma"],
             'decay_lambda': 0.03,
             'window_size': 50,
+            'window_factor': 2,
+            'window_extend': 10,
             'prediction_days': 3,
             'batch_size': 32,
             'text_cols': ['Article_title', 'Textrank_summary'],

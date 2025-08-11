@@ -69,11 +69,11 @@ class ConfigTrading:
     }
 
     # config default directory
-    SCALER_SAVE_DIR = 'scaler_cache'
-    MODEL_SAVE_DIR = 'model_cache'
-    RESULTS_SAVE_DIR = 'results_cache'
+    SCALER_CACHE_DIR = 'scaler_cache'
+    MODEL_CACHE_DIR = 'model_cache'
     TENSORBOARD_LOG_DIR = 'tensorboard_cache'
     PLOT_CACHE_DIR = 'plot_cache'
+    RESULTS_CACHE_DIR = 'results_cache'
     EXPERIMENT_CACHE_DIR = 'exper_cache'
     LOG_SAVE_DIR = 'logs'
 

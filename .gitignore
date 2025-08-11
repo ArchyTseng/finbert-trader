@@ -32,6 +32,8 @@ finbert_trader_backup_*/
 
 # data_cache
 data_cache/
+raw_data_cache/
+exper_data_cache/
 
 # scaler_cache
 scaler_cache/
@@ -51,8 +53,9 @@ plot_cache/
 # config_cache
 config_cache/
 
-# tensorboard
+# tensorboard_cache
 tensorboard/
+tensorboard_cache/
 
 # logs
 logs/
@@ -60,3 +63,6 @@ logs/
 # notebooks
 notebooks/
 .ipynb_checkpoints
+
+# .sh
+*.sh

@@ -76,15 +76,15 @@ set_random_seeds(42)
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore')
 # Import project modules
-from finbert_trader.config_setup import ConfigSetup
-from finbert_trader.data.data_resource import DataResource
-from finbert_trader.preprocessing.feature_engineer import FeatureEngineer
-from finbert_trader.config_trading import ConfigTrading
-from finbert_trader.environment.stock_trading_env import StockTradingEnv
-from finbert_trader.agent.trading_agent import TradingAgent
-from finbert_trader.backtest.trading_backtest import TradingBacktest
-from finbert_trader.exper_tracker import ExperimentTracker
-from finbert_trader.visualize.visualize_backtest import VisualizeBacktest
+from .config_setup import ConfigSetup
+from .data_resource import DataResource
+from .features.feature_engineer import FeatureEngineer
+from .config_trading import ConfigTrading
+from .stock_trading_env import StockTradingEnv
+from .trading_agent import TradingAgent
+from .trading_backtest import TradingBacktest
+from .exper_tracker import ExperimentTracker
+from .visualize.visualize_backtest import VisualizeBacktest
 # Logging setup
 logging.basicConfig(
     level=logging.INFO,
