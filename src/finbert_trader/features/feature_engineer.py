@@ -444,6 +444,13 @@ class FeatureEngineer:
         - Targets extracted as matrix for multi-symbol prediction.
         - Logs prepared RL data count; assumes symbols ordered for consistent concat.
         """
+        logging.info(f"FE Module - prepare_rl_data - Debug info:")
+        logging.info(f"  fused_df shape: {fused_df.shape}")
+        logging.info(f"  symbols: {symbols}")
+        logging.info(f"  window_size: {self.window_size}")
+        logging.info(f"  W_f: {self.W_f}, W_e: {self.W_e}")
+        logging.info(f"  min_episode_length: {self.W_f * self.window_size + self.W_e}")
+
         symbols = symbols or self.config.symbols  # Default to config symbols if not provided
         logging.info(f"FE Module - prepare_rl_data - Begin preparing RL data with window={self.window_size}, prediction_days={self.prediction_days}, symbols={symbols}")  # Log preparation params
         assert isinstance(fused_df, pd.DataFrame), f"FE Module - Expected DataFrame, got {type(fused_df)}"  # Assert input type to prevent invalid data processing
@@ -459,7 +466,7 @@ class FeatureEngineer:
         
         if self.config._features_initialized:
             logging.info(f"FE Module - prepare_rl_data - Skipping features/threshold update "
-                        f"data_type={data_type}) because they are loaded from cache.")
+                        f"data_type={data_type} because they are loaded from cache.")
         else:
             if not self.config.features_all or all(not v for v in self.config.risk_threshold.values()):
                 self._update_features_categories(fused_df)  # Update features_* attributes to self.config for inheriting by ConfigTrading
@@ -486,30 +493,62 @@ class FeatureEngineer:
             logging.warning(f"FE Module - No valid episodes can be created: {max_episodes}")
             return rl_data
 
+        # Fix episode length , Ensure each episode with same length
+        fixed_episode_length = min_episode_length  
+
         for i in range(max_episodes + 1):
-            # Sliding window loop: Generate windows leaving room for prediction_days
-            window_parts = []  # List to collect per-symbol window arrays for concat
-            for symbol in symbols:
-                symbol_cols = self.config.features_all[symbol]  # Get all features for this symbol from config
-                symbol_window = fused_df.iloc[i:i+min_episode_length][symbol_cols].values  # Extract (window_size, features_dim_per_symbol) array
-                window_parts.append(symbol_window)  # Append for later concat
+            try:
+                # Ensure not out of bound
+                if i + fixed_episode_length > len(fused_df):
+                    logging.debug(f"FE Module - prepare_rl_data - Skipping episode {i} due to boundary issues")
+                    continue
 
-            # Concatenate all symbol windows along axis=1 to form 2D states (window_size, n_symbols * features_dim_per_symbol)
-            states = np.concatenate(window_parts, axis=1)  # (min_episode_length, total_features)
+                # Sliding window loop: Generate windows leaving room for prediction_days
+                window_parts = []  # List to collect per-symbol window arrays for concat
+                for symbol in symbols:
+                    symbol_cols = self.config.features_all[symbol]  # Get all features for this symbol from config
+                    symbol_window = fused_df.iloc[i:i+fixed_episode_length][symbol_cols].values  # Extract (window_size, features_dim_per_symbol) array
+                    window_parts.append(symbol_window)  # Append for later concat
 
-            # Target: future Adj_Close of each stock
-            target_cols = [f"Adj_Close_{symbol}" for symbol in symbols]
-            target_start = i + self.window_size
-            target_end = target_start + self.prediction_days
-            if target_end <= len(fused_df):
-                target = fused_df.iloc[target_start:target_end][target_cols].values
-                rl_data.append({'start_date': dates[i],
-                                'states': states,
-                                'targets': target})
-            else:
-                logging.debug(f"FE Module - Skipping episode {i} due to insufficient target data")
+                # Concatenate all symbol windows along axis=1 to form 2D states (window_size, n_symbols * features_dim_per_symbol)
+                states = np.concatenate(window_parts, axis=1)  # (min_episode_length, total_features)
+
+                # Check states shape
+                if states.shape[0] != fixed_episode_length:
+                    logging.warning(f"FE Module - Episode {i} has inconsistent shape: {states.shape}")
+                    continue
+
+                # Target: future Adj_Close of each stock
+                target_cols = [f"Adj_Close_{symbol}" for symbol in symbols]
+                target_start = i + self.window_size
+                target_end = min(target_start + self.prediction_days, len(fused_df))
+
+                if target_end > target_start:
+                    target = fused_df.iloc[target_start:target_end][target_cols].values
+                    rl_data.append({'start_date': dates[i] if i < len(dates) else None,
+                                    'states': states,   # (fixed_episode_length, total_features)
+                                    'targets': target}) # (prediction_days, n_symbols)
+                else:
+                    logging.debug(f"FE Module - prepare_rl_data - Skipping episode {i} due to insufficient target data")
+            
+            except Exception as e:
+                logging.error(f"FE Module - prepare_rl_data - Error processing episode {i}: {e}")
 
         logging.info(f"FE Module - prepare_rl_data - Prepared {len(rl_data)} RL data")  # Log total prepared items
+
+        # Check episode shape
+        if rl_data:
+            states_shapes = [episode['states'].shape for episode in rl_data]
+            targets_shapes = [episode['targets'].shape for episode in rl_data]
+            
+            logging.info(f"FE Module - States shapes: {set(states_shapes)}")
+            logging.info(f"FE Module - Targets shapes: {set(targets_shapes)}")
+            
+            # If shapes are not same, log warning
+            if len(set(states_shapes)) > 1:
+                logging.warning("FE Module - prepare_rl_data - Inconsistent states shapes detected")
+            if len(set(targets_shapes)) > 1:
+                logging.warning("FE Module - prepare_rl_data - Inconsistent targets shapes detected")
         return rl_data  # Return list of RL data dicts
 
     def split_rl_data(self, rl_data):
@@ -715,12 +754,28 @@ class FeatureEngineer:
                     records = data_dict.get(target, [])
                     # Convert list of dicts to structured arrays
                     if records:
-                        start_dates = np.array([str(data['start_date']) for data in records])
-                        states = np.array([data['states'] for data in records])
-                        targets = np.array([data['targets'] for data in records])
+                        # Verify shape 
+                        states_shapes = [data['states'].shape for data in records]
+                        targets_shapes = [data['targets'].shape for data in records]
+                        logging.info(f"FE Module - save_exper_data_dict_npz - {target} shapes: "
+                                f"states {set(states_shapes)}, targets {set(targets_shapes)}")
+                        # If same shape, implement normal array.Otherwise Object
+                        if len(set(states_shapes)) == 1 and len(set(targets_shapes)) == 1:
+                            start_dates = np.array([str(data['start_date']) for data in records])
+                            states = np.array([data['states'] for data in records])
+                            targets = np.array([data['targets'] for data in records])
+                            logging.info(f"FE Module - save_exper_data_dict_npz - Using regular arrays for {target}")
+                        else:
+                            # If not same shape, implement Object
+                            start_dates = np.array([str(data['start_date']) for data in records], dtype=object)
+                            states = np.array([data['states'] for data in records], dtype=object)
+                            targets = np.array([data['targets'] for data in records], dtype=object)
+                            logging.info(f"FE Module - save_exper_data_dict_npz - Using object arrays for {target} due to shape inconsistency")
+
                         npz_data[f"{target}_dates"] = start_dates
                         npz_data[f"{target}_states"] = states
                         npz_data[f"{target}_targets"] = targets
+
                 np.savez_compressed(mode_path, **npz_data)
                 logging.info(f"FE Module - save_exper_data_dict_npz - Saved {mode} data to {mode_path}")
             logging.info(f"FE Module - save_exper_data_dict_npz - Save exper_data_dict successfully")
