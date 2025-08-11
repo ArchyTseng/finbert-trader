@@ -72,6 +72,9 @@ class ConfigTrading:
     SCALER_SAVE_DIR = 'scaler_cache'
     MODEL_SAVE_DIR = 'model_cache'
     RESULTS_SAVE_DIR = 'results_cache'
+    TENSORBOARD_LOG_DIR = 'tensorboard_cache'
+    PLOT_CACHE_DIR = 'plot_cache'
+    EXPERIMENT_CACHE_DIR = 'exper_cache'
     LOG_SAVE_DIR = 'logs'
 
     def __init__(self, custom_config=None, upstream_config=None, model='PPO'):

@@ -74,6 +74,8 @@ class TradingAgent:
         # Set model save path, default to 'model_cache'
         self.model_path = getattr(self.config, 'MODEL_SAVE_DIR', 'model_cache')
 
+        self.tensorboard_path = getattr(self.config, 'TENSORBOARD_LOG_DIR', 'tensorboard_cache')
+
         # Create model directory if not exists for robust file handling
         os.makedirs(self.model_path, exist_ok=True)
 
@@ -102,7 +104,7 @@ class TradingAgent:
         Notes
         -----
         - Uses MlpPolicy by default for multi-layer perceptron networks.
-        - Tensorboard logging enabled for training visualization.
+        - Tensorboard_cache logging enabled for training visualization.
         - Extensible: Add new model types by branching on model_name.
         """
         try:
@@ -119,7 +121,7 @@ class TradingAgent:
                     "MlpPolicy",
                     env,
                     verbose=1,
-                    tensorboard_log="./tensorboard/",
+                    tensorboard_log= self.tensorboard_path,
                     **model_params
                 )
             elif model_name == 'CPPO':
@@ -131,7 +133,7 @@ class TradingAgent:
                     "MlpPolicy",
                     env,
                     verbose=1,
-                    tensorboard_log="./tensorboard/",
+                    tensorboard_log= self.tensorboard_path,
                     **model_params
                 )
             else:
@@ -183,7 +185,7 @@ class TradingAgent:
                 "MlpPolicy",
                 env,
                 verbose=1,
-                tensorboard_log="./tensorboard/",
+                tensorboard_log= self.tensorboard_path,
                 **cppo_params
             )
 

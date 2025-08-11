@@ -17,8 +17,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 class ConfigSetup:
     # Config directories, from FinRL reference
-    DATA_SAVE_DIR = 'data_cache'
-    EXPER_DATA_DIR = 'exper_cache'
+    DATA_SAVE_DIR = 'raw_data_cache'
+    EXPER_DATA_DIR = 'exper_data_cache'
+    PLOT_CACHE_DIR = 'plot_cache'
+    EXPERIMENT_CACHE_DIR = 'exper_cache'
     LOG_SAVE_DIR = 'logs'
 
     def __init__(self, custom_config=None):

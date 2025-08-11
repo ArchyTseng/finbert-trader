@@ -32,7 +32,7 @@ class DataResource:
         Notes
         -----
         - Extracts date parameters from config for data fetching/splitting.
-        - Creates data_cache_dir if it doesn't exist using os.makedirs.
+        - Creates raw_data_cache_dir if it doesn't exist using os.makedirs.
         - fnspid_url points to Hugging Face dataset for NASDAQ external news data.
         - Supports modular data management in RL pipelines.
         """
@@ -41,16 +41,16 @@ class DataResource:
         self.test_end_date = self.config.end  # End date for testing (note: reused from config.end)
         self.train_start_date = self.config.train_start_date  # Start date specifically for training
         self.test_end_date = self.config.test_end_date  # End date for testing (overwritten if config.end differs)
-        self.data_cache_dir = config.DATA_SAVE_DIR  # Directory for caching downloaded/processed data
+        self.raw_data_cache_dir = config.DATA_SAVE_DIR  # Directory for caching downloaded/processed data
         self.fnspid_url = 'https://huggingface.co/datasets/Zihan1004/FNSPID/resolve/main/Stock_news/nasdaq_exteral_data.csv'  # URL for FNSPID NASDAQ news dataset on Hugging Face
-        os.makedirs(self.data_cache_dir, exist_ok=True)  # Create cache directory if it doesn't exist, with exist_ok to avoid errors
+        os.makedirs(self.raw_data_cache_dir, exist_ok=True)  # Create cache directory if it doesn't exist, with exist_ok to avoid errors
 
     def get_cache_path(self, symbol):
         """
         Introduction
         ------------
         Generate the cache file path for a stock symbol's data CSV.
-        Uses data_cache_dir, symbol, and date range (train_start_date or start, test_end_date).
+        Uses raw_data_cache_dir, symbol, and date range (train_start_date or start, test_end_date).
 
         Parameters
         ----------
@@ -68,7 +68,7 @@ class DataResource:
         - Joins paths with os.path.join for cross-platform compatibility.
         - File name format: {symbol}_{start_date}_{end_date}.csv.
         """
-        return os.path.join(self.data_cache_dir, f"{symbol}_{self.train_start_date if self.train_start_date else self.start}_{self.test_end_date if self.test_end_date else self.test_end_date}.csv")  # Construct path with fallback dates for robustness; ensures unique file per symbol and range
+        return os.path.join(self.raw_data_cache_dir, f"{symbol}_{self.train_start_date if self.train_start_date else self.start}_{self.test_end_date if self.test_end_date else self.test_end_date}.csv")  # Construct path with fallback dates for robustness; ensures unique file per symbol and range
 
     def clean_yf_ohlcv(self, df, symbol):
         """
@@ -136,7 +136,7 @@ class DataResource:
 
         Notes
         -----
-        - Prioritizes cache loading from data_cache_dir; parses dates on load.
+        - Prioritizes cache loading from raw_data_cache_dir; parses dates on load.
         - Downloads via yf.download with 3 retries (5s sleep) on failures.
         - Cleans via clean_yf_ohlcv; ensures 'Date' as datetime64[ns] without timezone.
         - Drops redundant 'Symbol' if present; resets index to include 'Date'.
@@ -193,7 +193,7 @@ class DataResource:
         logging.info(f"DR Module - fetch_stock_data - Return stock data for {self.config.symbols} as {type(stock_data_dict)}")  # Log final return type and symbols
         return stock_data_dict  # Return dict of all fetched/cleaned stock data
 
-    def download_fnsqld_news_data(self, save_path='data_cache/nasdaq_exteral_data.csv'):
+    def download_fnsqld_news_data(self, save_path='raw_data_cache/nasdaq_exteral_data.csv'):
         """
         Download FNSPID news dataset using requests.
         Input: save_path (str, optional)
@@ -220,7 +220,7 @@ class DataResource:
         Introduction
         ------------
         Configure cache paths for news data: original and filtered by symbols and date range.
-        Generates paths in data_cache_dir; logs for traceability.
+        Generates paths in raw_data_cache_dir; logs for traceability.
 
         Parameters
         ----------
@@ -238,8 +238,8 @@ class DataResource:
         - Filtered path: Joins symbols with '_', appends dates (fallback to start/end if train/test None).
         - Logs both paths for debugging cache operations.
         """
-        cache_path = os.path.join(self.data_cache_dir, os.path.basename(base_path))  # Construct original cache path using basename for filename isolation
-        filtered_cache_path = os.path.join(self.data_cache_dir, f"{'_'.join(self.config.symbols)}_{self.train_start_date if self.train_start_date else self.start}_{self.test_end_date if self.test_end_date else self.test_end_date}_news.csv")  # Build filtered path with symbols joined and date range (fallback for None dates)
+        cache_path = os.path.join(self.raw_data_cache_dir, os.path.basename(base_path))  # Construct original cache path using basename for filename isolation
+        filtered_cache_path = os.path.join(self.raw_data_cache_dir, f"{'_'.join(self.config.symbols)}_{self.train_start_date if self.train_start_date else self.start}_{self.test_end_date if self.test_end_date else self.test_end_date}_news.csv")  # Build filtered path with symbols joined and date range (fallback for None dates)
         logging.info(f"DR Module - cache_path_config - Cache path: {cache_path}, Filtered cache path: {filtered_cache_path}")  # Log paths for monitoring and debugging
         return cache_path, filtered_cache_path  # Return tuple of paths for use in fetching/saving
 
