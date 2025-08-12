@@ -192,19 +192,22 @@ class StockTradingEnv(gym.Env):
             self.trading_df = episode_data['states']  # [T, D]: Time x Features array
             self.targets = episode_data['targets']    # [T, N]: Time x Symbols price targets
             
-            # Validate data size
-            if len(self.trading_df) <= self.window_size:
-                raise ValueError(f"STE Modul - Env Reset - Episode {self.episode_idx} has insufficient data: "
-                            f"data_length={len(self.trading_df)}, window_size={self.window_size}")
+            logging.info(f"STE Module - Env Reset - Selected episode {self.episode_idx} with shapes - "
+                    f"states: {self.trading_df.shape}, targets: {self.targets.shape}")
             
-            # Set terminal step as the last valid index of the episode
-            self.terminal_step = len(self.trading_df) - 1
+            # Set terminal step - Ensure enough trading step
+            min_trading_steps = 50  # 至少50个交易步数
+            available_steps = min(len(self.trading_df) - self.window_size, len(self.targets))
+
+            if available_steps < min_trading_steps:
+                raise ValueError(f"Episode too short for trading: {available_steps} < {min_trading_steps}")
+
+            # Set terminal step 
+            self.terminal_step = self.window_size + available_steps - 1
             # Start current step after window to include history (ensure it's valid)
             self.current_step = self.window_size
-            # Ensure we have at least one step after the window for trading
-            if self.current_step >= self.terminal_step:
-                raise ValueError(f"STE Modul - Env Reset - Episode {self.episode_idx} too short for trading: "
-                            f"window_size={self.window_size}, data_length={len(self.trading_df)}")
+            logging.info(f"STE Module - Env Reset - Trading steps available: {available_steps}")
+            logging.info(f"STE Module - Env Reset - Terminal step: {self.terminal_step}")
             
             # Reset agent state to initial values
             self.cash = 1.0  # Normalized initial cash (relative to portfolio value)
@@ -220,7 +223,7 @@ class StockTradingEnv(gym.Env):
             info = {'Environment Type': self.env_type,  # Train/valid/test
                     'Episode Index': self.episode_idx,  # Selected episode
                     'Episode Length': self.terminal_step + 1,  # Full length including window
-                    'Targets': self.targets[:2] if len(self.targets) >= 2 else self.targets,  # Sample targets for quick check
+                    'Trading Steps': available_steps,
                     'Cash': self.cash,
                     'Position': self.position,
                     'Total Asset': self.total_asset,
@@ -326,6 +329,22 @@ class StockTradingEnv(gym.Env):
             # Log input actions for debugging
             logging.info(f"STE Module - Env Step - Input actions shape: {actions.shape}")
 
+            # Compute the index of current step in targets
+            target_step_idx = self.current_step - self.window_size
+
+            if target_step_idx >= len(self.targets):
+                logging.warning(f"STE Module - Env Step - No target available for step {target_step_idx}")
+                done = True
+                truncated = False
+                reward = 0.0
+                info = {
+                    'Done': done,
+                    'Truncated': truncated,
+                    'Reward': reward,
+                    'Total Asset': self.total_asset
+                }
+                return self._get_states(), reward, done, truncated, info
+
             # Fetch current feature row (t-1, as step advances after trade)
             current_row = self.trading_df[self.current_step - 1]  # Current after trade
             # Extract sentiment/risk per stock if factors enabled, else zeros
@@ -411,7 +430,7 @@ class StockTradingEnv(gym.Env):
             # Advance timestep
             self.current_step += 1
             # Check if episode done (reached terminal step)
-            done = (self.current_step >= self.terminal_step)
+            done = (self.current_step >= self.terminal_step) or (target_step_idx >= len(self.targets) - 1)
             truncated = False  # No truncation in this environment
 
             # Build info dict for step monitoring

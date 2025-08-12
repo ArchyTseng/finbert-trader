@@ -84,7 +84,9 @@ from .stock_trading_env import StockTradingEnv
 from .trading_agent import TradingAgent
 from .trading_backtest import TradingBacktest
 from .exper_tracker import ExperimentTracker
+from .trading_analysis import analyze_trade_history
 from .visualize.visualize_backtest import VisualizeBacktest
+from .visualize.visualize_features import VisualizeFeatures, generate_standard_feature_visualizations
 # Logging setup
 logging.basicConfig(
     level=logging.INFO,
@@ -220,7 +222,7 @@ def process_mode(mode_name, mode_data, trading_config):
 
         # Training
         logging.info(f"Main - Mode {mode_name} - Starting training")
-        trained_model = agent.train(
+        agent.train(
             train_env=train_env,
             valid_env=valid_env,
             total_timesteps=trading_config.total_timesteps,
@@ -239,6 +241,17 @@ def process_mode(mode_name, mode_data, trading_config):
 
         # Generate detailed report
         detailed_report = backtester.generate_detailed_report(backtest_results)
+
+        # Generate trading history analysis
+        symbols_list = getattr(trading_config, 'symbols', None)
+        initial_value = backtest_results.get('asset_history', [1.0])[0] if backtest_results.get('asset_history') else 1.0
+        trading_analy_dict = analyze_trade_history(
+            backtest_results.get('trade_history', []), 
+            initial_asset_value=initial_value,
+            symbols=symbols_list
+        )
+        # Add trading analysis to detailed report
+        detailed_report['trading_analysis'] = trading_analy_dict
 
         # Save backtest results
         results_save_path = backtester.save_results(backtest_results)

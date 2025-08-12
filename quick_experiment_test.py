@@ -55,7 +55,7 @@ Setup basic configuration for quick experiments
 
 # Set experiment configuration
 custom_setup_config = {
-    'symbols': ['GOOGL', 'AAPL'],  # Use few symbols
+    'symbols': ['GOOGL', 'AAPL', ''],  # Use few symbols
     'start': '2020-01-01',
     'end': '2022-12-31',
     'train_start_date': '2020-01-01',
@@ -67,9 +67,11 @@ custom_setup_config = {
     'exper_mode': {
         'rl_algorithm': ['PPO']  # Test single algorithm
     },
+    'ind_mode': 'long', # Set indicator time period
     'window_size': 20,  # Initial small window size
-    'window_factor': 2,
-    'window_extend': 10,
+    'window_factor': 3,
+    'window_extend': 50,
+    'save_npz': False,  # Disable saving for quick experiments
     # Cache path config
     'RAW_DATA_DIR': 'raw_data_cache',
     'EXPER_DATA_DIR': 'exper_data_cache',

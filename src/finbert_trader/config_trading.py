@@ -132,18 +132,6 @@ class ConfigTrading:
         self.cvar_min_history = 30 # CVaR minimum history, reference from FinRL_DeepSeek
         self.risk_mode = True  # Enable risk assessment prompt, reference from FinRL_DeepSeek (3: Risk Prompt)
         self.infusion_strength = 0.001  # Default 0.1% for subtle injection, tunable 0.001-0.1, reference from FinRL_DeepSeek (5.3: 0.1% vs 10%)
-        
-        # Ablation Experiment Controller
-        self.use_senti_factor = True
-        self.ust_risk_factor = True
-
-        self.use_senti_features = True
-        self.use_risk_features = True
-
-        self.use_senti_threshold = True
-        self.use_risk_threshold = True
-
-        self.use_dynamic_infusion = False
 
         # Set model and load params with fallback for unsupported models
         self.model = model
@@ -172,7 +160,14 @@ class ConfigTrading:
                              'features_all',
                              'senti_threshold',
                              'risk_threshold',
-                             'threshold_factor']  # All combined features
+                             'threshold_factor',
+                             'use_senti_factor',
+                             'use_risk_factor',
+                             'use_senti_features',
+                             'use_rist_features',
+                             'use_senti_threshold',
+                             'use_risk_threshold',
+                             'use_dynamic_infusion',]  # All combined features
             for param in shared_params:
                 if hasattr(upstream_config, param):  # Check if param exists in upstream
                     setattr(self, param, getattr(upstream_config, param))  # Inherit to maintain consistency
@@ -326,6 +321,13 @@ class ConfigTrading:
             'infusion_strength': 0.001,
             "cvar_factor": 0.05,
             'risk_mode': True,
+            'use_senti_factor': True,
+            'use_risk_factor': True,
+            'use_senti_features': True,
+            'use_risk_features': True,
+            'use_senti_threshold': True,
+            'use_risk_threshold': True,
+            'use_dynamic_infusion': False,
             'model_params': ConfigTrading._model_params.get(model, {})
         }
         return defaults

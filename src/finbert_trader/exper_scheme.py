@@ -21,6 +21,7 @@ from .stock_trading_env import StockTradingEnv
 from .trading_agent import TradingAgent
 from .trading_backtest import TradingBacktest
 from .exper_tracker import ExperimentTracker
+from .trading_analysis import analyze_trade_history
 
 class ExperimentScheme:
     """
@@ -55,7 +56,7 @@ class ExperimentScheme:
             os.makedirs(dir_path, exist_ok=True)
         
         # Initialize experiment tracker with unified config
-        self.experiment_tracker = ExperimentTracker(self.experiment_cache_dir)
+        self.experiment_tracker = ExperimentTracker(self.config)
 
         
         logging.info("ES Module - Initialized ExperimentScheme with unified configuration")
@@ -104,9 +105,17 @@ class ExperimentScheme:
             'exper_mode': {
                 'rl_algorithm': ['PPO']  # Single algorithm for speed
             },
-            'window_size': 20,  # Smaller window for faster processing
-            'window_factor': 1,
-            'window_extend': 10,
+            'window_size': 50,  # Smaller window for faster processing
+            'window_factor': 2,
+            'window_extend': 50,
+            'ind_mode': 'long',
+            'use_senti_factor': False,
+            'use_risk_factor': False,
+            'use_senti_features': False,
+            'use_risk_features': False,
+            'use_senti_threshold': False,
+            'use_risk_threshold': False,
+            'use_dynamic_infusion': False,
             'RAW_DATA_DIR': self.raw_data_dir,
             'EXPER_DATA_DIR': self.exper_data_dir,
             'PLOT_CACHE_DIR': self.plot_cache_dir,
@@ -117,9 +126,9 @@ class ExperimentScheme:
         
         trading_config = {
             'initial_cash': 100000,
-            'total_timesteps': 50000,  # Very short training
+            'total_timesteps': 200000,  
             'reward_scaling': 1e-3,
-            'cash_penalty_proportion': 0.001,
+            'cash_penalty_proportion': 0.0005,
             'commission_rate': 0.001
         }
         
@@ -164,9 +173,17 @@ class ExperimentScheme:
             'exper_mode': {
                 'rl_algorithm': ['PPO']
             },
-            'window_size': 25,
+            'window_size': 50,
             'window_factor': 2,
-            'window_extend': 10,
+            'window_extend': 50,
+            'ind_mode': 'long',
+            'use_senti_factor': True,
+            'use_risk_factor': True,
+            'use_senti_features': False,
+            'use_risk_features': False,
+            'use_senti_threshold': False,
+            'use_risk_threshold': False,
+            'use_dynamic_infusion': False,
             'RAW_DATA_DIR': self.raw_data_dir,
             'EXPER_DATA_DIR': self.exper_data_dir,
             'PLOT_CACHE_DIR': self.plot_cache_dir,
@@ -177,11 +194,11 @@ class ExperimentScheme:
         
         trading_config = {
             'initial_cash': 1000000,  # Larger capital for better signal-to-noise
-            'total_timesteps': 100000,
-            'reward_scaling': 1e-2,   # Enhanced reward scaling
+            'total_timesteps': 200000,
+            'reward_scaling': 1e-3,   # Enhanced reward scaling
             'cash_penalty_proportion': 0.0005,  # Reduced cash penalty
             'infusion_strength': 0.05,  # Increased sentiment/risk influence
-            'commission_rate': 0.0005   # Lower transaction costs
+            'commission_rate': 0.0001   # Lower transaction costs
         }
         
         return self._execute_experiment_with_visualization(
@@ -228,6 +245,7 @@ class ExperimentScheme:
             'window_size': 30,
             'window_factor': 2,
             'window_extend': 30,
+            'ind_mode': 'long',
             'RAW_DATA_DIR': self.raw_data_dir,
             'EXPER_DATA_DIR': self.exper_data_dir,
             'PLOT_CACHE_DIR': self.plot_cache_dir,
@@ -541,6 +559,7 @@ class ExperimentScheme:
                 raise ValueError("No stock data fetched")
             logging.info(f"ES Module - Prepared stock data for {len(stock_data_dict)} symbols")
 
+            # Generate news chunks path
             cache_path, filtered_cache_path = data_resource.cache_path_config()
 
             # Load news data
@@ -701,7 +720,7 @@ class ExperimentScheme:
             
             # Training
             logging.info(f"ES Module - Mode {mode_name} - Starting training")
-            trained_model = agent.train(
+            agent.train(
                 train_env=train_env,
                 valid_env=valid_env,
                 total_timesteps=config_trading.total_timesteps,
@@ -720,6 +739,17 @@ class ExperimentScheme:
             
             # Generate detailed report
             detailed_report = backtester.generate_detailed_report(backtest_results)
+
+            # Generate trading history analysis
+            symbols_list = getattr(config_trading, 'symbols', None)
+            initial_value = backtest_results.get('asset_history', [1.0])[0] if backtest_results.get('asset_history') else 1.0
+            trading_analy_dict = analyze_trade_history(
+                backtest_results.get('trade_history', []), 
+                initial_asset_value=initial_value,
+                symbols=symbols_list
+            )
+            # Add trading analysis to detailed report
+            detailed_report['trading_analysis'] = trading_analy_dict
             
             # Save backtest results
             results_save_path = backtester.save_results(backtest_results)

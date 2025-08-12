@@ -44,6 +44,7 @@ import joblib
 # %%
 from .stock_features import StockFeatureEngineer
 from .news_features import NewsFeatureEngineer
+from ..visualize.visualize_features import generate_standard_feature_visualizations
 
 # %%
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -103,6 +104,7 @@ class FeatureEngineer:
         self.test_start_date = self.config.test_start_date  # Start date for test data
         self.test_end_date = self.config.test_end_date  # End date for test data
 
+        self.save_npz = getattr(self.config, 'save_npz', True)  # Flag to save NPZ files)
         self.load_npz = getattr(self.config, 'load_npz', False)  # Flag to load NPZ files)
 
     def process_news_chunks(self, news_chunks_gen):
@@ -468,40 +470,46 @@ class FeatureEngineer:
             logging.info(f"FE Module - prepare_rl_data - Skipping features/threshold update "
                         f"data_type={data_type} because they are loaded from cache.")
         else:
-            if not self.config.features_all or all(not v for v in self.config.risk_threshold.values()):
-                self._update_features_categories(fused_df)  # Update features_* attributes to self.config for inheriting by ConfigTrading
-                self._update_senti_risk_threshold(fused_df, data_type)  # Update senti/risk thresholds to self.config for inheriting by ConfigTrading
+            self._update_features_categories(fused_df)  # Update features_* attributes to self.config for inheriting by ConfigTrading
+            logging.info(f"FE Module - prepare_rl_data - Features updated for {data_type} ")
+            self._update_senti_risk_threshold(fused_df, data_type)  # Update senti/risk thresholds to self.config for inheriting by ConfigTrading
+            logging.info(f"FE Module - prepare_rl_data - Senti/Risk updated for {data_type} ")
+            if data_type == 'test': # After first test , stop update ConfigSetup
                 self.config.save_config_cache()
+                logging.info(f"FE Module - prepare_rl_data - Finished save config to cache file.")
                 self.config._features_initialized = True
-                logging.info(f"FE Module - prepare_rl_data - Features and thresholds updated "
-                            f"data_type={data_type} and cached to config.")
+                logging.info(f"FE Module - prepare_rl_data - Set features_initialized -> {self.config._features_initialized}")
 
         rl_data = []  # Initialize list to store RL data dicts
         dates = fused_df.index  # Extract dates for start_date assignment
 
-        min_episode_length = self.W_f * self.window_size + self.W_e # More winsow for explore
-        logging.info(f"FE Module - prepare_rl_data - Data length: {len(fused_df)}, "
-                f"Required minimum: {min_episode_length} "
-                f"(W_f={self.W_f} * window_size={self.window_size} + W_e={self.W_e})")
+        min_required_steps = 50    # Set min step for each episode
+        min_episode_length = max(self.W_f * self.window_size + self.W_e, self.window_size + min_required_steps) # More winsow for explore
+        logging.info(f"FE Module - prepare_rl_data - Data length: {len(fused_df)}")
+        logging.info(f"FE Module - prepare_rl_data - Window size: {self.window_size}")
+        logging.info(f"FE Module - prepare_rl_data - Configured episode length: {self.W_f * self.window_size + self.W_e}")
+        logging.info(f"FE Module - prepare_rl_data - Final min episode length: {min_episode_length}")
 
         if len(fused_df) < min_episode_length:
             logging.warning(f"FE Module - Insufficient  {len(fused_df)} < {min_episode_length}")
             return rl_data
         
         max_episodes = len(fused_df) - min_episode_length + 1
+        logging.info(f"FE Module - prepare_rl_data - Can create {max_episodes} episodes")
+
         if max_episodes < 0:
-            logging.warning(f"FE Module - No valid episodes can be created: {max_episodes}")
+            logging.warning(f"FE Module - prepare_rl_data - No valid episodes can be created: {max_episodes}")
             return rl_data
 
         # Fix episode length , Ensure each episode with same length
         fixed_episode_length = min_episode_length  
 
-        for i in range(max_episodes + 1):
+        for i in range(min(max_episodes, 200)):    # in case too much step
             try:
                 # Ensure not out of bound
                 if i + fixed_episode_length > len(fused_df):
                     logging.debug(f"FE Module - prepare_rl_data - Skipping episode {i} due to boundary issues")
-                    continue
+                    break
 
                 # Sliding window loop: Generate windows leaving room for prediction_days
                 window_parts = []  # List to collect per-symbol window arrays for concat
@@ -518,37 +526,31 @@ class FeatureEngineer:
                     logging.warning(f"FE Module - Episode {i} has inconsistent shape: {states.shape}")
                     continue
 
-                # Target: future Adj_Close of each stock
+                # Targets - Generate target for each episode
                 target_cols = [f"Adj_Close_{symbol}" for symbol in symbols]
-                target_start = i + self.window_size
-                target_end = min(target_start + self.prediction_days, len(fused_df))
+                targets_list = []
 
-                if target_end > target_start:
-                    target = fused_df.iloc[target_start:target_end][target_cols].values
-                    rl_data.append({'start_date': dates[i] if i < len(dates) else None,
-                                    'states': states,   # (fixed_episode_length, total_features)
-                                    'targets': target}) # (prediction_days, n_symbols)
-                else:
-                    logging.debug(f"FE Module - prepare_rl_data - Skipping episode {i} due to insufficient target data")
+                # Generate target for each trading step in each episode
+                for step in range(self.window_size, fixed_episode_length):
+                    if step < len(fused_df):
+                        target = fused_df.iloc[step:step+1][target_cols].values  # shape: (1, n_symbols)
+                        targets_list.append(target)
+
+                if targets_list:
+                    targets = np.vstack(targets_list)  # shape: (n_trading_steps, n_symbols)
+                    rl_data.append({
+                        'start_date': dates[i] if i < len(dates) else None,
+                        'states': states,   # shape: (episode_length, total_features)
+                        'targets': targets  # shape: (n_trading_steps, n_symbols)
+                    })
             
             except Exception as e:
                 logging.error(f"FE Module - prepare_rl_data - Error processing episode {i}: {e}")
 
-        logging.info(f"FE Module - prepare_rl_data - Prepared {len(rl_data)} RL data")  # Log total prepared items
-
-        # Check episode shape
+        logging.info(f"FE Module - prepare_rl_data - Prepared {len(rl_data)} RL episodes")
         if rl_data:
-            states_shapes = [episode['states'].shape for episode in rl_data]
-            targets_shapes = [episode['targets'].shape for episode in rl_data]
-            
-            logging.info(f"FE Module - States shapes: {set(states_shapes)}")
-            logging.info(f"FE Module - Targets shapes: {set(targets_shapes)}")
-            
-            # If shapes are not same, log warning
-            if len(set(states_shapes)) > 1:
-                logging.warning("FE Module - prepare_rl_data - Inconsistent states shapes detected")
-            if len(set(targets_shapes)) > 1:
-                logging.warning("FE Module - prepare_rl_data - Inconsistent targets shapes detected")
+            logging.info(f"FE Module - prepare_rl_data - Sample episode shapes - states: {rl_data[0]['states'].shape}, targets: {rl_data[0]['targets'].shape}")
+
         return rl_data  # Return list of RL data dicts
 
     def split_rl_data(self, rl_data):
@@ -1081,6 +1083,11 @@ class FeatureEngineer:
                 fused_df = self.merge_features(stock_data_dict, sentiment_score_df, risk_score_df, ind_mode)    # Fuse stock data with sentiment/risk features
                 if fused_df.empty:
                     raise ValueError(f"Fused DataFrame empty for mode {mode}")  # Error if fusion results in empty DF
+                
+                # Generate time series , distribution , correlation heatmap plots
+                standard_visualize_results = generate_standard_feature_visualizations(fused_df, self.config)
+                logging.info(f"FE Module - generate_experiment_data - Successfully generate Standard Visualization Results: {standard_visualize_results}")
+
                 train_df = fused_df[(fused_df['Date'] >= pd.to_datetime(self.train_start_date)) & (fused_df['Date'] <= pd.to_datetime(self.train_end_date))]
                 valid_df = fused_df[(fused_df['Date'] >= pd.to_datetime(self.valid_start_date)) & (fused_df['Date'] <= pd.to_datetime(self.valid_end_date))]
                 test_df = fused_df[(fused_df['Date'] >= pd.to_datetime(self.test_start_date)) & (fused_df['Date'] <= pd.to_datetime(self.test_end_date))]
@@ -1137,12 +1144,16 @@ class FeatureEngineer:
                 torch.cuda.empty_cache()    # Clear GPU cache if using CUDA
                 logging.info("FE Module - generate_experiment_data - Released FinBERT resources")
 
-            if single_mode:
+            if single_mode and self.save_npz:
                 self.save_exper_data_dict_npz(exper_data_dict)  # Save single mode data to NPZ
                 logging.info(f"FE Module - generate_experiment_data - Save single mode data for {single_mode} successfully")
                 logging.info(f"FE Module - generate_experiment_data - Return single mode train/valid/test data for {single_mode}")
                 return exper_data_dict[single_mode]['train'], exper_data_dict[single_mode]['valid'], exper_data_dict[single_mode]['test']
-            self.save_exper_data_dict_npz(exper_data_dict)  # Save full dict to NPZ
+            if self.save_npz:  # Default True
+                try:
+                    self.save_exper_data_dict_npz(exper_data_dict)
+                except Exception as e:
+                    logging.warning(f"FE Module - Failed to save NPZ files: {e}")
             logging.info(f"FE Module - generate_experiment_data - Save exper_data_dict successfully")
             return exper_data_dict  # Return the full experiment data dictionary
 

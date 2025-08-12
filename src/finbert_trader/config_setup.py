@@ -16,6 +16,20 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class ConfigSetup:
+    # Referenc from FinRL_DeepSeek 
+    nasdaq_100_tickers_july_17_2023 = [
+        "ADBE", "ADP", "ABNB", "ALGN", "GOOGL", "GOOG", "AMZN", "AMD", "AEP", "AMGN",
+        "ADI", "ANSS", "AAPL", "AMAT", "ASML", "AZN", "TEAM", "ADSK", "BKR", "BIIB",
+        "BKNG", "AVGO", "CDNS", "CHTR", "CTAS", "CSCO", "CTSH", "CMCSA", "CEG", "CPRT",
+        "CSGP", "COST", "CRWD", "CSX", "DDOG", "DXCM", "FANG", "DLTR", "EBAY", "EA",
+        "ENPH", "EXC", "FAST", "FTNT", "GEHC", "GILD", "GFS", "HON", "IDXX", "ILMN",
+        "INTC", "INTU", "ISRG", "JD", "KDP", "KLAC", "KHC", "LRCX", "LCID", "LULU",
+        "MAR", "MRVL", "MELI", "META", "MCHP", "MU", "MSFT", "MRNA", "MDLZ", "MNST",
+        "NFLX", "NVDA", "NXPI", "ORLY", "ODFL", "ON", "PCAR", "PANW", "PAYX", "PYPL",
+        "PDD", "PEP", "QCOM", "REGN", "ROST", "SGEN", "SIRI", "SBUX", "SNPS", "TMUS",
+        "TSLA", "TXN", "TTD", "VRSK", "VRTX", "WBA", "WBD", "WDAY", "XEL", "ZM", "ZS"
+    ]
+
     # Config directories, from FinRL reference
     RAW_DATA_DIR = 'raw_data_cache'
     EXPER_DATA_DIR = 'exper_data_cache'
@@ -125,9 +139,21 @@ class ConfigSetup:
         self.cache_dir = 'config_cache'
         os.makedirs(self.cache_dir, exist_ok=True)
 
+        self.save_npz = True
         self.load_npz = False
 
         self._features_initialized = self.load_or_init_features()
+
+        self.use_senti_factor = True
+        self.use_risk_factor = True
+
+        self.use_senti_features = True
+        self.use_risk_features = True
+
+        self.use_senti_threshold = True
+        self.use_risk_threshold = True
+
+        self.use_dynamic_infusion = False
 
         if custom_config:
             # Apply overrides from dict for flexibility
@@ -276,6 +302,13 @@ class ConfigSetup:
             'test_start_date': '2023-01-01',
             'test_end_date': '2023-12-31',
             'risk_mode': True,
+            'use_senti_factor': True,
+            'use_risk_factor': True,
+            'use_senti_features': True,
+            'use_risk_features': True,
+            'use_senti_threshold': True,
+            'use_risk_threshold': True,
+            'use_dynamic_infusion': False,
             'exper_mode': {
                 'indicator/news': ['benchmark',
                                    'title_only',
@@ -284,7 +317,8 @@ class ConfigSetup:
                 'rl_algorithm': ['PPO',
                                  'CPPO',
                                  'A2C']
-            }
+            },
+            
         }
 
 if __name__ == "__main__":
