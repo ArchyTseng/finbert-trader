@@ -73,8 +73,11 @@ custom_setup_config = {
     'window_size': 25,  # Initial small window size
     'window_factor': 2,
     'window_extend': 50,
+    'smooth_window_size': 20,
     'save_npz': False,  # Disable saving for quick experiments
-    'force_normalize': True,    # Ensure normalize target columns
+    'force_process_news': False,
+    'force_fuse_data': False,
+    'force_normalize_features': True,    # Ensure normalize target columns
     'filter_ind': ['boll_ub', 'boll_lb', 'close_sma'],
     # Cache path config
     'RAW_DATA_DIR': 'raw_data_cache',

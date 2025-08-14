@@ -35,6 +35,7 @@ data_cache/
 raw_data_cache/
 exper_data_cache/
 processed_news_cache/
+fused_data_cache/
 
 # scaler_cache
 scaler_cache/
