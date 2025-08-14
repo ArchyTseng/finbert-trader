@@ -92,6 +92,7 @@ class ConfigSetup:
         self.window_factor = 2  # For scale RL window size in FeatureEngineer
         self.window_extend = 10 # For extend RL window size in FeatureEngineer
 
+        self.smooth_window_size = 5 # Timeperiod for apply smoothing to features using a rolling mean
         self.prediction_days = 3  # For Short-term trading strategy; future days to predict
         self.batch_size = 32  # For FinBERT inference; balance memory and speed
         self.text_cols = ['Article_title', 'Textrank_summary']  # Default scheme from FNSPID; text fields for sentiment

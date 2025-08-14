@@ -107,6 +107,8 @@ class FeatureEngineer:
         self.save_npz = getattr(self.config, 'save_npz', True)  # Flag to save NPZ files)
         self.load_npz = getattr(self.config, 'load_npz', False)  # Flag to load NPZ files)
 
+        self.smooth_window = getattr(self.config, 'smooth_window_size', 5)
+
         self.force_normalize = getattr(self.config, 'force_normalize', True)
         self.filter_ind = getattr(self.config, 'filter_ind', [])
 
@@ -345,6 +347,34 @@ class FeatureEngineer:
         scaler_path = os.path.join(base_dir, filename)
         logging.info(f"FE Module - _generate_scaler_path - Generated scaler path: {scaler_path}")
         return scaler_path
+    
+    def smooth_features(self, df, smooth_window=None):
+        """
+        Apply smoothing to features using a rolling mean.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Input DataFrame containing features.
+        window_size : int, optional
+            Size of the rolling window for smoothing.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with smoothed features.
+        """
+        window_size = smooth_window or self.smooth_window
+        # Ensure 'Date' is the index
+        if 'Date' in df.columns:
+            df.set_index('Date', inplace=True)
+        
+        # Apply rolling mean smoothing to all numeric columns
+        smoothed_df = df.rolling(window=window_size, min_periods=1).mean()
+        # Reset index to maintain original structure
+        smoothed_df.reset_index(inplace=True)
+        
+        return smoothed_df
     
     def normalize_features(self, df, fit=False, means_stds=None, scaler_path=None, data_type='train'):
         """
@@ -1180,12 +1210,19 @@ class FeatureEngineer:
                     logging.info(f"FE Module - generate_experiment_data - Successfully generated pre-normalization visualization results")
                     feature_analysis_completed = True  # Mark as completed to avoid repetition
 
+                # Time split data
                 train_df = fused_df[(fused_df['Date'] >= pd.to_datetime(self.train_start_date)) & (fused_df['Date'] <= pd.to_datetime(self.train_end_date))]
                 valid_df = fused_df[(fused_df['Date'] >= pd.to_datetime(self.valid_start_date)) & (fused_df['Date'] <= pd.to_datetime(self.valid_end_date))]
                 test_df = fused_df[(fused_df['Date'] >= pd.to_datetime(self.test_start_date)) & (fused_df['Date'] <= pd.to_datetime(self.test_end_date))]
                 if train_df.empty or valid_df.empty or test_df.empty:
                     raise ValueError(f"Empty split for mode {mode}")    
                 logging.info(f"FE Module - generate_experiment_data - Split for mode {mode}: train {len(train_df)}, valid {len(valid_df)}, test {len(test_df)}")
+
+                # Smooth features before normalization
+                logging.info(f"FE Module - generate_experiment_data - Applying feature smoothing with window size {self.smooth_window}")
+                train_df = self.smooth_features(train_df)
+                valid_df = self.smooth_features(valid_df)
+                test_df = self.smooth_features(test_df)
 
                 # Normalize indicators + sentiment + risk columns for RL training
                 train_scaler_path = self._generate_scaler_path(self.scaler_cache_path, group, mode)   # Dynamic per-group/mode

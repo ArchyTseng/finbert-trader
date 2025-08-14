@@ -164,7 +164,7 @@ class ConfigTrading:
                              'use_senti_factor',
                              'use_risk_factor',
                              'use_senti_features',
-                             'use_rist_features',
+                             'use_risk_features',
                              'use_senti_threshold',
                              'use_risk_threshold',
                              'use_dynamic_infusion',]  # All combined features
