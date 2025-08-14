@@ -195,20 +195,26 @@ class StockTradingEnv(gym.Env):
             logging.info(f"STE Module - Env Reset - Selected episode {self.episode_idx} with shapes - "
                     f"states: {self.trading_df.shape}, targets: {self.targets.shape}")
             
-            # Set terminal step - Ensure enough trading step
-            min_trading_steps = 50  # 至少50个交易步数
-            available_steps = min(len(self.trading_df) - self.window_size, len(self.targets))
+            # Count available trading decisions
+            available_trading_decisions = len(self.trading_df) - self.window_size
+            prediction_days = len(self.targets) if self.targets is not None else 0
+            
+            logging.info(f"STE Module - Env Reset - Available trading decisions: {available_trading_decisions}")
+            logging.info(f"STE Module - Env Reset - Prediction days: {prediction_days}")
 
-            if available_steps < min_trading_steps:
-                raise ValueError(f"Episode too short for trading: {available_steps} < {min_trading_steps}")
+            # Varify minimum required decisions
+            min_required_decisions = 10  # At least 10 desicions
+            if available_trading_decisions < min_required_decisions:
+                raise ValueError(f"Episode too short for trading: {available_trading_decisions} < {min_required_decisions}")
 
             # Set terminal step 
-            self.terminal_step = self.window_size + available_steps - 1
+            self.terminal_step = self.window_size + available_trading_decisions - 1
             # Start current step after window to include history (ensure it's valid)
             self.current_step = self.window_size
-            logging.info(f"STE Module - Env Reset - Trading steps available: {available_steps}")
+        
+            logging.info(f"STE Module - Env Reset - Trading steps available: {available_trading_decisions}")
             logging.info(f"STE Module - Env Reset - Terminal step: {self.terminal_step}")
-            
+                
             # Reset agent state to initial values
             self.cash = 1.0  # Normalized initial cash (relative to portfolio value)
             self.position = np.zeros(self.action_dim, dtype=np.float32)  # Zero positions (no holdings)
@@ -223,7 +229,7 @@ class StockTradingEnv(gym.Env):
             info = {'Environment Type': self.env_type,  # Train/valid/test
                     'Episode Index': self.episode_idx,  # Selected episode
                     'Episode Length': self.terminal_step + 1,  # Full length including window
-                    'Trading Steps': available_steps,
+                    'Trading Steps': available_trading_decisions,
                     'Cash': self.cash,
                     'Position': self.position,
                     'Total Asset': self.total_asset,
@@ -328,6 +334,19 @@ class StockTradingEnv(gym.Env):
             actions = np.clip(actions, -1, 1).astype(np.float32)
             # Log input actions for debugging
             logging.info(f"STE Module - Env Step - Input actions shape: {actions.shape}")
+            
+            # Check if reaching terminal step
+            if self.current_step >= self.terminal_step:
+                done = True
+                truncated = False
+                reward = 0.0
+                info = {
+                    'Done': done,
+                    'Truncated': truncated,
+                    'Reward': reward,
+                    'Total Asset': self.total_asset
+                }
+                return self._get_states(), reward, done, truncated, info
 
             # Compute the index of current step in targets
             target_step_idx = self.current_step - self.window_size

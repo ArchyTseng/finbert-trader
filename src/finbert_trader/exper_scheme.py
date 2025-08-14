@@ -112,8 +112,12 @@ class ExperimentScheme:
             'window_size': 50,  # Smaller window for faster processing
             'window_factor': 2,
             'window_extend': 50,
+            'smooth_window_size': self.config.smooth_window_size,
             'filter_ind': self.filter_ind,
             'ind_mode': 'long',
+            'force_process_news': self.config.force_process_news,
+            'force_fuse_data': self.config.force_fuse_data,
+            'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
             'use_senti_factor': False,
             'use_risk_factor': False,
             'use_senti_features': False,
@@ -184,8 +188,12 @@ class ExperimentScheme:
             'window_size': 50,  # Smaller window for faster processing
             'window_factor': 2,
             'window_extend': 50,
+            'smooth_window_size': self.config.smooth_window_size,
             'filter_ind': self.filter_ind,
             'ind_mode': self.config.ind_mode,
+            'force_process_news': self.config.force_process_news,
+            'force_fuse_data': self.config.force_fuse_data,
+            'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
             'use_senti_factor': True,
             'use_risk_factor': True,
             'use_senti_features': True,
@@ -257,8 +265,12 @@ class ExperimentScheme:
             'window_size': 50,  # Smaller window for faster processing
             'window_factor': 2,
             'window_extend': 50,
+            'smooth_window_size': self.config.smooth_window_size,
             'filter_ind': self.filter_ind,
             'ind_mode': self.config.ind_mode,
+            'force_process_news': self.config.force_process_news,
+            'force_fuse_data': self.config.force_fuse_data,
+            'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
             'use_senti_factor': True,
             'use_risk_factor': True,
             'use_senti_features': True,
@@ -339,7 +351,11 @@ class ExperimentScheme:
                 'rl_algorithm': ['PPO', 'CPPO', 'A2C']  # All algorithms
             },
             'window_size': 50,
+            'smooth_window_size': self.config.smooth_window_size,
             'filter_ind': self.filter_ind,
+            'force_process_news': self.config.force_process_news,
+            'force_fuse_data': self.config.force_fuse_data,
+            'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
             'RAW_DATA_DIR': self.raw_data_dir,
             'PROCESSED_NEWS_DIR': self.processed_news_dir,
             'FUSED_DATA_DIR': self.fused_data_dir,
@@ -401,7 +417,11 @@ class ExperimentScheme:
                 'rl_algorithm': ['PPO', 'CPPO']  # Focus on top performers
             },
             'window_size': 50,
+            'smooth_window_size': self.config.smooth_window_size,
             'filter_ind': self.filter_ind,
+            'force_process_news': self.config.force_process_news,
+            'force_fuse_data': self.config.force_fuse_data,
+            'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
             'use_senti_factor': True,
             'use_risk_factor': True,
             'use_senti_features': True,
@@ -490,7 +510,11 @@ class ExperimentScheme:
                 'rl_algorithm': ['PPO', 'CPPO']  # Production algorithms
             },
             'window_size': 50,
+            'smooth_window_size': self.config.smooth_window_size,
             'filter_ind': self.filter_ind,
+            'force_process_news': self.config.force_process_news,
+            'force_fuse_data': self.config.force_fuse_data,
+            'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
             'use_senti_factor': True,
             'use_risk_factor': True,
             'use_senti_features': True,

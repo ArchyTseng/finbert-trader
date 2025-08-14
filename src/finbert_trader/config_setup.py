@@ -145,10 +145,13 @@ class ConfigSetup:
 
         self.save_npz = True    # Control saveing .npz file in FeatureEngineer
         self.load_npz = False   # Control loading .npz file in FeatureEngineer
-
-        self.force_normalize = True # Control normalize_features function
+        
+        self.force_process_news = False # Control force processing news chunks in process_news_chunks function
+        self.force_fuse_data = False    # Control force computing senti/risk score and merge_features in generate_experiment_data function
+        self.force_normalize_features = True # Control normalize_features function
         self.filter_ind = []     # Control normalize_features function, fitered target indicators
         
+        self.fused_cache_path = None # Update fused cache path dynamiclly
         self.news_cache_path = None # Update news cache path dynamiclly
 
         self._features_initialized = self.load_or_init_features()   # Update Trur / False dynamiclly

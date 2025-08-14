@@ -109,15 +109,19 @@ class FeatureEngineer:
 
         self.smooth_window = getattr(self.config, 'smooth_window_size', 5)
 
-        self.force_normalize = getattr(self.config, 'force_normalize', True)
+        self.force_process_news = getattr(self.config, 'force_process_news', False)
+        self.force_fuse_data = getattr(self.config, 'force_fuse_data', False)
+        self.force_normalize_features = getattr(self.config, 'force_normalize_features', True)
         self.filter_ind = getattr(self.config, 'filter_ind', [])
 
         self.use_symbol_name = getattr(self.config, 'use_symbol_name', True)  # Flag to use symbol name in cache file)
 
+        self.fused_data_dir = getattr(self.config, 'FUSED_DATA_DIR', 'fused_data_cache')    # Config for saving fused_df after merge_features
+        os.makedirs(self.fused_data_dir, exist_ok=True)
         self.processed_news_dir = getattr(self.config, 'PROCESSED_NEWS_DIR', 'processed_news_cache')
         os.makedirs(self.processed_news_dir, exist_ok=True)
 
-    def process_news_chunks(self, news_chunks_gen, force_process=False):
+    def process_news_chunks(self, news_chunks_gen):
         """
         Introduction
         ------------
@@ -141,40 +145,43 @@ class FeatureEngineer:
         - Aggregates via pd.concat; logs row count for monitoring.
         - Empty return maintains column structure for downstream compatibility.
         """
-        processed_news_list = os.listdir(self.processed_news_dir)
-        if processed_news_list:
+        processed_news_list = os.listdir(self.fused_data_dir)
+        if len(processed_news_list) > 0 and not self.force_process_news:
             logging.info(f"FE Module - _news_chunks - Exist {len(processed_news_list)} processed news cache : {processed_news_list}")
             path_suffix = self._generate_path_suffix(extension='.csv')
+            
+            # Check cache file
             for filename in processed_news_list:
                 if filename.endswith(path_suffix):
-                    self.config.news_cache_path = os.path.join(self.processed_news_dir, filename)
+                    self.config.news_cache_path = os.path.join(self.fused_data_dir, filename)
                     logging.info(f"FE Module - _news_chunks - Target cache path : {self.config.news_cache_path}")
-            if not force_process and self.config.news_cache_path:
-                logging.info(f"FE Module - _news_chunks - Load news_df for {self.config.symbols}")
-                news_df = pd.read_csv(self.config.news_cache_path, parse_dates=['Date'])
-                logging.info(f"FE Module - _news_chunks - Loaded news_df: {len(news_df)} rows")
-                return news_df
+                    
+                    # Load cache
+                    logging.info(f"FE Module - _news_chunks - Load news_df for {self.config.symbols}")
+                    news_df = pd.read_csv(self.config.news_cache_path, parse_dates=['Date'])
+                    logging.info(f"FE Module - _news_chunks - Loaded news_df: {len(news_df)} rows")
+                    return news_df
                 
-        else:
-            logging.info("FE Module - _news_chunks - No symbols or cache_path provided, processing all news chunks")
-            processed_chunks = []  # List to collect cleaned chunks for aggregation
-            for chunk in news_chunks_gen:
-                # Iterate over generator chunks to process streaming data efficiently
-                if chunk.empty:
-                    continue  # Skip empty chunks to avoid unnecessary processing
-                cleaned_chunk = self.news_engineer.clean_news_data(chunk)   # Drop useless columns and clean text for each column
-                # filtered_chunk = self.news_engineer.filter_random_news(cleaned_chunk)   # Filter one random news for each symbol per day (commented out; optional for reducing duplicates)
-                if not cleaned_chunk.empty:
-                    processed_chunks.append(cleaned_chunk)  # Append only non-empty cleaned chunks
-            if processed_chunks:
-                aggregated_df = pd.concat(processed_chunks, ignore_index=True)  # Concatenate all chunks into a single DF, reset index for clean aggregation
-                logging.info(f"FE Module - _news_chunks - Aggregated cleaned news: {len(aggregated_df)} rows")  # Log aggregated row count for data volume tracking
-                processed_path = self.save_target_data_csv(aggregated_df, prefix="Processed_", save_path=self.processed_news_dir)
-                self.config.processed_cache_path = processed_path
-                logging.info(f"FE Module - _news_chunks - Saved processed news to {processed_path}")
-                return aggregated_df  # Return the full aggregated DataFrame
-            logging.info("FE Module - _news_chunks - No valid news chunks, returning empty DataFrame")  # Log if no data processed
-            return pd.DataFrame(columns=['Date', 'Symbol', 'Article_title', 'Full_Text', 'Lsa_summary', 'Luhn_summary', 'Textrank_summary', 'Lexrank_summary']) # Match original columns in FNSPID dataset for consistency
+        # If no such cache, reprocess
+        logging.info("FE Module - _news_chunks - No symbols or cache_path provided, processing all news chunks")
+        processed_chunks = []  # List to collect cleaned chunks for aggregation
+        for chunk in news_chunks_gen:
+            # Iterate over generator chunks to process streaming data efficiently
+            if chunk.empty:
+                continue  # Skip empty chunks to avoid unnecessary processing
+            cleaned_chunk = self.news_engineer.clean_news_data(chunk)   # Drop useless columns and clean text for each column
+            # filtered_chunk = self.news_engineer.filter_random_news(cleaned_chunk)   # Filter one random news for each symbol per day (commented out; optional for reducing duplicates)
+            if not cleaned_chunk.empty:
+                processed_chunks.append(cleaned_chunk)  # Append only non-empty cleaned chunks
+        if processed_chunks:
+            aggregated_df = pd.concat(processed_chunks, ignore_index=True)  # Concatenate all chunks into a single DF, reset index for clean aggregation
+            logging.info(f"FE Module - _news_chunks - Aggregated cleaned news: {len(aggregated_df)} rows")  # Log aggregated row count for data volume tracking
+            processed_path = self.save_target_data_csv(aggregated_df, prefix="Processed", save_path=self.fused_data_dir)
+            self.config.processed_cache_path = processed_path
+            logging.info(f"FE Module - _news_chunks - Saved processed news to {processed_path}")
+            return aggregated_df  # Return the full aggregated DataFrame
+        logging.info("FE Module - _news_chunks - No valid news chunks, returning empty DataFrame")  # Log if no data processed
+        return pd.DataFrame(columns=['Date', 'Symbol', 'Article_title', 'Full_Text', 'Lsa_summary', 'Luhn_summary', 'Textrank_summary', 'Lexrank_summary']) # Match original columns in FNSPID dataset for consistency
 
     def _fill_score_columns(self, df, prefix, fill_value=3.0):
         """
@@ -254,7 +261,7 @@ class FeatureEngineer:
                     logging.info(f"FE Module - _after_merge - Fillna {nulls_before - nulls_after} NaNs with value 0.0 in {col}")
         return df  # Return the filled DataFrame
 
-    def merge_features(self, stock_data_dict, sentiment_df, risk_df=None):
+    def merge_features(self, stock_data_dict, sentiment_df, risk_df=None, mode=None):
         """
         Introduction
         ------------
@@ -301,8 +308,8 @@ class FeatureEngineer:
         if not sentiment_df.empty:
             # Pivot sentiment to wide format with symbol prefixes for merging
             sentiment_df = sentiment_df.pivot(index='Date',
-                                              columns='Symbol',
-                                              values='sentiment_score').add_prefix('sentiment_score_')
+                                            columns='Symbol',
+                                            values='sentiment_score').add_prefix('sentiment_score_')
             all_stock_df = pd.merge(all_stock_df, sentiment_df, left_on='Date', right_index=True, how='left')  # Left merge to keep all stock dates
             # Fill NaN value after merge
             all_stock_df = self._fill_score_columns(all_stock_df, 'sentiment_score_')  # Custom fill for sentiment columns
@@ -337,8 +344,10 @@ class FeatureEngineer:
         logging.info(f"FE Module - merge_features - Fused features: {fused_df.shape} rows, with risk_mode={self.risk_mode}")  # Log final fused shape and mode
 
         fused_df = self._fill_nan_after_merge(fused_df)  # Final NaN fill after all operations
-
         logging.info(f"FE Module - merge_features - Prepared fused_df , Columns : {fused_df.columns.tolist()}")
+        # Save fused_df
+        self.config.fused_cache_path = self.save_target_data_csv(fused_df,prefix=f"{mode}_Fused_Data" if mode else '',save_path=self.fused_data_dir)
+        logging.info(f"FE Module - generate_experiment_data - Saved fused_df to {self.config.fused_cache_path}")
         return fused_df  # Return the fully fused and cleaned DataFrame
 
     def _generate_scaler_path(self, base_dir, group, mode):
@@ -435,13 +444,13 @@ class FeatureEngineer:
 
         if fit:
             # Fit mode: Compute or load means_stds
-            if scaler_path and os.path.exists(scaler_path) and self.force_normalize:
+            if scaler_path and os.path.exists(scaler_path) and self.force_normalize_features:
                 logging.info(f"FE Module - normalize_features - Removed old scaler at {scaler_path} to recompute.")
                 os.remove(scaler_path)  # Remove scaler cache and recompute
             if scaler_path and os.path.exists(scaler_path):
                 logging.info(f"FE Module - normalize_features - Loaded existing scaler from {scaler_path} (fit mode)")
                 means_stds = joblib.load(scaler_path)   # Load scaler if path provided
-            if not means_stds or self.force_normalize:
+            if not means_stds or self.force_normalize_features:
                 means_stds = {}  # Initialize dict for column-wise means and stds
                 for col in filter_normalize_cols:
                     logging.info(f"FE Module - normalize_features - Normalizing column for {data_type} data: {col}")
@@ -816,7 +825,7 @@ class FeatureEngineer:
         try:
             path_suffix = self._generate_path_suffix(extension=extension)
             if path_suffix:
-                file_path = os.path.join(save_path if save_path else self.processed_news_dir, f"{prefix}{path_suffix}")
+                file_path = os.path.join(save_path if save_path else self.processed_news_dir, f"{prefix}_{path_suffix}")
                 target_df.to_csv(file_path, index=False)
                 logging.info(f"FE Module - save_fused_data_csv - Successfully saved fused data to {file_path}")
                 return file_path
@@ -1123,9 +1132,9 @@ class FeatureEngineer:
         - Supports risk score injection and FinBERT sentiment adjustment.
         """
         os.makedirs(self.exper_data_path, exist_ok=True)
-        path_suffix = self._generate_path_suffix()
+        fused_data_path_suffix = self._generate_path_suffix()
         exper_data_list = os.listdir(self.exper_data_path)
-        if exper_data_list and exper_data_list[0].endswith(path_suffix) and self.load_npz:
+        if exper_data_list and exper_data_list[0].endswith(fused_data_path_suffix) and self.load_npz:
             # Check if experiment data directory is not empty; if so, load existing data to avoid regeneration
             logging.info("=========== Start to load experiment data dict ===========")
             logging.info(f"FE Module - generate_experiment_data - Loading exper_data_dict from {self.exper_data_path}")
@@ -1143,7 +1152,8 @@ class FeatureEngineer:
             }   # Define news column configurations for different modes
             
             # Flag to control feature analysis execution (execute only once)
-            feature_analysis_completed = False
+            pre_feature_analysis_completed = False
+            pro_feature_analysis_completed = False
             
             if single_mode:
                 # Single mode: Run only one specific mode for testing
@@ -1182,33 +1192,58 @@ class FeatureEngineer:
                     model_type = 'PPO'  # Default for indicator/news group
                 logging.info(f"FE Module - generate_experiment_data - Mode {mode} in group {group}, model_type={model_type}, news_cols={self.news_engineer.text_cols}")    # Log configuration for this mode
 
-                # Compute sentiment
-                if group == 'rl_algorithm' or mode != 'benchmark':
-                    sentiment_score_df = self.news_engineer.compute_sentiment_risk_score(cleaned_news.copy(), senti_mode='sentiment')    # Compute sentiment scores using FinBERT or similar
-                    sentiment_score_df = self._check_and_adjust_sentiment(sentiment_score_df, mode, col='sentiment_score')  # Adjust sentiment if needed (e.g., FinBERT adjustment)
-                else:
-                    sentiment_score_df = pd.DataFrame(columns=['Date', 'Symbol', 'sentiment_score'])    # Empty DF for benchmark mode
-                    logging.info("FE Module - generate_experiment_data - Benchmark mode: no sentiment")    # Log skipping sentiment for benchmark
+                logging.info("FE Module - generate_experiment_data - Trying to load fused_df cache")
+                fused_data_list = os.listdir(self.fused_data_dir)
 
-                # Compute risk if enabled
-                risk_score_df = None
-                if self.risk_mode and (group == 'rl_algorithm' or mode != 'benchmark'):
-                    risk_score_df = self.news_engineer.compute_sentiment_risk_score(cleaned_news.copy(), senti_mode='risk')  # Compute risk scores if risk mode is active
-                    risk_score_df = self._check_and_adjust_sentiment(risk_score_df, mode, col='risk_score') # Adjust risk scores similarly
+                # Trying to load cache fused_df
+                fused_df = None
+                if len(fused_data_list) > 0 and not self.force_fuse_data:
+                    logging.info(f"FE Module - generate_experiment_data - Exist {len(fused_data_list)} processed news cache : {fused_data_list}")
+                    fused_data_path_suffix = f"{mode}_Fused_Data_{self._generate_path_suffix(extension='.csv')}"
+                    
+                    # Check target cache
+                    for filename in fused_data_list:
+                        if filename.endswith(fused_data_path_suffix):
+                            self.config.fused_cache_path = os.path.join(self.fused_data_dir, filename)
+                            logging.info(f"FE Module - generate_experiment_data - Target cache path : {self.config.fused_cache_path}")
+                            
+                            # Load cache
+                            logging.info(f"FE Module - generate_experiment_data - Load fused_df for {self.config.symbols}")
+                            fused_df = pd.read_csv(self.config.fused_cache_path, parse_dates=['Date'])
+                            logging.info(f"FE Module - generate_experiment_data - Loaded fused_df: {len(fused_df)} rows")
+                            break
 
-                # Merge features and split train/valid/test data by date
-                fused_df = self.merge_features(stock_data_dict, sentiment_score_df, risk_score_df)    # Fuse stock data with sentiment/risk features
-                if fused_df.empty:
-                    raise ValueError(f"Fused DataFrame empty for mode {mode}")  # Error if fusion results in empty DF
+                # If no cache fused_df, recompute
+                if fused_df is None or fused_df.empty:
+                    logging.info("FE Module - generate_experiment_data - Computing senti/risk score features and merge all features")
+                    logging.info("FE Module - generate_experiment_data - No symbols or cache_path provided, computing senti/risk score features and merge all features")
+                    # Compute sentiment
+                    if group == 'rl_algorithm' or mode != 'benchmark':
+                        sentiment_score_df = self.news_engineer.compute_sentiment_risk_score(cleaned_news.copy(), senti_mode='sentiment')    # Compute sentiment scores using FinBERT or similar
+                        sentiment_score_df = self._check_and_adjust_sentiment(sentiment_score_df, mode, col='sentiment_score')  # Adjust sentiment if needed (e.g., FinBERT adjustment)
+                        # Compute risk if enabled
+                        if self.risk_mode:
+                            risk_score_df = self.news_engineer.compute_sentiment_risk_score(cleaned_news.copy(), senti_mode='risk')  # Compute risk scores if risk mode is active
+                            risk_score_df = self._check_and_adjust_sentiment(risk_score_df, mode, col='risk_score') # Adjust risk scores similarly
+                    else:
+                        sentiment_score_df = pd.DataFrame(columns=['Date', 'Symbol', 'sentiment_score'])    # Empty DF for benchmark mode
+                        if self.risk_mode:
+                            risk_score_df = pd.DataFrame(columns=['Date', 'Symbol', 'risk_score'])    # Empty DF for benchmark mode
+                        logging.info("FE Module - generate_experiment_data - Benchmark mode: no sentiment")    # Log skipping sentiment for benchmark
+
+                    # Merge features and split train/valid/test data by date
+                    fused_df = self.merge_features(stock_data_dict, sentiment_score_df, risk_score_df, mode=mode)    # Fuse stock data with sentiment/risk features
+                    if fused_df.empty:
+                        raise ValueError(f"Fused DataFrame empty for mode {mode}")  # Error if fusion results in empty DF
                 
                 # Generate pre-normalization feature analysis (only once)
-                if not feature_analysis_completed:
+                if not pre_feature_analysis_completed:
                     logging.info(f"FE Module - generate_experiment_data - Generating pre-normalization feature analysis for mode {mode}")
                     pre_normalize_results = generate_standard_feature_visualizations(
                         fused_df, self.config, prefix="pre_normalization"
                     )
                     logging.info(f"FE Module - generate_experiment_data - Successfully generated pre-normalization visualization results")
-                    feature_analysis_completed = True  # Mark as completed to avoid repetition
+                    pre_feature_analysis_completed = True  # Mark as completed to avoid repetition
 
                 # Time split data
                 train_df = fused_df[(fused_df['Date'] >= pd.to_datetime(self.train_start_date)) & (fused_df['Date'] <= pd.to_datetime(self.train_end_date))]
@@ -1231,21 +1266,23 @@ class FeatureEngineer:
                 test_df, _ = self.normalize_features(test_df, fit=False, means_stds=means_stds, data_type='test')   # Load cache scaler if existed
                 logging.info(f"FE Module - generate_experiment_data - Normalized features for mode {mode}")
 
-                # Generate post-normalization feature analysis for each dataset split
-                logging.info(f"FE Module - generate_experiment_data - Generating post-normalization feature analysis for mode {mode}")
-                # Train set analysis
-                train_analysis_results = generate_standard_feature_visualizations(
-                    train_df, self.config, prefix=f"post_normalization_train_{mode}"
-                )
-                # Valid set analysis
-                valid_analysis_results = generate_standard_feature_visualizations(
-                    valid_df, self.config, prefix=f"post_normalization_valid_{mode}"
-                )
-                # Test set analysis
-                test_analysis_results = generate_standard_feature_visualizations(
-                    test_df, self.config, prefix=f"post_normalization_test_{mode}"
-                )
-                logging.info(f"FE Module - generate_experiment_data - Successfully generated post-normalization visualization results for mode {mode}")
+                if not pro_feature_analysis_completed:
+                    # Generate post-normalization feature analysis for each dataset split
+                    logging.info(f"FE Module - generate_experiment_data - Generating post-normalization feature analysis")
+                    # Train set analysis
+                    train_analysis_results = generate_standard_feature_visualizations(
+                        train_df, self.config, prefix=f"post_normalization_train"
+                    )
+                    # Valid set analysis
+                    valid_analysis_results = generate_standard_feature_visualizations(
+                        valid_df, self.config, prefix=f"post_normalization_valid"
+                    )
+                    # Test set analysis
+                    test_analysis_results = generate_standard_feature_visualizations(
+                        test_df, self.config, prefix=f"post_normalization_test"
+                    )
+                    logging.info(f"FE Module - generate_experiment_data - Successfully generated post-normalization visualization results")
+                    pro_feature_analysis_completed = True   # Mark as completed to avoid repetition
 
                 # Prepare window for RL observation
                 train_rl_data = self.prepare_rl_data(train_df, data_type='train')  # Prepare RL-compatible data (e.g., windowed observations)
