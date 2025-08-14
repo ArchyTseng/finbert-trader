@@ -161,7 +161,6 @@ class NewsFeatureEngineer:
         - Clamps to [1.0, 5.0]; raises ValueError for invalid mode.
         - Inference with no_grad for efficiency; moves to CPU numpy for return.
         """
-        logging.info(f"NF Module - sentiment_batch_scores - Computing scores for {len(texts)} texts")  # Log input size for auditing
         inputs = self.tokenizer(texts, padding=True, truncation=True, return_tensors="pt", max_length=512)  # Tokenize batch texts with padding and truncation for model input
         # Compute without gradient
         with torch.no_grad():
@@ -173,7 +172,7 @@ class NewsFeatureEngineer:
         pos_idx = label2id['positive']  # Index for positive class
         neg_idx = label2id['negative']  # Index for negative class
         neu_idx = label2id['neutral']  # Index for neutral class
-        logging.info(f"NF Module - sentiment_batch_scores - pos_idx: {pos_idx}, neg_idx: {neg_idx}, neu_idx: {neu_idx}")  # Log indices for auditing
+        # logging.info(f"NF Module - sentiment_batch_scores - pos_idx: {pos_idx}, neg_idx: {neg_idx}, neu_idx: {neu_idx}")  # Log indices for auditing
         probs = torch.nn.functional.softmax(outputs.logits, dim=-1)  # Apply softmax to logits for probabilities
         if senti_mode and senti_mode == 'sentiment':
             # Weighted score: pos*5 + neu*3 + neg*1 (continuous in 1-5) for sentiment mode (positive favored)
@@ -251,7 +250,8 @@ class NewsFeatureEngineer:
             avail_cols = self.text_cols  # Use all specified if present
         
         # Combine content in self.text_cols , default : Article_Title and Textrank_summary
-        news_df['combined_text'] = news_df[avail_cols].apply(lambda row: ' '.join(row).strip(), axis=1)  # Concat text columns into single string per row
+        news_df[avail_cols] = news_df[avail_cols].fillna('')
+        news_df['combined_text'] = news_df[avail_cols].apply(lambda row: ' '.join(str(x).strip() for x in row).strip(), axis=1)  # Concat text columns into single string per row
         news_df = news_df[news_df['combined_text'] != '']  # Filter out rows with empty combined text to avoid invalid inputs
 
         if news_df.empty:
@@ -259,13 +259,30 @@ class NewsFeatureEngineer:
             logging.info(f"NF Module - compute_sentiment_risk_score - Empty news_df, returning DataFrame with 'Date', 'Symbol', '{senti_col}'")
             return pd.DataFrame(columns=['Date', 'Symbol', senti_col])
         
-        # Calculate sentiment/risk score
-        sentiment_scores = []  # List to collect scores from batches
-        for i in range(0, len(news_df), self.batch_size):
-            # Batch loop: Process in chunks to manage memory and efficiency
-            batch_texts = news_df['combined_text'].iloc[i:i+self.batch_size].tolist()  # Extract batch texts
-            batch_scores = self.sentiment_batch_scores(batch_texts, senti_mode)  # Compute scores for batch
-            sentiment_scores.extend(batch_scores)   # Add each element in to target list
+        # Set local counter
+        total_rows = len(news_df)
+        logging.info(f"NF Module - compute_sentiment_risk_score - Starting {senti_mode} sentiment analysis for {total_rows} rows")
+        # Compute total batch size for processing
+        num_batches = (total_rows + self.batch_size - 1) // self.batch_size
+        
+        sentiment_scores = []
+        for batch_idx, i in enumerate(range(0, total_rows, self.batch_size)):
+            # Compute current batch index
+            batch_end = min(i + self.batch_size, total_rows)
+            current_batch_size = batch_end - i
+            
+            # Compute senti/risk score per batch
+            batch_texts = news_df['combined_text'].iloc[i:batch_end].tolist()
+            batch_scores = self.sentiment_batch_scores(batch_texts, senti_mode)
+            sentiment_scores.extend(batch_scores)
+            
+            # Compute progress and log
+            processed_rows = batch_end
+            remaining_rows = total_rows - processed_rows
+            progress_percentage = processed_rows / total_rows
+            
+            # Log details
+            logging.info(f"NF Module - {senti_mode} processing: Batch {batch_idx + 1}/{num_batches} (size: {current_batch_size}) ({progress_percentage:.1%}) - {processed_rows}/{total_rows} rows, {remaining_rows} remaining")
         
         news_df[senti_col] = sentiment_scores  # Assign computed scores to DF
 

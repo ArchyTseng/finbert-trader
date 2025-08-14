@@ -31,7 +31,7 @@ class VisualizeFeatures:
     Class for generating visualizations for input features like prices, indicators, sentiment, and risk scores.
     """
 
-    def __init__(self, config):
+    def __init__(self, config, prefix: str = "", suffix: str = ""):
         """
         Initialize VisualizeFeatures.
 
@@ -40,17 +40,39 @@ class VisualizeFeatures:
         config : object
             Configuration object (e.g., ConfigTrading or ConfigSetup) containing paths and settings.
             Expected attributes: PLOT_CACHE_DIR, symbols.
+        prefix : str, optional
+            Prefix to add to generated filenames (e.g., "pre_normalization", "post_normalization_train").
+        suffix : str, optional
+            Suffix to add to generated filenames.
         """
         self.config = config
+        self.prefix = prefix
+        self.suffix = suffix
         self.plot_cache_dir = getattr(self.config, 'PLOT_CACHE_DIR', 'plot_cache')
         os.makedirs(self.plot_cache_dir, exist_ok=True)
         self.symbols = getattr(self.config, 'symbols', [])
         logging.info(f"VF Module - Initialized VisualizeFeatures with plot cache: {self.plot_cache_dir}")
 
+        self.use_symbol_name = getattr(self.config, 'use_symbol_name', True)
+
     def _generate_filename(self, base_name: str, extension: str = ".png") -> str:
-        """Generates a timestamped filename."""
+        """Generates a timestamped filename with optional prefix/suffix."""
+        # Build filename components
+        components = []
+        if self.prefix:
+            components.append(self.prefix)
+        components.append(base_name)
+        if self.use_symbol_name:
+            symbols_name = '_'.join(self.symbols if self.symbols else "all_symbols")
+            components.append(symbols_name)
+        if self.suffix:
+            components.append(self.suffix)
+        
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        return f"{base_name}_{timestamp}{extension}"
+        components.append(timestamp)
+        
+        filename = "_".join(components) + extension
+        return filename
 
     def _save_plot(self, fig: plt.Figure, filename: str) -> str:
         """Saves a matplotlib figure."""
@@ -67,7 +89,7 @@ class VisualizeFeatures:
 
     def plot_feature_timeseries(self, fused_df: pd.DataFrame, symbols: Optional[List[str]] = None,
                                 features_to_plot: Optional[Dict[str, int]] = None,
-                                figsize: Tuple[int, int] = (15, 10)) -> Dict[str, str]:
+                                figsize: Tuple[int, int] = (25, 10)) -> Dict[str, str]:
         """
         Plots time series for key features (prices, indicators, sentiment, risk).
 
@@ -105,14 +127,14 @@ class VisualizeFeatures:
         elif not isinstance(plot_df.index, pd.DatetimeIndex):
             logging.warning("VF Module - fused_df index is not DatetimeIndex and no 'Date' column found. Plotting might be incorrect.")
 
-        default_features = {'price': 1, 'indicator': 3, 'sentiment': 1, 'risk': 1}
+        default_features = {'price': 1, 'indicator': len(self.config.indicators), 'sentiment': 1, 'risk': 1}
         features_to_plot = features_to_plot or default_features
         generated_plots = {}
 
         try:
             # --- 1. Price Time Series ---
             if features_to_plot.get('price', 0) > 0:
-                price_cols = [col for col in plot_df.columns if "Adj_Close" in col and any(sym in col for sym in symbols)]
+                price_cols = [col for col in plot_df.columns if "Adj_Close" in col and any(symbol in col for symbol in symbols)]
                 if price_cols:
                     fig, ax = plt.subplots(figsize=figsize)
                     for col in price_cols:
@@ -243,7 +265,7 @@ class VisualizeFeatures:
 
         try:
              # --- 1. Price Distributions ---
-            price_cols = [col for col in plot_df.columns if "Adj_Close" in col and any(sym in col for sym in symbols)]
+            price_cols = [col for col in plot_df.columns if "Adj_Close" in col and any(symbol in col for symbol in symbols)]
             if price_cols:
                 fig, ax = plt.subplots(figsize=figsize)
                 # Melt for easier plotting with seaborn
@@ -403,7 +425,7 @@ class VisualizeFeatures:
 
 # --- Utility Functions (Optional, for direct script usage) ---
 
-def generate_standard_feature_visualizations(fused_df: pd.DataFrame, config: Any) -> Dict[str, Any]:
+def generate_standard_feature_visualizations(fused_df: pd.DataFrame, config: Any, prefix: str = "", suffix: str = "") -> Dict[str, Any]:
     """
     Generates a standard set of feature visualizations.
 
@@ -413,6 +435,10 @@ def generate_standard_feature_visualizations(fused_df: pd.DataFrame, config: Any
         The fused feature DataFrame.
     config : Any
         Configuration object.
+    prefix : str, optional
+        Prefix to add to generated filenames (e.g., "pre_normalization", "post_normalization_train").
+    suffix : str, optional
+        Suffix to add to generated filenames.
 
     Returns
     -------
@@ -421,7 +447,7 @@ def generate_standard_feature_visualizations(fused_df: pd.DataFrame, config: Any
         Keys: 'timeseries_plots', 'distribution_plots', 'correlation_plot'
     """
     try:
-        visualizer = VisualizeFeatures(config)
+        visualizer = VisualizeFeatures(config, prefix=prefix, suffix=suffix)
 
         ts_plots = visualizer.plot_feature_timeseries(fused_df)
         dist_plots = visualizer.plot_feature_distributions(fused_df)
@@ -432,7 +458,7 @@ def generate_standard_feature_visualizations(fused_df: pd.DataFrame, config: Any
             'distribution_plots': dist_plots,
             'correlation_plot': corr_plot_path
         }
-        logging.info("VF Module - Standard feature visualizations generated successfully.")
+        logging.info(f"VF Module - Standard feature visualizations generated successfully with prefix='{prefix}', suffix='{suffix}'.")
         return results
 
     except Exception as e:

@@ -86,7 +86,6 @@ from .trading_backtest import TradingBacktest
 from .exper_tracker import ExperimentTracker
 from .trading_analysis import analyze_trade_history
 from .visualize.visualize_backtest import VisualizeBacktest
-from .visualize.visualize_features import VisualizeFeatures, generate_standard_feature_visualizations
 # Logging setup
 logging.basicConfig(
     level=logging.INFO,

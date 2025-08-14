@@ -34,6 +34,7 @@ finbert_trader_backup_*/
 data_cache/
 raw_data_cache/
 exper_data_cache/
+processed_news_cache/
 
 # scaler_cache
 scaler_cache/
@@ -49,6 +50,7 @@ exper_cache/
 
 # plot_cache
 plot_cache/
+plot_news_cache/
 
 # config_cache
 config_cache/

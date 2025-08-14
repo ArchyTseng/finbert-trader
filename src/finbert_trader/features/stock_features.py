@@ -40,7 +40,7 @@ class StockFeatureEngineer:
         self.ind_mode = config.ind_mode  # Current indicator mode for selective computation
         self.indicators = config.indicators # Access from config  # List of indicators to generate features for
 
-    def compute_features(self, stock_df, symbol, ind_mode=None):
+    def compute_features(self, stock_df, symbol):
         """
         Introduction
         ------------
@@ -77,11 +77,7 @@ class StockFeatureEngineer:
             raise ValueError(f"Stock DataFrame missing 'Adj_Close_{symbol}' column")  # Ensure required close column exists
         
         # Map mode to time periods
-        if ind_mode :
-            logging.info(f"SF Module - compute_features - Indicator mode: {ind_mode}")
-            tp = self.indicators_mode.get(ind_mode, 10)  # Default to short if unknown; retrieve timeperiod from mode
-        else:
-            tp = self.timeperiods  # Use full timeperiods list if no mode specified       
+        tp = self.timeperiods  # Use full timeperiods list if no mode specified       
         
         indicator_funcs = {
             'macd': lambda df: talib.MACD(df[f'Adj_Close_{symbol}'])[0],  # MACD line
@@ -90,8 +86,8 @@ class StockFeatureEngineer:
             f'rsi_{tp}': lambda df: talib.RSI(df[f'Adj_Close_{symbol}'], timeperiod=tp),  # RSI with timeperiod
             f'cci_{tp}': lambda df: talib.CCI(df[f'Adj_High_{symbol}'], df[f'Adj_Low_{symbol}'], df[f'Adj_Close_{symbol}'], timeperiod=tp),  # CCI with high/low/close
             f'dx_{tp}': lambda df: talib.DX(df[f'Adj_High_{symbol}'], df[f'Adj_Low_{symbol}'], df[f'Adj_Close_{symbol}'], timeperiod=tp),  # DX (Directional Movement Index)
-            f'close_{tp}_sma': lambda df: talib.SMA(df[f'Adj_Close_{symbol}'], timeperiod=tp),  # SMA with tp
-            f'close_{tp * 2}_sma': lambda df: talib.SMA(df[f'Adj_Close_{symbol}'], timeperiod=tp * 2),  # SMA with double tp
+            f'close_sma_short_{tp}': lambda df: talib.SMA(df[f'Adj_Close_{symbol}'], timeperiod=tp),  # SMA with tp
+            f'close_sma_long_{tp * 2}': lambda df: talib.SMA(df[f'Adj_Close_{symbol}'], timeperiod=tp * 2),  # SMA with double tp
         }  # Dictionary of TA-Lib functions for each indicator
         
         for ind in self.indicators:

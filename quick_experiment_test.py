@@ -53,32 +53,40 @@ Step 1: Initialize Configuration
 Setup basic configuration for quick experiments
 """
 
+symbols = ['GILD', 'MU', 'QCOM']   # Selected by news data analysis
+
 # Set experiment configuration
 custom_setup_config = {
-    'symbols': ['GOOGL', 'AAPL', ''],  # Use few symbols
-    'start': '2020-01-01',
+    'symbols': symbols,
+    'start': '2018-01-01',
     'end': '2022-12-31',
-    'train_start_date': '2020-01-01',
-    'train_end_date': '2021-12-31',
-    'valid_start_date': '2022-01-01',
-    'valid_end_date': '2022-06-30',
-    'test_start_date': '2022-07-01',
+    'train_start_date': '2018-01-01',
+    'train_end_date': '2020-12-31',
+    'valid_start_date': '2021-01-01',
+    'valid_end_date': '2021-12-31',
+    'test_start_date': '2022-01-01',
     'test_end_date': '2022-12-31',
     'exper_mode': {
         'rl_algorithm': ['PPO']  # Test single algorithm
     },
     'ind_mode': 'long', # Set indicator time period
-    'window_size': 20,  # Initial small window size
-    'window_factor': 3,
+    'window_size': 25,  # Initial small window size
+    'window_factor': 2,
     'window_extend': 50,
     'save_npz': False,  # Disable saving for quick experiments
+    'force_normalize': True,    # Ensure normalize target columns
+    'filter_ind': ['boll_ub', 'boll_lb', 'close_sma'],
     # Cache path config
     'RAW_DATA_DIR': 'raw_data_cache',
+    'PROCESSED_NEWS_DIR': 'processed_news_cache',
+    'FUSED_DATA_DIR': 'fused_data_cache',
     'EXPER_DATA_DIR': 'exper_data_cache',
     'PLOT_CACHE_DIR': 'plot_cache',
+    'PLOT_NEWS_DIR': 'plot_news_cache',
     'RESULTS_CACHE_DIR': 'results_cache',
     'EXPERIMENT_CACHE_DIR': 'exper_cache',
-    'LOG_SAVE_DIR': 'logs'
+    'SCALER_CACHE_DIR': 'scaler_cache',
+    'LOG_SAVE_DIR': 'logs',
 }
 
 # Initial config_setup for experiment
@@ -98,9 +106,11 @@ experiment_scheme = ExperimentScheme(config_setup)
 
 print("Running Quick Experiment 1: Basic Parameter Validation")
 print("This will test basic pipeline functionality...")
+print(f"Experiment symbols: {experiment_scheme.symbols}")
+print(f"Filter indicators: {experiment_scheme.filter_ind}")
 
 # Run quick experiment 1
-quick_exper_1_results = experiment_scheme.quick_exper_1(['GOOGL', 'AAPL'])
+quick_exper_1_results = experiment_scheme.quick_exper_1()
 
 print("Quick Experiment 1 completed!")
 print(f"Results keys: {list(quick_exper_1_results.keys())}")

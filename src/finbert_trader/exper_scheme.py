@@ -41,13 +41,19 @@ class ExperimentScheme:
             Configuration setup instance containing all cache directory paths
         """
         self.config = config
+        self.symbols = self.config.symbols
+        self.filter_ind = self.config.filter_ind
         
         # Use unified cache directories from ConfigSetup
         self.raw_data_dir = getattr(config, 'RAW_DATA_DIR', 'raw_data_cache')
+        self.processed_news_dir = getattr(config, 'PROCESSED_NEWS_DIR', 'processed_news_cache')
+        self.fused_data_dir = getattr(config, 'FUSED_DATA_DIR', 'fused_data_cache')
         self.exper_data_dir = getattr(config, 'EXPER_DATA_DIR', 'exper_data_cache')
         self.plot_cache_dir = getattr(config, 'PLOT_CACHE_DIR', 'plot_cache')
+        self.plot_news_dir = getattr(config, 'PLOT_NEWS_DIR', 'plot_news_cache')
         self.results_cache_dir = getattr(config, 'RESULTS_CACHE_DIR', 'results_cache')
         self.experiment_cache_dir = getattr(config, 'EXPERIMENT_CACHE_DIR', 'exper_cache')
+        self.scaler_cache_dir = getattr(config, 'SCALER_CACHE_DIR', 'scaler_cache')
         self.log_dir = getattr(config, 'LOG_SAVE_DIR', 'logs')
         
         # Ensure all directories exist
@@ -89,25 +95,24 @@ class ExperimentScheme:
         """
         logging.info("ES Module - Running Quick Experiment 1: Basic Parameter Validation")
         
-        symbols = symbols or ['GOOGL', 'AAPL']
-        
         # Minimal configuration for quick validation
         setup_config = {
-            'symbols': symbols,
-            'start': '2020-01-01',
-            'end': '2022-12-31',
-            'train_start_date': '2020-01-01',
-            'train_end_date': '2021-12-31',
-            'valid_start_date': '2022-01-01',
-            'valid_end_date': '2022-06-30',
-            'test_start_date': '2022-07-01',
-            'test_end_date': '2022-12-31',
+            'symbols': self.symbols,
+            'start': self.config.start,
+            'end': self.config.end,
+            'train_start_date': self.config.train_start_date,
+            'train_end_date': self.config.train_end_date,
+            'valid_start_date': self.config.valid_start_date,
+            'valid_end_date': self.config.valid_end_date,
+            'test_start_date': self.config.test_start_date,
+            'test_end_date': self.config.test_end_date,
             'exper_mode': {
                 'rl_algorithm': ['PPO']  # Single algorithm for speed
             },
             'window_size': 50,  # Smaller window for faster processing
             'window_factor': 2,
             'window_extend': 50,
+            'filter_ind': self.filter_ind,
             'ind_mode': 'long',
             'use_senti_factor': False,
             'use_risk_factor': False,
@@ -117,10 +122,14 @@ class ExperimentScheme:
             'use_risk_threshold': False,
             'use_dynamic_infusion': False,
             'RAW_DATA_DIR': self.raw_data_dir,
+            'PROCESSED_NEWS_DIR': self.processed_news_dir,
+            'FUSED_DATA_DIR': self.fused_data_dir,
             'EXPER_DATA_DIR': self.exper_data_dir,
             'PLOT_CACHE_DIR': self.plot_cache_dir,
+            'PLOT_NEWS_DIR': self.plot_news_dir,
             'RESULTS_CACHE_DIR': self.results_cache_dir,
             'EXPERIMENT_CACHE_DIR': self.experiment_cache_dir,
+            'SCALER_CACHE_DIR': self.scaler_cache_dir,
             'LOG_SAVE_DIR': self.log_dir
         }
         
@@ -158,37 +167,41 @@ class ExperimentScheme:
         """
         logging.info("ES Module - Running Quick Experiment 2: Reward Function Optimization")
         
-        symbols = symbols or ['GOOGL', 'AAPL']
-        
+        # Minimal configuration for quick validation
         setup_config = {
-            'symbols': symbols,
-            'start': '2020-01-01',
-            'end': '2022-12-31',
-            'train_start_date': '2020-01-01',
-            'train_end_date': '2021-12-31',
-            'valid_start_date': '2022-01-01',
-            'valid_end_date': '2022-06-30',
-            'test_start_date': '2022-07-01',
-            'test_end_date': '2022-12-31',
+            'symbols': self.symbols,
+            'start': self.config.start,
+            'end': self.config.end,
+            'train_start_date': self.config.train_start_date,
+            'train_end_date': self.config.train_end_date,
+            'valid_start_date': self.config.valid_start_date,
+            'valid_end_date': self.config.valid_end_date,
+            'test_start_date': self.config.test_start_date,
+            'test_end_date': self.config.test_end_date,
             'exper_mode': {
-                'rl_algorithm': ['PPO']
+                'rl_algorithm': ['PPO']  # Single algorithm for speed
             },
-            'window_size': 50,
+            'window_size': 50,  # Smaller window for faster processing
             'window_factor': 2,
             'window_extend': 50,
-            'ind_mode': 'long',
+            'filter_ind': self.filter_ind,
+            'ind_mode': self.config.ind_mode,
             'use_senti_factor': True,
             'use_risk_factor': True,
-            'use_senti_features': False,
-            'use_risk_features': False,
+            'use_senti_features': True,
+            'use_risk_features': True,
             'use_senti_threshold': False,
             'use_risk_threshold': False,
             'use_dynamic_infusion': False,
             'RAW_DATA_DIR': self.raw_data_dir,
+            'PROCESSED_NEWS_DIR': self.processed_news_dir,
+            'FUSED_DATA_DIR': self.fused_data_dir,
             'EXPER_DATA_DIR': self.exper_data_dir,
             'PLOT_CACHE_DIR': self.plot_cache_dir,
+            'PLOT_NEWS_DIR': self.plot_news_dir,
             'RESULTS_CACHE_DIR': self.results_cache_dir,
             'EXPERIMENT_CACHE_DIR': self.experiment_cache_dir,
+            'SCALER_CACHE_DIR': self.scaler_cache_dir,
             'LOG_SAVE_DIR': self.log_dir
         }
         
@@ -227,30 +240,41 @@ class ExperimentScheme:
         """
         logging.info("ES Module - Running Quick Experiment 3: RL Hyperparameter Tuning")
         
-        symbols = symbols or ['GOOGL', 'AAPL']
-        
+        # Minimal configuration for quick validation
         setup_config = {
-            'symbols': symbols,
-            'start': '2020-01-01',
-            'end': '2022-12-31',
-            'train_start_date': '2020-01-01',
-            'train_end_date': '2021-12-31',
-            'valid_start_date': '2022-01-01',
-            'valid_end_date': '2022-06-30',
-            'test_start_date': '2022-07-01',
-            'test_end_date': '2022-12-31',
+            'symbols': self.symbols,
+            'start': self.config.start,
+            'end': self.config.end,
+            'train_start_date': self.config.train_start_date,
+            'train_end_date': self.config.train_end_date,
+            'valid_start_date': self.config.valid_start_date,
+            'valid_end_date': self.config.valid_end_date,
+            'test_start_date': self.config.test_start_date,
+            'test_end_date': self.config.test_end_date,
             'exper_mode': {
-                'rl_algorithm': ['PPO']
+                'rl_algorithm': ['PPO']  # Single algorithm for speed
             },
-            'window_size': 30,
+            'window_size': 50,  # Smaller window for faster processing
             'window_factor': 2,
-            'window_extend': 30,
-            'ind_mode': 'long',
+            'window_extend': 50,
+            'filter_ind': self.filter_ind,
+            'ind_mode': self.config.ind_mode,
+            'use_senti_factor': True,
+            'use_risk_factor': True,
+            'use_senti_features': True,
+            'use_risk_features': True,
+            'use_senti_threshold': True,
+            'use_risk_threshold': True,
+            'use_dynamic_infusion': False,
             'RAW_DATA_DIR': self.raw_data_dir,
+            'PROCESSED_NEWS_DIR': self.processed_news_dir,
+            'FUSED_DATA_DIR': self.fused_data_dir,
             'EXPER_DATA_DIR': self.exper_data_dir,
             'PLOT_CACHE_DIR': self.plot_cache_dir,
+            'PLOT_NEWS_DIR': self.plot_news_dir,
             'RESULTS_CACHE_DIR': self.results_cache_dir,
             'EXPERIMENT_CACHE_DIR': self.experiment_cache_dir,
+            'SCALER_CACHE_DIR': self.scaler_cache_dir,
             'LOG_SAVE_DIR': self.log_dir
         }
         
@@ -301,27 +325,30 @@ class ExperimentScheme:
         """
         logging.info("ES Module - Running Full Experiment 1: Comprehensive Basic Validation")
         
-        symbols = symbols or ['GOOGL', 'AAPL']
-        
         setup_config = {
-            'symbols': symbols,
-            'start': '2015-01-01',
-            'end': '2023-12-31',
-            'train_start_date': '2015-01-01',
-            'train_end_date': '2021-12-31',
-            'valid_start_date': '2022-01-01',
-            'valid_end_date': '2022-12-31',
-            'test_start_date': '2023-01-01',
-            'test_end_date': '2023-12-31',
+            'symbols': self.symbols,
+            'start': self.config.start,
+            'end': self.config.end,
+            'train_start_date': self.config.train_start_date,
+            'train_end_date': self.config.train_end_date,
+            'valid_start_date': self.config.valid_start_date,
+            'valid_end_date': self.config.valid_end_date,
+            'test_start_date': self.config.test_start_date,
+            'test_end_date': self.config.test_end_date,
             'exper_mode': {
                 'rl_algorithm': ['PPO', 'CPPO', 'A2C']  # All algorithms
             },
             'window_size': 50,
+            'filter_ind': self.filter_ind,
             'RAW_DATA_DIR': self.raw_data_dir,
+            'PROCESSED_NEWS_DIR': self.processed_news_dir,
+            'FUSED_DATA_DIR': self.fused_data_dir,
             'EXPER_DATA_DIR': self.exper_data_dir,
             'PLOT_CACHE_DIR': self.plot_cache_dir,
+            'PLOT_NEWS_DIR': self.plot_news_dir,
             'RESULTS_CACHE_DIR': self.results_cache_dir,
             'EXPERIMENT_CACHE_DIR': self.experiment_cache_dir,
+            'SCALER_CACHE_DIR': self.scaler_cache_dir,
             'LOG_SAVE_DIR': self.log_dir
         }
         
@@ -360,31 +387,34 @@ class ExperimentScheme:
         """
         logging.info("ES Module - Running Full Experiment 2: Advanced Reward Engineering")
         
-        symbols = symbols or ['GOOGL', 'AAPL', 'MSFT', 'AMZN']  # Extended symbol set
-        
         setup_config = {
-            'symbols': symbols,
-            'start': '2015-01-01',
-            'end': '2023-12-31',
-            'train_start_date': '2015-01-01',
-            'train_end_date': '2021-12-31',
-            'valid_start_date': '2022-01-01',
-            'valid_end_date': '2022-12-31',
-            'test_start_date': '2023-01-01',
-            'test_end_date': '2023-12-31',
+            'symbols': self.symbols,
+            'start': self.config.start,
+            'end': self.config.end,
+            'train_start_date': self.config.train_start_date,
+            'train_end_date': self.config.train_end_date,
+            'valid_start_date': self.config.valid_start_date,
+            'valid_end_date': self.config.valid_end_date,
+            'test_start_date': self.config.test_start_date,
+            'test_end_date': self.config.test_end_date,
             'exper_mode': {
                 'rl_algorithm': ['PPO', 'CPPO']  # Focus on top performers
             },
             'window_size': 50,
+            'filter_ind': self.filter_ind,
             'use_senti_factor': True,
             'use_risk_factor': True,
             'use_senti_features': True,
             'use_risk_features': True,
             'RAW_DATA_DIR': self.raw_data_dir,
+            'PROCESSED_NEWS_DIR': self.processed_news_dir,
+            'FUSED_DATA_DIR': self.fused_data_dir,
             'EXPER_DATA_DIR': self.exper_data_dir,
             'PLOT_CACHE_DIR': self.plot_cache_dir,
+            'PLOT_NEWS_DIR': self.plot_news_dir,
             'RESULTS_CACHE_DIR': self.results_cache_dir,
             'EXPERIMENT_CACHE_DIR': self.experiment_cache_dir,
+            'SCALER_CACHE_DIR': self.scaler_cache_dir,
             'LOG_SAVE_DIR': self.log_dir
         }
         
@@ -446,22 +476,21 @@ class ExperimentScheme:
         """
         logging.info("ES Module - Running Full Experiment 3: Production-Ready Optimization")
         
-        symbols = symbols or ['GOOGL', 'AAPL', 'MSFT', 'AMZN', 'NVDA', 'TSLA']  # Full symbol set
-        
         setup_config = {
-            'symbols': symbols,
-            'start': '2010-01-01',
-            'end': '2023-12-31',
-            'train_start_date': '2010-01-01',
-            'train_end_date': '2020-12-31',
-            'valid_start_date': '2021-01-01',
-            'valid_end_date': '2021-12-31',
-            'test_start_date': '2022-01-01',
-            'test_end_date': '2023-12-31',
+            'symbols': self.symbols,
+            'start': self.config.start,
+            'end': self.config.end,
+            'train_start_date': self.config.train_start_date,
+            'train_end_date': self.config.train_end_date,
+            'valid_start_date': self.config.valid_start_date,
+            'valid_end_date': self.config.valid_end_date,
+            'test_start_date': self.config.test_start_date,
+            'test_end_date': self.config.test_end_date,
             'exper_mode': {
                 'rl_algorithm': ['PPO', 'CPPO']  # Production algorithms
             },
             'window_size': 50,
+            'filter_ind': self.filter_ind,
             'use_senti_factor': True,
             'use_risk_factor': True,
             'use_senti_features': True,
@@ -469,10 +498,14 @@ class ExperimentScheme:
             'use_senti_threshold': True,
             'use_risk_threshold': True,
             'RAW_DATA_DIR': self.raw_data_dir,
+            'PROCESSED_NEWS_DIR': self.processed_news_dir,
+            'FUSED_DATA_DIR': self.fused_data_dir,
             'EXPER_DATA_DIR': self.exper_data_dir,
             'PLOT_CACHE_DIR': self.plot_cache_dir,
+            'PLOT_NEWS_DIR': self.plot_news_dir,
             'RESULTS_CACHE_DIR': self.results_cache_dir,
             'EXPERIMENT_CACHE_DIR': self.experiment_cache_dir,
+            'SCALER_CACHE_DIR': self.scaler_cache_dir,
             'LOG_SAVE_DIR': self.log_dir
         }
         

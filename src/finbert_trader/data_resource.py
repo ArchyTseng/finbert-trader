@@ -38,12 +38,15 @@ class DataResource:
         """
         self.config = config  # Store config object for class-wide access
         self.start = self.config.start  # Overall start date for data range
+        self.end = self.config.end  # Overall end date for data range
         self.test_end_date = self.config.end  # End date for testing (note: reused from config.end)
         self.train_start_date = self.config.train_start_date  # Start date specifically for training
         self.test_end_date = self.config.test_end_date  # End date for testing (overwritten if config.end differs)
         self.raw_data_cache_dir = config.RAW_DATA_DIR  # Directory for caching downloaded/processed data
         self.fnspid_url = 'https://huggingface.co/datasets/Zihan1004/FNSPID/resolve/main/Stock_news/nasdaq_exteral_data.csv'  # URL for FNSPID NASDAQ news dataset on Hugging Face
         os.makedirs(self.raw_data_cache_dir, exist_ok=True)  # Create cache directory if it doesn't exist, with exist_ok to avoid errors
+
+        self.use_symbol_name = getattr(self.config, 'use_symbol_name', True)
 
     def get_cache_path(self, symbol):
         """
@@ -239,7 +242,11 @@ class DataResource:
         - Logs both paths for debugging cache operations.
         """
         cache_path = os.path.join(self.raw_data_cache_dir, os.path.basename(base_path))  # Construct original cache path using basename for filename isolation
-        filtered_cache_path = os.path.join(self.raw_data_cache_dir, f"{'_'.join(self.config.symbols)}_{self.train_start_date if self.train_start_date else self.start}_{self.test_end_date if self.test_end_date else self.test_end_date}_news.csv")  # Build filtered path with symbols joined and date range (fallback for None dates)
+        if self.use_symbol_name:
+            symbols = self.config.symbols
+            filtered_cache_path = os.path.join(self.raw_data_cache_dir, f"{'_'.join(symbols)}_{self.train_start_date if self.train_start_date else self.start}_{self.test_end_date if self.test_end_date else self.end}_news.csv")  # Build filtered path with symbols joined and date range (fallback for None dates)
+        else:
+            filtered_cache_path = os.path.join(self.raw_data_cache_dir, f"All_symbols_{self.train_start_date if self.train_start_date else self.start}_{self.test_end_date if self.test_end_date else self.end}_news.csv")  # Build filtered path with symbols joined and date range (fallback for None dates)
         logging.info(f"DR Module - cache_path_config - Cache path: {cache_path}, Filtered cache path: {filtered_cache_path}")  # Log paths for monitoring and debugging
         return cache_path, filtered_cache_path  # Return tuple of paths for use in fetching/saving
 

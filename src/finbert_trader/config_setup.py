@@ -32,8 +32,11 @@ class ConfigSetup:
 
     # Config directories, from FinRL reference
     RAW_DATA_DIR = 'raw_data_cache'
+    PROCESSED_NEWS_DIR = 'processed_news_cache'
+    FUSED_DATA_DIR = 'fused_data_cache'
     EXPER_DATA_DIR = 'exper_data_cache'
     PLOT_CACHE_DIR = 'plot_cache'
+    PLOT_NEWS_DIR = 'plot_news_cache'
     RESULTS_CACHE_DIR = 'results_cache'
     EXPERIMENT_CACHE_DIR = 'exper_cache'
     SCALER_CACHE_DIR = 'scaler_cache'
@@ -79,8 +82,8 @@ class ConfigSetup:
             f"rsi_{self.timeperiods}",
             f"cci_{self.timeperiods}",
             f"dx_{self.timeperiods}",
-            f"close_{self.timeperiods}_sma",
-            f"close_{self.timeperiods * 2}_sma"
+            f"close_sma_short_{self.timeperiods}",
+            f"close_sma_long_{self.timeperiods * 2}",
         ]  # Reference from FinRL; dynamic indicators with timeperiods
         self.sentiment_keys = ['sentiment_score', 'risk_score']  # Keys for sentiment/risk features
         self.decay_lambda = 0.03  # From FNSPID paper; for potential decay in scoring
@@ -89,7 +92,7 @@ class ConfigSetup:
         self.window_factor = 2  # For scale RL window size in FeatureEngineer
         self.window_extend = 10 # For extend RL window size in FeatureEngineer
 
-        self.prediction_days = 1  # For Short-term trading strategy; future days to predict
+        self.prediction_days = 3  # For Short-term trading strategy; future days to predict
         self.batch_size = 32  # For FinBERT inference; balance memory and speed
         self.text_cols = ['Article_title', 'Textrank_summary']  # Default scheme from FNSPID; text fields for sentiment
         self.split_ratio = 0.8  # For train/val split if split_mode='ratio'
@@ -139,21 +142,28 @@ class ConfigSetup:
         self.cache_dir = 'config_cache'
         os.makedirs(self.cache_dir, exist_ok=True)
 
-        self.save_npz = True
-        self.load_npz = False
+        self.save_npz = True    # Control saveing .npz file in FeatureEngineer
+        self.load_npz = False   # Control loading .npz file in FeatureEngineer
 
-        self._features_initialized = self.load_or_init_features()
+        self.force_normalize = True # Control normalize_features function
+        self.filter_ind = []     # Control normalize_features function, fitered target indicators
+        
+        self.news_cache_path = None # Update news cache path dynamiclly
 
-        self.use_senti_factor = True
-        self.use_risk_factor = True
+        self._features_initialized = self.load_or_init_features()   # Update Trur / False dynamiclly
 
-        self.use_senti_features = True
-        self.use_risk_features = True
+        self.use_senti_factor = False   # Control sentiment score column
+        self.use_risk_factor = False    # Control risk score column
 
-        self.use_senti_threshold = True
-        self.use_risk_threshold = True
+        self.use_senti_features = False # Control sentiment features for window size, in StockTradingEnv
+        self.use_risk_features = False  # Control risk features for window size, in StockTradingEnv
 
-        self.use_dynamic_infusion = False
+        self.use_senti_threshold = False    # Control sentiment threshold for S_f mechanism
+        self.use_risk_threshold = False     # Control risk threshold for S_f mechanism
+
+        self.use_dynamic_infusion = False   # Control dynamic infusion_strength mechanism
+
+        self.use_symbol_name = True     # Control saved filename rule
 
         if custom_config:
             # Apply overrides from dict for flexibility
@@ -302,12 +312,15 @@ class ConfigSetup:
             'test_start_date': '2023-01-01',
             'test_end_date': '2023-12-31',
             'risk_mode': True,
-            'use_senti_factor': True,
-            'use_risk_factor': True,
-            'use_senti_features': True,
-            'use_risk_features': True,
-            'use_senti_threshold': True,
-            'use_risk_threshold': True,
+            'save_npz': True,
+            'load_npz': False,
+            'load_fused_csv': False,
+            'use_senti_factor': False,
+            'use_risk_factor': False,
+            'use_senti_features': False,
+            'use_risk_features': False,
+            'use_senti_threshold': False,
+            'use_risk_threshold': False,
             'use_dynamic_infusion': False,
             'exper_mode': {
                 'indicator/news': ['benchmark',

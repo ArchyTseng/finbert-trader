@@ -38,7 +38,7 @@ from sklearn.model_selection import train_test_split, KFold, TimeSeriesSplit
 import logging
 import hashlib
 import os
-import json
+from datetime import datetime
 import joblib
 
 # %%
@@ -78,7 +78,7 @@ class FeatureEngineer:
         self.window_size = getattr(self.config, 'window_size', 50)  # Window size for RL observation states
         self.W_f = getattr(self.config, 'window_factor', 2)    # For scale window size
         self.W_e = getattr(self.config, 'window_extend', 10)     # For extend window size
-        self.prediction_days = getattr(self.config, 'prediction_days', 1)  # Number of future days for target prediction
+        self.prediction_days = getattr(self.config, 'prediction_days', 3)  # Number of future days for target prediction
 
         self.split_ratio = self.config.split_ratio  # Ratio for data splitting if split_mode='ratio'
         self.k_folds = self.config.k_folds  # Number of folds for cross-validation
@@ -107,7 +107,15 @@ class FeatureEngineer:
         self.save_npz = getattr(self.config, 'save_npz', True)  # Flag to save NPZ files)
         self.load_npz = getattr(self.config, 'load_npz', False)  # Flag to load NPZ files)
 
-    def process_news_chunks(self, news_chunks_gen):
+        self.force_normalize = getattr(self.config, 'force_normalize', True)
+        self.filter_ind = getattr(self.config, 'filter_ind', [])
+
+        self.use_symbol_name = getattr(self.config, 'use_symbol_name', True)  # Flag to use symbol name in cache file)
+
+        self.processed_news_dir = getattr(self.config, 'PROCESSED_NEWS_DIR', 'processed_news_cache')
+        os.makedirs(self.processed_news_dir, exist_ok=True)
+
+    def process_news_chunks(self, news_chunks_gen, force_process=False):
         """
         Introduction
         ------------
@@ -131,21 +139,40 @@ class FeatureEngineer:
         - Aggregates via pd.concat; logs row count for monitoring.
         - Empty return maintains column structure for downstream compatibility.
         """
-        processed_chunks = []  # List to collect cleaned chunks for aggregation
-        for chunk in news_chunks_gen:
-            # Iterate over generator chunks to process streaming data efficiently
-            if chunk.empty:
-                continue  # Skip empty chunks to avoid unnecessary processing
-            cleaned_chunk = self.news_engineer.clean_news_data(chunk)   # Drop useless columns and clean text for each column
-            # filtered_chunk = self.news_engineer.filter_random_news(cleaned_chunk)   # Filter one random news for each symbol per day (commented out; optional for reducing duplicates)
-            if not cleaned_chunk.empty:
-                processed_chunks.append(cleaned_chunk)  # Append only non-empty cleaned chunks
-        if processed_chunks:
-            aggregated_df = pd.concat(processed_chunks, ignore_index=True)  # Concatenate all chunks into a single DF, reset index for clean aggregation
-            logging.info(f"FE Module - _news_chunks - Aggregated cleaned news: {len(aggregated_df)} rows")  # Log aggregated row count for data volume tracking
-            return aggregated_df  # Return the full aggregated DataFrame
-        logging.info("FE Module - _news_chunks - No valid news chunks, returning empty DataFrame")  # Log if no data processed
-        return pd.DataFrame(columns=['Date', 'Symbol', 'Article_title', 'Full_Text', 'Lsa_summary', 'Luhn_summary', 'Textrank_summary', 'Lexrank_summary']) # Match original columns in FNSPID dataset for consistency
+        processed_news_list = os.listdir(self.processed_news_dir)
+        if processed_news_list:
+            logging.info(f"FE Module - _news_chunks - Exist {len(processed_news_list)} processed news cache : {processed_news_list}")
+            path_suffix = self._generate_path_suffix(extension='.csv')
+            for filename in processed_news_list:
+                if filename.endswith(path_suffix):
+                    self.config.news_cache_path = os.path.join(self.processed_news_dir, filename)
+                    logging.info(f"FE Module - _news_chunks - Target cache path : {self.config.news_cache_path}")
+            if not force_process and self.config.news_cache_path:
+                logging.info(f"FE Module - _news_chunks - Load news_df for {self.config.symbols}")
+                news_df = pd.read_csv(self.config.news_cache_path, parse_dates=['Date'])
+                logging.info(f"FE Module - _news_chunks - Loaded news_df: {len(news_df)} rows")
+                return news_df
+                
+        else:
+            logging.info("FE Module - _news_chunks - No symbols or cache_path provided, processing all news chunks")
+            processed_chunks = []  # List to collect cleaned chunks for aggregation
+            for chunk in news_chunks_gen:
+                # Iterate over generator chunks to process streaming data efficiently
+                if chunk.empty:
+                    continue  # Skip empty chunks to avoid unnecessary processing
+                cleaned_chunk = self.news_engineer.clean_news_data(chunk)   # Drop useless columns and clean text for each column
+                # filtered_chunk = self.news_engineer.filter_random_news(cleaned_chunk)   # Filter one random news for each symbol per day (commented out; optional for reducing duplicates)
+                if not cleaned_chunk.empty:
+                    processed_chunks.append(cleaned_chunk)  # Append only non-empty cleaned chunks
+            if processed_chunks:
+                aggregated_df = pd.concat(processed_chunks, ignore_index=True)  # Concatenate all chunks into a single DF, reset index for clean aggregation
+                logging.info(f"FE Module - _news_chunks - Aggregated cleaned news: {len(aggregated_df)} rows")  # Log aggregated row count for data volume tracking
+                processed_path = self.save_target_data_csv(aggregated_df, prefix="Processed_", save_path=self.processed_news_dir)
+                self.config.processed_cache_path = processed_path
+                logging.info(f"FE Module - _news_chunks - Saved processed news to {processed_path}")
+                return aggregated_df  # Return the full aggregated DataFrame
+            logging.info("FE Module - _news_chunks - No valid news chunks, returning empty DataFrame")  # Log if no data processed
+            return pd.DataFrame(columns=['Date', 'Symbol', 'Article_title', 'Full_Text', 'Lsa_summary', 'Luhn_summary', 'Textrank_summary', 'Lexrank_summary']) # Match original columns in FNSPID dataset for consistency
 
     def _fill_score_columns(self, df, prefix, fill_value=3.0):
         """
@@ -225,7 +252,7 @@ class FeatureEngineer:
                     logging.info(f"FE Module - _after_merge - Fillna {nulls_before - nulls_after} NaNs with value 0.0 in {col}")
         return df  # Return the filled DataFrame
 
-    def merge_features(self, stock_data_dict, sentiment_df, risk_df=None, ind_mode=None):
+    def merge_features(self, stock_data_dict, sentiment_df, risk_df=None):
         """
         Introduction
         ------------
@@ -260,7 +287,7 @@ class FeatureEngineer:
         processed_stocks = []  # List to hold processed DataFrames per symbol
         for symbol, df in stock_data_dict.items():
             # Compute technical indicators and features for each symbol's stock data
-            processed_df = self.stock_engineer.compute_features(df, symbol, ind_mode)
+            processed_df = self.stock_engineer.compute_features(df, symbol)
             processed_stocks.append(processed_df.set_index('Date'))  # Set Date as index for concat
         all_stock_df = pd.concat(processed_stocks, axis=1, join='outer').reset_index()  # Concat horizontally to wide table, reset index to bring back Date
 
@@ -319,7 +346,7 @@ class FeatureEngineer:
         logging.info(f"FE Module - _generate_scaler_path - Generated scaler path: {scaler_path}")
         return scaler_path
     
-    def normalize_features(self, df, fit=False, means_stds=None, scaler_path=None, force_recompute=False, data_type='train'):
+    def normalize_features(self, df, fit=False, means_stds=None, scaler_path=None, data_type='train'):
         """
         Introduction
         ------------
@@ -352,12 +379,22 @@ class FeatureEngineer:
         - Returns empty dict if no columns to normalize.
         """
         logging.info(f"FE Module - normalize_features - Full Data Columns : {df.columns.tolist()}")
-        to_normalize = self.stock_engineer.indicators + ['sentiment_score', 'risk_score']  # List of base columns to target for normalization
+        if self.filter_ind and all(any(col.startswith(ind) for col in df.columns) for ind in self.filter_ind):
+            logging.info(f"FE Module - normalize_features - Filter columns to normalize: {self.filter_ind}")
+            filtered_ind_cols = [col for col in df.columns if any(col.startswith(ind) for ind in self.filter_ind)]
+            to_normalize = filtered_ind_cols + ['sentiment_score', 'risk_score']  # List of filtered columns to target for normalization
+            logging.info(f"FE Module - normalize_features - Target columns to normalize: {to_normalize}")
+        else:
+            to_normalize = self.stock_engineer.indicators + ['sentiment_score', 'risk_score']  # List of base columns to target for normalization
+            logging.info(f"FE Module - normalize_features - Target columns to normalize: {to_normalize}")
         filter_normalize_cols = [col for col in df.columns 
                         if any(ind in col for ind in to_normalize) 
                         and not any(x in col for x in ['Adj_Open', 'Adj_High', 'Adj_Low', 'Adj_Close', 'Volume']) 
                         and pd.api.types.is_numeric_dtype(df[col])]  # Filter columns: match targets, exclude raw prices/volumes, ensure numeric
         logging.info(f"FE Module - normalize_features - Filtered Normalizing columns: {filter_normalize_cols}")
+        # Prepare target columns
+        final_target_cols = [col for col in df.columns if 'Adj_Close' in col] + filter_normalize_cols
+
         if 'Date' in df.columns:
             df = df.set_index('Date')  # Set Date as index to exclude from features if present
 
@@ -368,13 +405,13 @@ class FeatureEngineer:
 
         if fit:
             # Fit mode: Compute or load means_stds
-            if scaler_path and os.path.exists(scaler_path) and force_recompute:
+            if scaler_path and os.path.exists(scaler_path) and self.force_normalize:
                 logging.info(f"FE Module - normalize_features - Removed old scaler at {scaler_path} to recompute.")
                 os.remove(scaler_path)  # Remove scaler cache and recompute
             if scaler_path and os.path.exists(scaler_path):
                 logging.info(f"FE Module - normalize_features - Loaded existing scaler from {scaler_path} (fit mode)")
                 means_stds = joblib.load(scaler_path)   # Load scaler if path provided
-            if not means_stds or force_recompute:
+            if not means_stds or self.force_normalize:
                 means_stds = {}  # Initialize dict for column-wise means and stds
                 for col in filter_normalize_cols:
                     logging.info(f"FE Module - normalize_features - Normalizing column for {data_type} data: {col}")
@@ -383,6 +420,8 @@ class FeatureEngineer:
                     std = max(std, 1e-6)  # Enforce min std to prevent division by zero
                     means_stds[col] = (mean, std)  # Store tuple
                     df[col] = (df[col] - mean) / std  # Apply normalization
+                # Only remain filtered columns, discard others
+                df = df[final_target_cols]
                 if scaler_path:
                     os.makedirs(os.path.dirname(scaler_path), exist_ok=True)  # Ensure directory exists for saving
                     joblib.dump(means_stds, scaler_path)  # Save scaler for future use
@@ -392,8 +431,10 @@ class FeatureEngineer:
                     mean, std = means_stds.get(col, (0, 1))
                     std = max(std, 1e-6)
                     df[col] = (df[col] - mean) / std
+                # Only remain filtered columns, discard others
+                df = df[final_target_cols]
 
-            logging.info(f"FE Module - normalize_features - Successfull Normalized columns: {filter_normalize_cols}, fit mode: {fit}")
+            logging.info(f"FE Module - normalize_features - Successfull Normalized, return df with columns: {df.columns.tolist()}, fit mode: {fit}")
             return df, means_stds  # Return normalized df and computed means_stds in fit mode
         
         else:
@@ -410,8 +451,10 @@ class FeatureEngineer:
                 mean, std = means_stds.get(col, (0, 1))  # Get stats or default to no-op
                 std = max(std, 1e-6)  # Enforce min std
                 df[col] = (df[col] - mean) / std  # Apply normalization
+            # Only remain filtered columns, discard others
+            df = df[final_target_cols]
 
-            logging.info(f"FE Module - normalize_features - Successfull Normalized columns: {filter_normalize_cols}, fit mode: {fit}")
+            logging.info(f"FE Module - normalize_features - Successfull Normalized, return df with columns: {df.columns.tolist()}, fit mode: {fit}")
             return df, means_stds  # Return normalized df and computed means_stds in fit mode
 
     def prepare_rl_data(self, fused_df, symbols=None, data_type='train'):
@@ -448,7 +491,7 @@ class FeatureEngineer:
         """
         logging.info(f"FE Module - prepare_rl_data - Debug info:")
         logging.info(f"  fused_df shape: {fused_df.shape}")
-        logging.info(f"  symbols: {symbols}")
+        logging.info(f"  symbols: {symbols or self.config.symbols}")
         logging.info(f"  window_size: {self.window_size}")
         logging.info(f"  W_f: {self.W_f}, W_e: {self.W_e}")
         logging.info(f"  min_episode_length: {self.W_f * self.window_size + self.W_e}")
@@ -483,31 +526,35 @@ class FeatureEngineer:
         rl_data = []  # Initialize list to store RL data dicts
         dates = fused_df.index  # Extract dates for start_date assignment
 
-        min_required_steps = 50    # Set min step for each episode
-        min_episode_length = max(self.W_f * self.window_size + self.W_e, self.window_size + min_required_steps) # More winsow for explore
+        min_required_steps = 30    # Set min step for each episode
+        min_window_size = max(self.W_f * self.window_size + self.W_e, self.window_size + min_required_steps) # More winsow for explore
         logging.info(f"FE Module - prepare_rl_data - Data length: {len(fused_df)}")
         logging.info(f"FE Module - prepare_rl_data - Window size: {self.window_size}")
         logging.info(f"FE Module - prepare_rl_data - Configured episode length: {self.W_f * self.window_size + self.W_e}")
-        logging.info(f"FE Module - prepare_rl_data - Final min episode length: {min_episode_length}")
+        logging.info(f"FE Module - prepare_rl_data - Final min episode length: {min_window_size}")
 
-        if len(fused_df) < min_episode_length:
-            logging.warning(f"FE Module - Insufficient  {len(fused_df)} < {min_episode_length}")
-            return rl_data
+        if len(fused_df) < min_window_size:
+            # valid/test data with small length，implement dynamic episode length
+            actual_window_size = self.window_size if len(fused_df) - self.window_size > min_required_steps else len(fused_df) // 2
+            logging.warning(f"FE Module - prepare_rl_data - Insufficient data, adjusting episode length: {min_window_size} -> {actual_window_size}")
+        else:
+            actual_window_size = min_window_size if len(fused_df) - min_window_size > min_required_steps else self.window_size
         
-        max_episodes = len(fused_df) - min_episode_length + 1
-        logging.info(f"FE Module - prepare_rl_data - Can create {max_episodes} episodes")
-
-        if max_episodes < 0:
-            logging.warning(f"FE Module - prepare_rl_data - No valid episodes can be created: {max_episodes}")
-            return rl_data
-
-        # Fix episode length , Ensure each episode with same length
-        fixed_episode_length = min_episode_length  
-
-        for i in range(min(max_episodes, 200)):    # in case too much step
+        # Get prediction days from config (default to 3 days)
+        prediction_days = self.prediction_days
+        logging.info(f"FE Module - prepare_rl_data - Prediction days: {prediction_days}")
+        max_trading_steps = len(fused_df) - actual_window_size - prediction_days + 1
+        
+        if max_trading_steps <= 0:
+            logging.error(f"FE Module - prepare_rl_data - No valid episodes can be created")
+            return []
+        
+        # Limit episodes to prevent excessive memory usage
+        num_episodes = min(max_trading_steps, 200)
+        for i in range(num_episodes):    # in case too much step
             try:
-                # Ensure not out of bound
-                if i + fixed_episode_length > len(fused_df):
+                # # Boundary check for current episode
+                if i + actual_window_size + prediction_days > len(fused_df):
                     logging.debug(f"FE Module - prepare_rl_data - Skipping episode {i} due to boundary issues")
                     break
 
@@ -515,34 +562,33 @@ class FeatureEngineer:
                 window_parts = []  # List to collect per-symbol window arrays for concat
                 for symbol in symbols:
                     symbol_cols = self.config.features_all[symbol]  # Get all features for this symbol from config
-                    symbol_window = fused_df.iloc[i:i+fixed_episode_length][symbol_cols].values  # Extract (window_size, features_dim_per_symbol) array
+                    symbol_window = fused_df.iloc[i:i+actual_window_size][symbol_cols].values  # Extract (window_size, features_dim_per_symbol) array
                     window_parts.append(symbol_window)  # Append for later concat
 
                 # Concatenate all symbol windows along axis=1 to form 2D states (window_size, n_symbols * features_dim_per_symbol)
-                states = np.concatenate(window_parts, axis=1)  # (min_episode_length, total_features)
+                states = np.concatenate(window_parts, axis=1)  # (actual_window_size, total_features)
 
-                # Check states shape
-                if states.shape[0] != fixed_episode_length:
-                    logging.warning(f"FE Module - Episode {i} has inconsistent shape: {states.shape}")
+                # Validate states shape
+                if states.shape[0] != actual_window_size:
+                    logging.warning(f"FE Module - Episode {i} has inconsistent shape: {states.shape} vs {actual_window_size}")
                     continue
-
+                
                 # Targets - Generate target for each episode
                 target_cols = [f"Adj_Close_{symbol}" for symbol in symbols]
-                targets_list = []
+                # Construct targets: future prediction_days' adjusted close prices
+                episode_end = i + actual_window_size
+                targets = fused_df.iloc[episode_end:episode_end + prediction_days][target_cols].values  # shape: (prediction_days, n_symbols)
 
-                # Generate target for each trading step in each episode
-                for step in range(self.window_size, fixed_episode_length):
-                    if step < len(fused_df):
-                        target = fused_df.iloc[step:step+1][target_cols].values  # shape: (1, n_symbols)
-                        targets_list.append(target)
+                # Validate targets shape
+                if targets.shape[0] != prediction_days:
+                    logging.warning(f"FE Module - Episode {i} has insufficient targets: {targets.shape[0]} vs {prediction_days}")
+                    continue
 
-                if targets_list:
-                    targets = np.vstack(targets_list)  # shape: (n_trading_steps, n_symbols)
-                    rl_data.append({
-                        'start_date': dates[i] if i < len(dates) else None,
-                        'states': states,   # shape: (episode_length, total_features)
-                        'targets': targets  # shape: (n_trading_steps, n_symbols)
-                    })
+                rl_data.append({
+                    'start_date': dates[i] if i < len(dates) else None,
+                    'states': states,   # shape: (actual_window_size, total_features)
+                    'targets': targets  # shape: (prediction_days, n_symbols)
+                })
             
             except Exception as e:
                 logging.error(f"FE Module - prepare_rl_data - Error processing episode {i}: {e}")
@@ -672,7 +718,7 @@ class FeatureEngineer:
         
         return score_df  # Return the potentially adjusted DataFrame
 
-    def _generate_path_suffix(self, file_format='.npz'):
+    def _generate_path_suffix(self, extension='.npz'):
         """
         Generate a unique path suffix for file caching, based on configuration settings.
 
@@ -697,9 +743,12 @@ class FeatureEngineer:
                 # Extract key configuration values for suffix generation
                 start = self.config.start
                 end = self.config.end
-                symbols = "_".join(self.config.symbols)  # Join symbols with underscore for compact representation
+                if self.use_symbol_name:
+                    symbols = "_".join(self.config.symbols)  # Join symbols with underscore for compact representation
+                else:
+                    symbols = "all_symbols"
                 # Construct the suffix by combining symbols, dates, and file format for unique identification
-                path_suffix = f"{symbols}_{start}_{end}" + f"{file_format}"
+                path_suffix = f"{symbols}_{start}_{end}{extension}"
                 logging.info(f"FE Module - _generate_path_suffix - Successfully generate path suffix: {path_suffix}")
                 return path_suffix
             else:
@@ -710,6 +759,41 @@ class FeatureEngineer:
             # Catch any unexpected errors during suffix generation and log for debugging
             logging.warning(f"FE Module - _generate_path_suffix - Fail to generate path suffix : {e}")
             return None  # Return None on failure to prevent downstream errors
+    
+    def save_target_data_csv(self, target_df, prefix=None, extension='.csv', save_path=None):
+        """
+        Save the fused DataFrame to a CSV file.
+
+        Parameters
+        ----------
+        fused_df : pd.DataFrame
+            The fused DataFrame to be saved.
+
+        save_dir : str, optional
+            Directory where the CSV file will be saved. Default is 'fused_data_csv'.
+
+        Returns
+        -------
+        None
+            This function saves the DataFrame to a CSV file and does not return anything.
+
+        Notes
+        -----
+        The CSV file is named using the symbols and date range from the configuration.
+        """
+        os.makedirs(save_path if save_path else self.processed_news_dir, exist_ok=True)
+        logging.info("FE Module - save_fused_data_csv - Initial fused_data_csv save path")
+        try:
+            path_suffix = self._generate_path_suffix(extension=extension)
+            if path_suffix:
+                file_path = os.path.join(save_path if save_path else self.processed_news_dir, f"{prefix}{path_suffix}")
+                target_df.to_csv(file_path, index=False)
+                logging.info(f"FE Module - save_fused_data_csv - Successfully saved fused data to {file_path}")
+                return file_path
+            else:
+                logging.warning("FE Module - save_fused_data_csv - Failed to generate path suffix for CSV file")
+        except Exception as e:
+            logging.error(f"FE Module - save_fused_data_csv - Error saving fused data: {e}")
 
     def save_exper_data_dict_npz(self, exper_data_dict):
         """
@@ -1027,7 +1111,10 @@ class FeatureEngineer:
                 'title_textrank': ['Article_title', 'Textrank_summary'],
                 'title_fulltext': ['Article_title', 'Full_Text']
             }   # Define news column configurations for different modes
-            ind_mode = self.ind_mode    # Retrieve indicator mode from instance
+            
+            # Flag to control feature analysis execution (execute only once)
+            feature_analysis_completed = False
+            
             if single_mode:
                 # Single mode: Run only one specific mode for testing
                 logging.info(f"FE Module - generate_experiment_data - Running Single mode: {single_mode}")
@@ -1071,7 +1158,7 @@ class FeatureEngineer:
                     sentiment_score_df = self._check_and_adjust_sentiment(sentiment_score_df, mode, col='sentiment_score')  # Adjust sentiment if needed (e.g., FinBERT adjustment)
                 else:
                     sentiment_score_df = pd.DataFrame(columns=['Date', 'Symbol', 'sentiment_score'])    # Empty DF for benchmark mode
-                    logging.info("FE Module - generate_experiment_data - Benchmark mode: no sentiment")    # Log skipping sentiment for benchmarkv
+                    logging.info("FE Module - generate_experiment_data - Benchmark mode: no sentiment")    # Log skipping sentiment for benchmark
 
                 # Compute risk if enabled
                 risk_score_df = None
@@ -1080,13 +1167,18 @@ class FeatureEngineer:
                     risk_score_df = self._check_and_adjust_sentiment(risk_score_df, mode, col='risk_score') # Adjust risk scores similarly
 
                 # Merge features and split train/valid/test data by date
-                fused_df = self.merge_features(stock_data_dict, sentiment_score_df, risk_score_df, ind_mode)    # Fuse stock data with sentiment/risk features
+                fused_df = self.merge_features(stock_data_dict, sentiment_score_df, risk_score_df)    # Fuse stock data with sentiment/risk features
                 if fused_df.empty:
                     raise ValueError(f"Fused DataFrame empty for mode {mode}")  # Error if fusion results in empty DF
                 
-                # Generate time series , distribution , correlation heatmap plots
-                standard_visualize_results = generate_standard_feature_visualizations(fused_df, self.config)
-                logging.info(f"FE Module - generate_experiment_data - Successfully generate Standard Visualization Results: {standard_visualize_results}")
+                # Generate pre-normalization feature analysis (only once)
+                if not feature_analysis_completed:
+                    logging.info(f"FE Module - generate_experiment_data - Generating pre-normalization feature analysis for mode {mode}")
+                    pre_normalize_results = generate_standard_feature_visualizations(
+                        fused_df, self.config, prefix="pre_normalization"
+                    )
+                    logging.info(f"FE Module - generate_experiment_data - Successfully generated pre-normalization visualization results")
+                    feature_analysis_completed = True  # Mark as completed to avoid repetition
 
                 train_df = fused_df[(fused_df['Date'] >= pd.to_datetime(self.train_start_date)) & (fused_df['Date'] <= pd.to_datetime(self.train_end_date))]
                 valid_df = fused_df[(fused_df['Date'] >= pd.to_datetime(self.valid_start_date)) & (fused_df['Date'] <= pd.to_datetime(self.valid_end_date))]
@@ -1097,10 +1189,26 @@ class FeatureEngineer:
 
                 # Normalize indicators + sentiment + risk columns for RL training
                 train_scaler_path = self._generate_scaler_path(self.scaler_cache_path, group, mode)   # Dynamic per-group/mode
-                train_df, means_stds = self.normalize_features(train_df, fit=True, scaler_path=train_scaler_path, force_recompute=True, data_type='train') # Load cache scaler if existed
+                train_df, means_stds = self.normalize_features(train_df, fit=True, scaler_path=train_scaler_path, data_type='train') # Load cache scaler if existed
                 valid_df, _ = self.normalize_features(valid_df, fit=False, means_stds=means_stds, data_type='valid') # Load cache scaler if existed
                 test_df, _ = self.normalize_features(test_df, fit=False, means_stds=means_stds, data_type='test')   # Load cache scaler if existed
                 logging.info(f"FE Module - generate_experiment_data - Normalized features for mode {mode}")
+
+                # Generate post-normalization feature analysis for each dataset split
+                logging.info(f"FE Module - generate_experiment_data - Generating post-normalization feature analysis for mode {mode}")
+                # Train set analysis
+                train_analysis_results = generate_standard_feature_visualizations(
+                    train_df, self.config, prefix=f"post_normalization_train_{mode}"
+                )
+                # Valid set analysis
+                valid_analysis_results = generate_standard_feature_visualizations(
+                    valid_df, self.config, prefix=f"post_normalization_valid_{mode}"
+                )
+                # Test set analysis
+                test_analysis_results = generate_standard_feature_visualizations(
+                    test_df, self.config, prefix=f"post_normalization_test_{mode}"
+                )
+                logging.info(f"FE Module - generate_experiment_data - Successfully generated post-normalization visualization results for mode {mode}")
 
                 # Prepare window for RL observation
                 train_rl_data = self.prepare_rl_data(train_df, data_type='train')  # Prepare RL-compatible data (e.g., windowed observations)
