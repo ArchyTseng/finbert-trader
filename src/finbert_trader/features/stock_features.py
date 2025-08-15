@@ -25,20 +25,25 @@ class StockFeatureEngineer:
         Parameters
         ----------
         config : object
-            Configuration object containing indicators_mode, timeperiods, ind_mode, indicators.
+            Configuration object containing indicators_mode, timeperiods, indicators.
 
         Notes
         -----
         - Extracts parameters from config for modular and configurable technical indicator calculations.
         - indicators_mode: Defines computation modes for indicators.
         - timeperiods: List of time windows for indicators like SMA, RSI.
-        - ind_mode: Current active indicator mode.
         - indicators: List of technical indicators to compute (e.g., MACD, RSI).
         """
-        self.indicators_mode = config.indicators_mode  # Mode for computing technical indicators
-        self.timeperiods = config.timeperiods  # List of time periods for window-based indicators
-        self.ind_mode = config.ind_mode  # Current indicator mode for selective computation
-        self.indicators = config.indicators # Access from config  # List of indicators to generate features for
+        self.config = config
+        self.timeperiods = getattr(self.config, 'timeperiods', 30)  # List of time periods for window-based indicators
+        self.indicators = getattr(self.config, 'indicators' , ['macd',
+                                                               'boll_ub',
+                                                               'boll_lb',
+                                                               'rsi_30',
+                                                               'cci_30',
+                                                               'dx_30',
+                                                               'close_sma_short_30',
+                                                               'close_sma_long_60']) # Access from config  # List of indicators to generate features for
 
     def compute_features(self, stock_df, symbol):
         """
@@ -54,8 +59,6 @@ class StockFeatureEngineer:
             Stock DataFrame with price columns like 'Adj_Close_{symbol}', 'Adj_High_{symbol}', etc.
         symbol : str
             Stock symbol for column suffixing.
-        ind_mode : str, optional
-            Indicator mode to select timeperiod; defaults to config.timeperiods if None.
 
         Returns
         -------

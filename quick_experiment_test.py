@@ -41,8 +41,20 @@ from src.finbert_trader.exper_scheme import ExperimentScheme, run_quick_experime
 from src.finbert_trader.exper_tracker import ExperimentTracker
 from src.finbert_trader.visualize.visualize_experiment import VisualizeExperiment
 
-# Set log configuration
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+def setup_logging():
+    # Config logging level
+    logging.getLogger().setLevel(logging.WARNING)
+    
+    logging.basicConfig(
+        level=logging.WARNING,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler('trading.log'),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+
+setup_logging()
 
 print("Quick Experiment Test Environment Ready!")
 print("=" * 50)
@@ -53,19 +65,28 @@ Step 1: Initialize Configuration
 Setup basic configuration for quick experiments
 """
 
-symbols = ['GILD', 'MU', 'QCOM']   # Selected by news data analysis
+symbols = [
+        "AMD",
+        "SBUX",
+        "PYPL",
+        "GILD",
+        "COST",
+        "MU",
+        "CMCSA",
+        "QCOM"
+    ]   # Selected by news data analysis
 
 # Set experiment configuration
 custom_setup_config = {
     'symbols': symbols,
-    'start': '2018-01-01',
-    'end': '2022-12-31',
-    'train_start_date': '2018-01-01',
-    'train_end_date': '2020-12-31',
-    'valid_start_date': '2021-01-01',
+    'start': '2015-01-01',
+    'end': '2023-12-31',
+    'train_start_date': '2015-01-01',
+    'train_end_date': '2019-12-31',
+    'valid_start_date': '2020-01-01',
     'valid_end_date': '2021-12-31',
     'test_start_date': '2022-01-01',
-    'test_end_date': '2022-12-31',
+    'test_end_date': '2023-12-31',
     'exper_mode': {
         'rl_algorithm': ['PPO']  # Test single algorithm
     },
@@ -74,6 +95,7 @@ custom_setup_config = {
     'window_factor': 2,
     'window_extend': 50,
     'smooth_window_size': 20,
+    'plot_feature_visualization': False,
     'save_npz': False,  # Disable saving for quick experiments
     'force_process_news': False,
     'force_fuse_data': False,

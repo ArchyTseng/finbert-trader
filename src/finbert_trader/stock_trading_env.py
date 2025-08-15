@@ -75,11 +75,11 @@ class StockTradingEnv(gym.Env):
         - Logs key dimensions and data shapes for debugging and verification.
         """
         # Inherit trading configuration for pipeline consistency
-        self.config = config_trading
-        # Set environment type for data selection (train/valid/test)
-        self.env_type = env_type
-        # Copy data to prevent side-effects on original rl_data
-        self.data = rl_data.copy()
+        self.config = config_trading    
+        self.env_type = env_type    # Set environment type for data selection (train/valid/test)
+        self.data = rl_data.copy()  # Copy data to prevent side-effects on original rl_data
+        self.filter_ind = self.config.filter_ind    # Get filterd indicators for identifying signals
+
         # Core dimensions from config for state and action spaces
         self.symbols = self.config.symbols  # List of stock symbols
         self.state_dim = self.config.state_dim  # Total state dimension
@@ -124,14 +124,14 @@ class StockTradingEnv(gym.Env):
 
         self.use_dynamic_threshold = getattr(self.config, 'use_dynamic_threshold', False)  # Use dynamic vs static thresholds
 
-        # Log core config for debugging and verification
+        # Daynamic trading configuration
+        self.signal_threshold = getattr(self.config, 'signal_threshold', 0.3)  # Singal threshold for trading actions
+        self.min_trade_amount = getattr(self.config, 'min_trade_amount', 0.01)  # Mininum trading amount
+        self.hold_threshold = getattr(self.config, 'hold_threshold', 0.1)  # Hold threshold for holding actions
+
         logging.info(f"STE Module - Env Init - Config symbols: {self.symbols}, window_size: {self.window_size}, features_all_flatten len: {len(self.features_all_flatten)}, state_dim: {self.state_dim}, action_dim: {self.action_dim}")
-        # Log data length and first episode shape (handle empty data gracefully)
         logging.info(f"STE Module - Env Init - rl_data len: {len(self.data)}, first episode states shape: {self.data[0]['states'].shape if self.data else 'Empty'}")
-        # Debug log for feature breakdowns
-        logging.debug(f"STE Module - Env Init - Features flatten: price {len(self.features_price_flatten)}, ind {len(self.features_ind_flatten)}, senti {len(self.features_senti_flatten)}, risk {len(self.features_risk_flatten)}")
-        # Debug log for indices
-        logging.debug(f"STE Module - Env Init - Indices: price {self.price_feature_index}, ind {self.ind_feature_index}, senti {self.senti_feature_index}, risk {self.risk_feature_index}")
+
         # Gym Space Definitions for RL compatibility
         self.observation_space = Box(low=-np.inf, high=np.inf,
                                      shape=(self.state_dim,),
@@ -140,10 +140,77 @@ class StockTradingEnv(gym.Env):
         # Log initialization summary
         logging.info(f"STE Modul - Env initialized: environment type: {self.env_type}, model={self.config.model}, state_dim={self.state_dim}")
 
+        self.I_s_thr = getattr(self.config, 'ind_signal_threshold', {}) # Get default indicator signal threshold form Config
+        self._validate_signal_thresholds()  # Validate the signal thresholds for indicators to ensure they are in defined indicator list.
+
         # Internal State for slippage calculation
         self.last_prices = None  # Initial for slippage
+        self.last_actions = None    # Penalty for trading frequency
         # Call reset to initialize the environment state
         self.reset()
+
+    def _validate_signal_thresholds(self):
+        """
+        Validate the signal thresholds for indicators to ensure they are in defined indicator list.
+
+        This method checks if the signal thresholds are defined for target indicators in the configuration.
+        If any signal thereshold is missing, it'll be set a default value by self._set_default_threshold().
+
+        Parameters
+        ----------
+        None
+            This method does not take any parameters; relies on self.config.
+
+        Returns
+        -------
+        None
+            This method does not return anything; it either passes the validation or raises a warning.
+
+        Notes
+        -----
+        - This method is called during initialization to ensure target indicators have a defined signal threshold.
+        - It logs a message for each validated indicator and raises a warning if any indicator is missing a threshold.
+        """
+        required_inds = self.config.filter_ind
+        for ind in required_inds:
+            if ind not in self.I_s_thr:
+                logging.warning(f"STE Moule - _validate_signal_threshold - Missing threshold config for indicator: {ind}")
+                self._set_default_threshold(ind)
+
+    def _set_default_threshold(self, ind):
+        """
+        Set a default threshold for an indicator if it's missing from the configuration.
+
+        This method sets a default threshold for an indicator that is missing from the configuration.
+        It updates the configuration with the default threshold and logs the action.
+
+        Parameters
+        ----------
+        ind : str
+            The indicator for which the default threshold is being set.
+
+        Returns
+        -------
+        None
+            This method does not return anything; it updates the configuration in place.
+
+        Notes
+        -----
+        - This method is called when a missing indicator is encountered during validation.
+        - It sets a default threshold and logs the action for debugging and future reference.
+        """
+        defaults = {
+            "rsi": {"oversold": 30, "overbought": 70},
+            "boll_ub": {"ub": 1.02, "dev": 0.03},
+            "boll_lb": {"lb": 0.98, "dev": 0.03},
+            "close_sma": {"below": 0.97, "above": 1.03, "dev": 0.05},
+            "macd": {"positive": 0.1, "negative": -0.1, "max_range": 0.5},
+            "cci": {"oversold": -100, "overbought": 100, "neutral_range": 50},
+            "dx": {"trend_threshold": 25, "strong_trend": 40}
+        }
+        if ind in defaults:
+            self.I_s_thr[ind] = defaults[ind]
+            logging.info(f"STE Module - Set default threshold for {ind}: {defaults[ind]}")
 
     def reset(self, seed=None, options=None):
         """
@@ -224,12 +291,14 @@ class StockTradingEnv(gym.Env):
             self.returns_history = []  # Clear returns history for new episode
             # Set initial last prices from current step for slippage calculations
             self.last_prices = self._get_current_prices()  # Fetches prices at current_step
+            self.last_actions = None
 
             # Build info dict for reset details and monitoring
             info = {'Environment Type': self.env_type,  # Train/valid/test
                     'Episode Index': self.episode_idx,  # Selected episode
                     'Episode Length': self.terminal_step + 1,  # Full length including window
                     'Trading Steps': available_trading_decisions,
+                    'Prediction Days': prediction_days,
                     'Cash': self.cash,
                     'Position': self.position,
                     'Total Asset': self.total_asset,
@@ -275,7 +344,7 @@ class StockTradingEnv(gym.Env):
         - Falls back to self.config.infusion_strength (default 0.001) if not dynamic or array is empty.
         """
         # Determine thresholds based on use_threshold flag
-        if use_threshold:
+        if use_threshold and threshold_cfg:
             # Fetch env-specific thresholds from config, fallback to defaults if not found
             thresholds = threshold_cfg.get(self.env_type, {'pos_threshold': 0.0, 'neg_threshold': 0.0}) \
                         or {'pos_threshold': 0.0, 'neg_threshold': 0.0}
@@ -284,7 +353,7 @@ class StockTradingEnv(gym.Env):
             thresholds = {'pos_threshold': 0.0, 'neg_threshold': 0.0}
 
         # Compute infusion strength dynamically if enabled and array is non-empty
-        if use_dynamic and factor_array.size > 0:
+        if use_dynamic and factor_array is not None and factor_array.size > 0:
             # Calculate strength as std / |mean| (normalized variability), with safeguards against zero mean
             infusion_strength = np.clip(factor_array.std() / max(abs(factor_array.mean()), 1e-6), 0.001, 0.01)
         else:
@@ -294,7 +363,379 @@ class StockTradingEnv(gym.Env):
         logging.info(f"STE Module - _get_threshold_and_strength - Dynamic: {use_dynamic}, Infusion strength: {infusion_strength}, Positiv Thresholds: {thresholds['pos_threshold']}, Negative Thresholds: {thresholds['neg_threshold']}")
         # Return the computed values as a tuple
         return thresholds['pos_threshold'], thresholds['neg_threshold'], infusion_strength
+    
+    def _identify_trading_signals(self, current_row):
+        """
+        Identify trading signals based on current state.
 
+        This method processes the current row of data, applies thresholds, and determines
+        """
+        # Initial signals dict
+        signals = {}
+        ind_features = current_row[self.ind_feature_index]  # Extract features for signals analysis
+        logging.info(f"STE Module - _identify_trading_signals - ind_features shape: {ind_features.shape}")
+        for i, symbol in enumerate(self.symbols):
+            signal_info = self._analyze_technical_signals(ind_features, symbol, i)
+            signals[symbol] = signal_info
+        logging.info(f"STE Module - _identify_trading_signals - Identified signals: {signals}")
+        return signals
+    
+    def _analyze_technical_signals(self, ind_features, symbol, symbol_index):
+        """
+        Analyze technical signals for a given symbol based on indicator features.
+        
+        This method processes multiple technical indicators to identify buy/sell signals,
+        calculates signal strength, and computes confidence based on indicator consensus.
+        The method supports configurable thresholds and handles multiple indicator types.
+        
+        Parameters:
+        -----------
+        ind_features : numpy.ndarray
+            Array of indicator feature values for current timestep
+        symbol : str
+            Stock symbol being analyzed
+        symbol_index : int
+            Index of symbol in feature array
+        
+        Returns:
+        --------
+        dict
+            Dictionary containing signal type, strength, confidence, and indicator details
+        """
+        # Initialize signal variables
+        signal_type = "hold"        # Default signal type: hold, buy, sell
+        signal_strength = 0.0       # Signal strength (0.0-1.0)
+        confidence = 0.0            # Signal confidence based on indicator consensus
+        indicators = {}             # Dictionary to store indicator values
+        signal_votes = {"buy": 0, "sell": 0, "hold": 0}  # Vote counting for signal fusion
+        total_strength = 0.0        # Accumulated signal strength from all indicators
+        signal_count = 0            # Count of indicators providing signals
+
+        # Get filtered indicators from configuration
+        target_inds = self.filter_ind
+
+        # Process each filtered indicator
+        for ind in target_inds:
+            # Extract indicator value from feature array
+            ind_value = self._get_indicator_value(ind_features, ind, symbol_index)
+            
+            # Process indicator only if value is valid
+            if ind_value is not None:
+                indicators[ind] = ind_value
+                
+                # RSI (Relative Strength Index) - Momentum oscillator
+                if ind == "rsi" and ind in self.I_s_thr:
+                    thr = self.I_s_thr[ind]
+                    oversold = thr.get("oversold", 30)
+                    overbought = thr.get("overbought", 70)
+                    
+                    # Buy signal: RSI in oversold territory
+                    if ind_value < oversold:
+                        signal_votes["buy"] += 1
+                        # Calculate strength based on distance from oversold level
+                        strength = min((oversold - ind_value) / oversold, 1.0)
+                        total_strength += strength
+                        signal_count += 1
+                        
+                    # Sell signal: RSI in overbought territory
+                    elif ind_value > overbought:
+                        signal_votes["sell"] += 1
+                        # Calculate strength based on distance from overbought level
+                        strength = min((ind_value - overbought) / (100 - overbought), 1.0)
+                        total_strength += strength
+                        signal_count += 1
+                        
+                # BOLL_UB (Bollinger Band Upper) - Volatility-based indicator
+                elif ind == "boll_ub" and ind in self.I_s_thr:
+                    thr = self.I_s_thr[ind]
+                    upper_bound = thr.get("ub", 1.02)
+                    deviation = thr.get("dev", 0.03)
+                    
+                    # Sell signal: Price突破 upper band (overbought condition)
+                    if ind_value > upper_bound:
+                        signal_votes["sell"] += 1
+                        # Calculate strength based on deviation from upper bound
+                        strength = min((ind_value - upper_bound) / deviation, 1.0) if deviation > 0 else 0.0
+                        total_strength += strength
+                        signal_count += 1
+                        
+                # BOLL_LB (Bollinger Band Lower) - Volatility-based indicator
+                elif ind == "boll_lb" and ind in self.I_s_thr:
+                    thr = self.I_s_thr[ind]
+                    lower_bound = thr.get("lb", 0.98)
+                    deviation = thr.get("dev", 0.03)
+                    
+                    # Buy signal: Price跌破 lower band (oversold condition)
+                    if ind_value < lower_bound:
+                        signal_votes["buy"] += 1
+                        # Calculate strength based on deviation from lower bound
+                        strength = min((lower_bound - ind_value) / deviation, 1.0) if deviation > 0 else 0.0
+                        total_strength += strength
+                        signal_count += 1
+                        
+                # CLOSE_SMA (Close Price vs Simple Moving Average) - Trend following
+                elif ind == "close_sma" and ind in self.I_s_thr:
+                    thr = self.I_s_thr[ind]
+                    below_threshold = thr.get("below", 0.97)
+                    above_threshold = thr.get("above", 1.03)
+                    deviation = thr.get("dev", 0.05)
+                    
+                    # Buy signal: Price significantly below SMA (potential reversal)
+                    if ind_value < below_threshold:
+                        signal_votes["buy"] += 1
+                        strength = min((below_threshold - ind_value) / deviation, 1.0) if deviation > 0 else 0.0
+                        total_strength += strength
+                        signal_count += 1
+                        
+                    # Sell signal: Price significantly above SMA (overextension)
+                    elif ind_value > above_threshold:
+                        signal_votes["sell"] += 1
+                        strength = min((ind_value - above_threshold) / deviation, 1.0) if deviation > 0 else 0.0
+                        total_strength += strength
+                        signal_count += 1
+                        
+                # MACD (Moving Average Convergence Divergence) - Momentum indicator
+                elif ind == "macd" and ind in self.I_s_thr:
+                    thr = self.I_s_thr[ind]
+                    positive_threshold = thr.get("positive", 0.1)
+                    negative_threshold = thr.get("negative", -0.1)
+                    max_range = thr.get("max_range", 0.5)
+                    
+                    # Buy signal: MACD turning positive (bullish momentum)
+                    if ind_value > positive_threshold:
+                        signal_votes["buy"] += 1
+                        strength = min((ind_value - positive_threshold) / max_range, 1.0) if max_range > 0 else 0.0
+                        total_strength += strength
+                        signal_count += 1
+                        
+                    # Sell signal: MACD turning negative (bearish momentum)
+                    elif ind_value < negative_threshold:
+                        signal_votes["sell"] += 1
+                        strength = min((negative_threshold - ind_value) / max_range, 1.0) if max_range > 0 else 0.0
+                        total_strength += strength
+                        signal_count += 1
+                        
+                # CCI (Commodity Channel Index) - Cyclical oscillator
+                elif ind == "cci" and ind in self.I_s_thr:
+                    thr = self.I_s_thr[ind]
+                    oversold = thr.get("oversold", -100)
+                    overbought = thr.get("overbought", 100)
+                    neutral_range = thr.get("neutral_range", 50)
+                    
+                    # Buy signal: CCI in oversold territory
+                    if ind_value < oversold:
+                        signal_votes["buy"] += 1
+                        strength = min((oversold - ind_value) / (oversold + neutral_range), 1.0)
+                        total_strength += strength
+                        signal_count += 1
+                        
+                    # Sell signal: CCI in overbought territory
+                    elif ind_value > overbought:
+                        signal_votes["sell"] += 1
+                        strength = min((ind_value - overbought) / (overbought + neutral_range), 1.0)
+                        total_strength += strength
+                        signal_count += 1
+                        
+                # DX (Directional Movement Index) - Trend strength indicator
+                elif ind == "dx" and ind in self.I_s_thr:
+                    thr = self.I_s_thr[ind]
+                    trend_threshold = thr.get("trend_threshold", 25)
+                    strong_trend = thr.get("strong_trend", 40)
+                    
+                    # Only generate signals when trend is strong enough
+                    if ind_value > trend_threshold:
+                        # DX doesn't directly indicate buy/sell, but confirms trend strength
+                        # Could be used to amplify other signals when trend is strong
+                        if ind_value > strong_trend:
+                            # Amplify existing signals (if any) rather than generate new ones
+                            pass  # This would be handled in signal fusion
+
+        # Signal fusion: Combine multiple indicator signals
+        if signal_count > 0:
+            # Calculate average signal strength across all indicators
+            avg_strength = total_strength / signal_count
+            
+            # Determine final signal based on voting consensus
+            if signal_votes["buy"] > signal_votes["sell"] and signal_votes["buy"] > 0:
+                # Buy signal wins by majority vote
+                signal_type = "buy"
+                signal_strength = avg_strength
+                # Confidence based on vote consensus (higher consensus = higher confidence)
+                confidence = signal_votes["buy"] / signal_count
+                
+            elif signal_votes["sell"] > signal_votes["buy"] and signal_votes["sell"] > 0:
+                # Sell signal wins by majority vote
+                signal_type = "sell"
+                signal_strength = avg_strength
+                confidence = signal_votes["sell"] / signal_count
+                
+            else:
+                # Equal votes or no clear signal, maintain hold position
+                signal_type = "hold"
+                signal_strength = 0.0
+                confidence = 0.0
+
+        # Log signal analysis results for debugging and monitoring
+        logging.info(f"STE Module - _analyze_technical_signals - Symbol: {symbol}, "
+                    f"Signal: {signal_type}, Strength: {signal_strength:.3f}, "
+                    f"Confidence: {confidence:.3f}")
+        
+        # Return comprehensive signal analysis results
+        return {
+            "type": signal_type,           # Final signal type (buy/sell/hold)
+            "strength": signal_strength,   # Signal strength (0.0-1.0)
+            "confidence": confidence,      # Signal confidence based on consensus
+            "indicators": indicators,      # Raw indicator values for debugging
+            "signal_votes": signal_votes   # Vote distribution for transparency
+        }
+    def _get_indicator_value(self, ind_features, indicator_name, symbol_index):
+        """
+        Retrieve the value of specified indicators for a given symbol.
+
+        This method extracts the values of specified indicators from the features array
+        """
+        try:
+            indicator_features = [f for f in self.features_ind_flatten if indicator_name.lower() in f.lower()]
+            if indicator_features and symbol_index < len(ind_features):
+                logging.info(f"STE Module - _get_indicator_value - Indicator features: {indicator_features}, Symbol index: {symbol_index}")
+                return ind_features[symbol_index] if symbol_index < len(ind_features) else None
+            logging.warning(f"STE Module - _get_indicator_value - No indicator features found for {indicator_name} or invalid symbol index")
+            return None
+        except:
+            logging.error(f"STE Module - _get_indicator_value - Error retrieving indicator value for {indicator_name} at index {symbol_index}")
+            return None
+        
+    def _interpret_actions_strategy(self, raw_actions, signals):
+        """
+        Intelligently interpret actions: decide whether to trade based on signal strength.
+        
+        This method analyzes trading signals and determines appropriate actions,
+        considering signal strength to decide position sizing and trading timing.
+        
+        Parameters:
+        -----------
+        raw_actions : numpy.ndarray
+            Raw actions from RL agent (-1 to 1)
+        signals : dict
+            Trading signals for each symbol
+            
+        Returns:
+        --------
+        numpy.ndarray
+            Final actions array with intelligent trading decisions
+        """
+        try:
+            # Clip raw actions to valid range
+            actions = np.clip(raw_actions, -1, 1)
+            # Initialize final actions array
+            final_actions = np.zeros_like(actions, dtype=np.float32)
+            
+            # Process each symbol's signal
+            for i, symbol in enumerate(self.symbols):
+                if symbol in signals:
+                    signal = signals[symbol]
+                    raw_action = actions[i] if i < len(actions) else 0.0
+                    
+                    # Check if signal strength is sufficient for trading
+                    if signal['strength'] > self.signal_threshold:
+                        # Adjust position size based on signal strength
+                        position_multiplier = 0.3 + 0.7 * signal['strength']  # 0.3-1.0 range
+                        final_actions[i] = np.clip(raw_action * position_multiplier, -1, 1)
+                    else:
+                        # Weak signal or no signal - hold position (action = 0)
+                        final_actions[i] = 0.0
+                else:
+                    # No signal available - hold position
+                    final_actions[i] = 0.0
+            
+            logging.debug(f"STE Module - _interpret_actions_intelligently - Raw actions: {raw_actions}")
+            logging.debug(f"STE Module - _interpret_actions_intelligently - Final actions: {final_actions}")
+            
+            return final_actions
+        
+        except Exception as e:
+            logging.error(f"STE Module - Error in _interpret_actions_intelligently: {e}")
+            # Return zero actions as fallback
+            return np.zeros(len(raw_actions) if raw_actions is not None else self.action_dim, dtype=np.float32)
+
+
+    def _calculate_strategy_reward(self, raw_return, raw_actions, final_actions, signals):
+        """
+        Calculate intelligent reward function to encourage reasonable trading behavior.
+        
+        This reward function balances multiple objectives:
+        1. Portfolio returns
+        2. Cash utilization efficiency
+        3. Trading frequency control
+        4. Signal consistency
+        5. Risk management
+        
+        Parameters:
+        -----------
+        raw_return : float
+            Raw portfolio return from current step
+        raw_actions : numpy.ndarray
+            Original actions from RL agent
+        final_actions : numpy.ndarray
+            Final actions after signal processing
+        signals : dict
+            Trading signals for current step
+            
+        Returns:
+        --------
+        float
+            Calculated reward value
+        """
+        try:
+            # Initialize reward with raw return
+            reward = float(raw_return)
+            
+            # Cash penalty - encourage investment rather than holding cash
+            cash_penalty_proportion = getattr(self.config, 'cash_penalty_proportion', 0.01)
+            cash_penalty = self.cash * cash_penalty_proportion
+            reward -= cash_penalty
+            
+            # Trading frequency penalty - avoid excessive trading
+            trade_penalty = 0.0  # Initialize with default value
+            if self.last_actions is not None:
+                # Calculate action change magnitude
+                action_change = np.mean(np.abs(final_actions - self.last_actions))
+                trade_penalty_rate = 0.001  # Configurable penalty rate
+                trade_penalty = action_change * trade_penalty_rate
+                reward -= trade_penalty
+            else:
+                # No previous actions, no penalty
+                trade_penalty = 0.0
+            
+            # Signal consistency bonus - reward actions aligned with signals
+            signal_consistency_bonus = 0.0
+            for i, symbol in enumerate(self.symbols):
+                if symbol in signals:
+                    signal = signals[symbol]
+                    action = final_actions[i] if i < len(final_actions) else 0.0
+                    
+                    # Reward when actions align with signals
+                    if signal['type'] == 'buy' and action > self.hold_threshold:
+                        signal_consistency_bonus += signal['strength'] * 0.001
+                    elif signal['type'] == 'sell' and action < -self.hold_threshold:
+                        signal_consistency_bonus += signal['strength'] * 0.001
+            
+            reward += signal_consistency_bonus
+            
+            # Log reward components for debugging
+            logging.info(f"STE Module - _calculate_strategy_reward - Components: "
+                        f"Raw return: {raw_return:.6f}, "
+                        f"Cash penalty: {cash_penalty:.6f}, "
+                        f"Trade penalty: {trade_penalty:.6f}, "
+                        f"Signal bonus: {signal_consistency_bonus:.6f}, "
+                        f"Final reward: {reward:.6f}")
+            
+            return float(reward)
+            
+        except Exception as e:
+            logging.error(f"STE Module - Error in _calculate_strategy_reward: {e}")
+            # Return raw return as fallback
+            return float(raw_return) if raw_return is not None else 0.0
 
     def step(self, actions):
         """
@@ -329,6 +770,9 @@ class StockTradingEnv(gym.Env):
         - CVaR shaping uses historical returns (min 10) to penalize tail risks, configurable via cvar_alpha/factor.
         - Vectorized operations ensure efficiency for high-dimensional states/actions.
         """
+        logging.info(f"STE Module - Step debug - action_dim: {self.action_dim}")
+        logging.info(f"STE Module - Step debug - senti_feature_index length: {len(self.senti_feature_index) if hasattr(self, 'senti_feature_index') else 'N/A'}")
+        logging.info(f"STE Module - Step debug - risk_feature_index length: {len(self.risk_feature_index) if hasattr(self, 'risk_feature_index') else 'N/A'}")
         try:
             # Clip actions to valid range [-1, 1] for bounded decisions
             actions = np.clip(actions, -1, 1).astype(np.float32)
@@ -348,27 +792,14 @@ class StockTradingEnv(gym.Env):
                 }
                 return self._get_states(), reward, done, truncated, info
 
-            # Compute the index of current step in targets
-            target_step_idx = self.current_step - self.window_size
-
-            if target_step_idx >= len(self.targets):
-                logging.warning(f"STE Module - Env Step - No target available for step {target_step_idx}")
-                done = True
-                truncated = False
-                reward = 0.0
-                info = {
-                    'Done': done,
-                    'Truncated': truncated,
-                    'Reward': reward,
-                    'Total Asset': self.total_asset
-                }
-                return self._get_states(), reward, done, truncated, info
-
             # Fetch current feature row (t-1, as step advances after trade)
             current_row = self.trading_df[self.current_step - 1]  # Current after trade
+            signals = self._identify_trading_signals(current_row)
+
+            final_actions = self._interpret_actions_strategy(actions, signals)
             # Extract sentiment/risk per stock if factors enabled, else zeros
-            sentiment_per_stock = current_row[self.senti_feature_index] if self.use_senti_factor else np.zeros(self.action_dim, dtype=np.float32)
-            risk_per_stock = current_row[self.risk_feature_index] if self.use_risk_factor else np.zeros(self.action_dim, dtype=np.float32)
+            sentiment_per_stock = current_row[self.senti_feature_index] if self.use_senti_factor and len(self.senti_feature_index) > 0 else np.zeros(self.action_dim, dtype=np.float32)
+            risk_per_stock = current_row[self.risk_feature_index] if self.use_risk_factor and len(self.risk_feature_index) > 0 else np.zeros(self.action_dim, dtype=np.float32)
 
             # Get thresholds and infusion strengths for sentiment
             pos_senti_thr, neg_senti_thr, senti_inf_strength = self._get_threshold_and_strength(
@@ -382,34 +813,38 @@ class StockTradingEnv(gym.Env):
             Senti_factor = np.ones(self.action_dim, dtype=np.float32)
             Risk_factor = np.ones(self.action_dim, dtype=np.float32)
 
+            logging.info(f"STE Module - Debug - Senti_factor type: {type(Senti_factor)}, shape: {getattr(Senti_factor, 'shape', 'no shape')}")
+            logging.info(f"STE Module - Debug - risk_factor type: {type(Risk_factor)}, shape: {getattr(Risk_factor, 'shape', 'no shape')}")
+            logging.info(f"STE Module - Debug - final_actions type: {type(final_actions)}, shape: {getattr(final_actions, 'shape', 'no shape')}")
+
             # Apply sentiment infusion factor (vectorized for efficiency)
-            if self.use_senti_factor:
+            if self.use_senti_factor and len(self.senti_feature_index) > 0:
                 # Masks for positive/negative sentiment exceeding thresholds
                 mask_pos = sentiment_per_stock > pos_senti_thr
                 mask_neg = sentiment_per_stock < neg_senti_thr
 
                 # Enhance if aligned (pos senti & buy, neg & sell), penalize if opposed
-                Senti_factor[np.where((mask_pos & (actions > 0)) | (mask_neg & (actions < 0)))] = 1 + senti_inf_strength
-                Senti_factor[np.where((mask_pos & (actions < 0)) | (mask_neg & (actions > 0)))] = 1 - senti_inf_strength
+                Senti_factor[np.where((mask_pos & (final_actions > 0)) | (mask_neg & (final_actions < 0)))] = 1 + senti_inf_strength
+                Senti_factor[np.where((mask_pos & (final_actions < 0)) | (mask_neg & (final_actions > 0)))] = 1 - senti_inf_strength
 
                 # Debug log sentiment factors
                 logging.debug(f"STE Module - Env Step - Sentiment factor: {Senti_factor}")
 
             # Apply risk infusion factor (vectorized)
-            if self.use_risk_factor:
+            if self.use_risk_factor and len(self.risk_feature_index) > 0:
                 # Masks for positive/negative risk exceeding thresholds
                 mask_pos = risk_per_stock > pos_risk_thr
                 mask_neg = risk_per_stock < neg_risk_thr
 
                 # Penalize if aligned (high risk & buy, low & sell), enhance if opposed
-                Risk_factor[np.where((mask_pos & (actions > 0)) | (mask_neg & (actions < 0)))] = 1 - risk_inf_strength
-                Risk_factor[np.where((mask_pos & (actions < 0)) | (mask_neg & (actions > 0)))] = 1 + risk_inf_strength
+                Risk_factor[np.where((mask_pos & (final_actions > 0)) | (mask_neg & (final_actions < 0)))] = 1 - risk_inf_strength
+                Risk_factor[np.where((mask_pos & (final_actions < 0)) | (mask_neg & (final_actions > 0)))] = 1 + risk_inf_strength
 
                 # Debug log risk factors
                 logging.debug(f"STE Module - Env Step - Risk factor: {Risk_factor}")
 
             # Modulate actions with sentiment factor, re-clip to [-1,1]
-            mod_actions = np.clip(Senti_factor * actions, -1, 1)
+            mod_actions = np.clip(Senti_factor * final_actions, -1, 1)
 
             # Execute trades with modulated actions
             self._execute_trades(mod_actions)
@@ -421,13 +856,11 @@ class StockTradingEnv(gym.Env):
             # Calculate raw return and weight by risk factor (dot product for multi-stock)
             raw_return = self._calculate_return() * np.dot(weights, Risk_factor)
 
+            reward = self._calculate_strategy_reward(raw_return, actions, final_actions, signals)
+
             # Debug log if both factors enabled
             if self.use_senti_factor and self.use_risk_factor:
                 logging.debug(f"STE Module - Env Step - Raw return: {raw_return}, Risk_factor: {Risk_factor}, Sentiment_factor: {Senti_factor}")
-
-            # Apply cash penalty to encourage investment
-            penalty = getattr(self.config, 'cash_penalty_proportion', 0.01)
-            reward = np.float32(raw_return - self.cash * penalty)
 
             # CVaR shaping for risk-aware rewards
             self.returns_history.append(raw_return)
@@ -448,8 +881,9 @@ class StockTradingEnv(gym.Env):
 
             # Advance timestep
             self.current_step += 1
+            self.last_actions = final_actions.copy()
             # Check if episode done (reached terminal step)
-            done = (self.current_step >= self.terminal_step) or (target_step_idx >= len(self.targets) - 1)
+            done = (self.current_step >= self.terminal_step)
             truncated = False  # No truncation in this environment
 
             # Build info dict for step monitoring
@@ -468,10 +902,11 @@ class StockTradingEnv(gym.Env):
                 'Use Risk Factor': self.use_risk_factor,
                 'Use Senti Threshold': self.use_senti_threshold,
                 'Use Risk Threshold': self.use_risk_threshold,
-                'Use Dynamic Threshold': self.use_dynamic_threshold
+                'Use Dynamic Threshold': self.use_dynamic_threshold,
+                'Signals': signals,
+                'Raw Actions': actions,
+                'Final Actions': final_actions,
             }
-
-            # Log step info
             logging.info(f"STE Module - Env Step - Step info: {info}")
 
             # Return Gym-compatible tuple

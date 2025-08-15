@@ -85,7 +85,6 @@ class FeatureEngineer:
         self.split_mode = self.config.split_mode  # Mode for data splitting ('date' or 'ratio')
         self.cross_valid_mode = self.config.cross_valid_mode  # Cross-validation type ('time_series' or 'kfold')
         self.exper_mode = self.config.exper_mode  # Dictionary of experiment modes/groups
-        self.ind_mode = self.config.ind_mode  # Indicator mode for stock feature computation
         self.risk_mode = self.config.risk_mode  # Flag to enable risk score computation
 
         self.stock_engineer = StockFeatureEngineer(config)  # Instantiate stock feature engineer for technical indicators
@@ -109,6 +108,7 @@ class FeatureEngineer:
 
         self.smooth_window = getattr(self.config, 'smooth_window_size', 5)
 
+        self.plot_feature_visualization = getattr(self.config, 'plot_feature_visualization', False)
         self.force_process_news = getattr(self.config, 'force_process_news', False)
         self.force_fuse_data = getattr(self.config, 'force_fuse_data', False)
         self.force_normalize_features = getattr(self.config, 'force_normalize_features', True)
@@ -117,9 +117,7 @@ class FeatureEngineer:
         self.use_symbol_name = getattr(self.config, 'use_symbol_name', True)  # Flag to use symbol name in cache file)
 
         self.fused_data_dir = getattr(self.config, 'FUSED_DATA_DIR', 'fused_data_cache')    # Config for saving fused_df after merge_features
-        os.makedirs(self.fused_data_dir, exist_ok=True)
         self.processed_news_dir = getattr(self.config, 'PROCESSED_NEWS_DIR', 'processed_news_cache')
-        os.makedirs(self.processed_news_dir, exist_ok=True)
 
     def process_news_chunks(self, news_chunks_gen):
         """
@@ -145,7 +143,7 @@ class FeatureEngineer:
         - Aggregates via pd.concat; logs row count for monitoring.
         - Empty return maintains column structure for downstream compatibility.
         """
-        processed_news_list = os.listdir(self.fused_data_dir)
+        processed_news_list = os.listdir(self.processed_news_dir)
         if len(processed_news_list) > 0 and not self.force_process_news:
             logging.info(f"FE Module - _news_chunks - Exist {len(processed_news_list)} processed news cache : {processed_news_list}")
             path_suffix = self._generate_path_suffix(extension='.csv')
@@ -153,7 +151,7 @@ class FeatureEngineer:
             # Check cache file
             for filename in processed_news_list:
                 if filename.endswith(path_suffix):
-                    self.config.news_cache_path = os.path.join(self.fused_data_dir, filename)
+                    self.config.news_cache_path = os.path.join(self.processed_news_dir, filename)
                     logging.info(f"FE Module - _news_chunks - Target cache path : {self.config.news_cache_path}")
                     
                     # Load cache
@@ -176,7 +174,7 @@ class FeatureEngineer:
         if processed_chunks:
             aggregated_df = pd.concat(processed_chunks, ignore_index=True)  # Concatenate all chunks into a single DF, reset index for clean aggregation
             logging.info(f"FE Module - _news_chunks - Aggregated cleaned news: {len(aggregated_df)} rows")  # Log aggregated row count for data volume tracking
-            processed_path = self.save_target_data_csv(aggregated_df, prefix="Processed", save_path=self.fused_data_dir)
+            processed_path = self.save_target_data_csv(aggregated_df, prefix="Processed", save_path=self.processed_news_dir)
             self.config.processed_cache_path = processed_path
             logging.info(f"FE Module - _news_chunks - Saved processed news to {processed_path}")
             return aggregated_df  # Return the full aggregated DataFrame
@@ -261,7 +259,7 @@ class FeatureEngineer:
                     logging.info(f"FE Module - _after_merge - Fillna {nulls_before - nulls_after} NaNs with value 0.0 in {col}")
         return df  # Return the filled DataFrame
 
-    def merge_features(self, stock_data_dict, sentiment_df, risk_df=None, mode=None):
+    def merge_features(self, stock_data_dict, sentiment_df, risk_df=None, prefix='Fused_Data'):
         """
         Introduction
         ------------
@@ -276,8 +274,6 @@ class FeatureEngineer:
             DataFrame with sentiment scores, columns: 'Date', 'Symbol', 'sentiment_score'.
         risk_df : pd.DataFrame, optional
             DataFrame with risk scores, similar structure (enabled if risk_mode=True).
-        ind_mode : str, optional
-            Indicator mode for feature computation.
 
         Returns
         -------
@@ -346,11 +342,11 @@ class FeatureEngineer:
         fused_df = self._fill_nan_after_merge(fused_df)  # Final NaN fill after all operations
         logging.info(f"FE Module - merge_features - Prepared fused_df , Columns : {fused_df.columns.tolist()}")
         # Save fused_df
-        self.config.fused_cache_path = self.save_target_data_csv(fused_df,prefix=f"{mode}_Fused_Data" if mode else '',save_path=self.fused_data_dir)
+        self.config.fused_cache_path = self.save_target_data_csv(fused_df, prefix=prefix, save_path=self.fused_data_dir)
         logging.info(f"FE Module - generate_experiment_data - Saved fused_df to {self.config.fused_cache_path}")
         return fused_df  # Return the fully fused and cleaned DataFrame
 
-    def _generate_scaler_path(self, base_dir, group, mode):
+    def _generate_scaler_path(self, base_dir, group='rl_algorithm', mode='PPO'):
         """Generate scaler path dynamiclly"""
         filename = f"scaler_{group}_{mode}_train.pkl"
         scaler_path = os.path.join(base_dir, filename)
@@ -384,13 +380,14 @@ class FeatureEngineer:
         smoothed_df.reset_index(inplace=True)
         
         return smoothed_df
-    
+
     def normalize_features(self, df, fit=False, means_stds=None, scaler_path=None, data_type='train'):
         """
         Introduction
         ------------
         Normalize selected feature columns in the DataFrame using mean-std standardization.
         Supports fit mode (compute and save scaler) and transform mode (apply existing scaler).
+        Applies clipping to normalized indicator columns based on quantiles to limit outlier impact.
 
         Parameters
         ----------
@@ -402,6 +399,8 @@ class FeatureEngineer:
             Pre-computed means and stds for columns (used in transform mode).
         scaler_path : str, optional
             Path to load/save scaler with joblib.
+        data_type : str, optional
+            Type of data being processed ('train', 'valid', 'test'). Used for logging.
 
         Returns
         -------
@@ -416,6 +415,9 @@ class FeatureEngineer:
         - Uses min std=1e-6 to avoid division by zero.
         - Caches scaler to disk for reuse; logs loading/saving.
         - Returns empty dict if no columns to normalize.
+        - Applies clipping based on quantiles (e.g., 0.5% and 99.5%) to normalized indicator columns post-normalization.
+        - In 'fit' mode, quantile clipping bounds are calculated and saved.
+        - In 'transform' mode, saved quantile bounds are loaded and applied.
         """
         logging.info(f"FE Module - normalize_features - Full Data Columns : {df.columns.tolist()}")
         if self.filter_ind and all(any(col.startswith(ind) for col in df.columns) for ind in self.filter_ind):
@@ -440,18 +442,95 @@ class FeatureEngineer:
         if not filter_normalize_cols:
             # Early exit if no valid columns found; avoid unnecessary processing
             logging.warning("FE Module - normalize_features - No valid columns to normalize.")
-            return df, {}  # Always return tuple for consistency in fit mode
+            return (df, {}) if fit else df # Always return tuple for consistency in fit mode
+
+        # Define Clipping Parameters
+        # Quantile thresholds for clipping (can be made configurable if needed)
+        LOWER_QUANTILE = 0.005  # 0.5%
+        UPPER_QUANTILE = 0.995  # 99.5%
+        # Keys for saving/loading clipping bounds in the scaler file
+        CLIP_BOUNDS_KEY = "_clip_bounds_"
+
+        # Internal Helper Function for Clipping 
+        def _apply_clipping(dataframe, columns_to_clip, clipping_bounds_dict=None, calculate_bounds=False, operation_desc=""):
+            """
+            Applies clipping to specified columns in a DataFrame.
+            If calculate_bounds is True, it calculates and returns the bounds.
+            If calculate_bounds is False, it uses the provided clipping_bounds_dict.
+            """
+            if not columns_to_clip:
+                logging.info(f"FE Module - normalize_features - No columns provided for clipping ({operation_desc}).")
+                return dataframe, {} # Return empty dict for bounds if none to clip
+
+            clipped_df = dataframe.copy() # Work on a copy to avoid modifying the original passed df immediately
+            calculated_bounds = {}
+            
+            if calculate_bounds:
+                logging.info(f"FE Module - normalize_features - Calculating and applying clipping based on quantiles [{LOWER_QUANTILE}, {UPPER_QUANTILE}] ({operation_desc}).")
+                for col in columns_to_clip:
+                    if col in clipped_df.columns:
+                        lower_bound = clipped_df[col].quantile(LOWER_QUANTILE)
+                        upper_bound = clipped_df[col].quantile(UPPER_QUANTILE)
+                        calculated_bounds[col] = (lower_bound, upper_bound)
+                        clipped_df[col] = clipped_df[col].clip(lower=lower_bound, upper=upper_bound)
+                        logging.debug(f"FE Module - normalize_features - Clipping bounds for {col} ({operation_desc}): [{lower_bound:.4f}, {upper_bound:.4f}]")
+                    else:
+                        logging.warning(f"FE Module - normalize_features - Column '{col}' not found in DataFrame for clipping ({operation_desc}).")
+            else: # Apply provided bounds
+                if not clipping_bounds_dict:
+                    logging.info(f"FE Module - normalize_features - No clipping bounds provided ({operation_desc}). Skipping clipping or applying default.")
+                    for col in columns_to_clip:
+                        if col in clipped_df.columns:
+                            lower_bound = clipped_df[col].min()
+                            upper_bound = clipped_df[col].max()
+                            clipped_df[col] = clipped_df[col].clip(lower=lower_bound, upper=upper_bound)
+                            logging.debug(f"FE Module - normalize_features - Applied default clipping bounds for {col} ({operation_desc}): [{lower_bound:.4f}, {upper_bound:.4f}]")
+                else:
+                    logging.info(f"FE Module - normalize_features - Applying provided clipping bounds ({operation_desc}).")
+                    for col in columns_to_clip:
+                        if col in clipped_df.columns and col in clipping_bounds_dict:
+                            lower_bound, upper_bound = clipping_bounds_dict[col]
+                            clipped_df[col] = clipped_df[col].clip(lower=lower_bound, upper=upper_bound)
+                            logging.debug(f"FE Module - normalize_features - Applied clipping bounds for {col} ({operation_desc}): [{lower_bound:.4f}, {upper_bound:.4f}]")
+                        elif col not in clipped_df.columns:
+                             logging.warning(f"FE Module - normalize_features - Column '{col}' not found in DataFrame for clipping ({operation_desc}).")
+                        else: # col not in clipping_bounds_dict
+                             # Fallback to data min/max if not found in provided bounds
+                             lower_bound = clipped_df[col].min()
+                             upper_bound = clipped_df[col].max()
+                             clipped_df[col] = clipped_df[col].clip(lower=lower_bound, upper=upper_bound)
+                             logging.debug(f"FE Module - normalize_features - Applied fallback (min/max) clipping bounds for {col} ({operation_desc}): [{lower_bound:.4f}, {upper_bound:.4f}]")
+
+            return clipped_df, calculated_bounds
+
+        # Main Logic 
+        scaler_data_to_save = None
+        loaded_scaler_data = None
+        means_stds = None
+        clip_bounds = {}
 
         if fit:
-            # Fit mode: Compute or load means_stds
+            # Fit mode: Compute or load means_stds and clipping bounds
             if scaler_path and os.path.exists(scaler_path) and self.force_normalize_features:
                 logging.info(f"FE Module - normalize_features - Removed old scaler at {scaler_path} to recompute.")
                 os.remove(scaler_path)  # Remove scaler cache and recompute
             if scaler_path and os.path.exists(scaler_path):
                 logging.info(f"FE Module - normalize_features - Loaded existing scaler from {scaler_path} (fit mode)")
-                means_stds = joblib.load(scaler_path)   # Load scaler if path provided
+                loaded_scaler_data = joblib.load(scaler_path)   # Load scaler data if path provided
+                # Check if it contains the expected structure (dict with means_stds and clip_bounds)
+                if isinstance(loaded_scaler_data, dict) and 'means_stds' in loaded_scaler_data:
+                     means_stds = loaded_scaler_data['means_stds']
+                     # Load clip bounds if they exist in the loaded data
+                     clip_bounds = loaded_scaler_data.get(CLIP_BOUNDS_KEY, {})
+                else:
+                    # Backward compatibility: if it's just the old means_stds dict
+                    means_stds = loaded_scaler_data
+                    clip_bounds = {}
+                    logging.info("FE Module - normalize_features - Loaded old scaler format (means_stds dict only).")
+
             if not means_stds or self.force_normalize_features:
                 means_stds = {}  # Initialize dict for column-wise means and stds
+                # Normalize columns
                 for col in filter_normalize_cols:
                     logging.info(f"FE Module - normalize_features - Normalizing column for {data_type} data: {col}")
                     mean = df[col].mean()  # Compute mean
@@ -459,42 +538,101 @@ class FeatureEngineer:
                     std = max(std, 1e-6)  # Enforce min std to prevent division by zero
                     means_stds[col] = (mean, std)  # Store tuple
                     df[col] = (df[col] - mean) / std  # Apply normalization
-                # Only remain filtered columns, discard others
+
+                # Apply Clipping and Calculate Bounds (using helper)
+                df, clip_bounds = _apply_clipping(df, filter_normalize_cols, calculate_bounds=True, operation_desc=f"for {data_type} data (fit - calculate)")
+                
+                # Filter columns
                 df = df[final_target_cols]
+                
+                # Save combined scaler data (means_stds + clip_bounds)
                 if scaler_path:
+                    scaler_data_to_save = {
+                        'means_stds': means_stds,
+                        CLIP_BOUNDS_KEY: clip_bounds
+                    }
                     os.makedirs(os.path.dirname(scaler_path), exist_ok=True)  # Ensure directory exists for saving
-                    joblib.dump(means_stds, scaler_path)  # Save scaler for future use
-                    logging.info(f"FE Module - normalize_features - Saved new scaler to {scaler_path}")
+                    joblib.dump(scaler_data_to_save, scaler_path)  # Save combined scaler data for future use
+                    logging.info(f"FE Module - normalize_features - Saved new scaler (means_stds + clip_bounds) to {scaler_path}")
             else:
+                # Transform mode using loaded means_stds and clip_bounds
+                # Normalize using loaded parameters
                 for col in filter_normalize_cols:
                     mean, std = means_stds.get(col, (0, 1))
                     std = max(std, 1e-6)
                     df[col] = (df[col] - mean) / std
-                # Only remain filtered columns, discard others
+                
+                # Apply Clipping using loaded bounds (using helper)
+                # Determine if we need to recalculate bounds (backward compatibility or bounds missing)
+                recalculate_clip_bounds = not bool(clip_bounds)
+                if recalculate_clip_bounds:
+                    df, clip_bounds = _apply_clipping(df, filter_normalize_cols, calculate_bounds=True, operation_desc=f"for {data_type} data (fit - recalculate due to missing bounds)")
+                    # Update scaler_data_to_save if we are saving
+                    if scaler_path:
+                        scaler_data_to_save = {
+                            'means_stds': means_stds,
+                            CLIP_BOUNDS_KEY: clip_bounds
+                        }
+                        os.makedirs(os.path.dirname(scaler_path), exist_ok=True)
+                        joblib.dump(scaler_data_to_save, scaler_path)
+                        logging.info(f"FE Module - normalize_features - Updated and saved scaler (means_stds + recalculated clip_bounds) to {scaler_path}")
+                else:
+                    df, _ = _apply_clipping(df, filter_normalize_cols, clipping_bounds_dict=clip_bounds, calculate_bounds=False, operation_desc=f"for {data_type} data (fit - using loaded bounds)")
+                
+                # Filter columns
                 df = df[final_target_cols]
 
-            logging.info(f"FE Module - normalize_features - Successfull Normalized, return df with columns: {df.columns.tolist()}, fit mode: {fit}")
-            return df, means_stds  # Return normalized df and computed means_stds in fit mode
-        
-        else:
-            # Transform mode: Apply provided or loaded means_stds
-            if scaler_path and os.path.exists(scaler_path):
-                logging.info(f"FE Module - normalize_features - Loaded scaler from {scaler_path} for transform")
-                means_stds = joblib.load(scaler_path)  # Load scaler if path provided
-            if not means_stds:
-                # Fallback: If no means_stds, warn and use identity transform (mean=0, std=1)
-                logging.warning("FE Module - normalize_features - No scaler found; defaulting to mean=0, std=1")
-                means_stds = {col: (0, 1) for col in filter_normalize_cols}
-            for col in filter_normalize_cols:
-                logging.info(f"FE Module - normalize_features - Normalizing column for {data_type} data: {col}")
-                mean, std = means_stds.get(col, (0, 1))  # Get stats or default to no-op
-                std = max(std, 1e-6)  # Enforce min std
-                df[col] = (df[col] - mean) / std  # Apply normalization
-            # Only remain filtered columns, discard others
-            df = df[final_target_cols]
+        else: # Transform mode (fit=False)
+            # Transform mode (fit=False) when means_stds are provided or loaded
+            if not means_stds and scaler_path and os.path.exists(scaler_path):
+                logging.info(f"FE Module - normalize_features - Loaded existing scaler from {scaler_path} (transform mode)")
+                loaded_scaler_data = joblib.load(scaler_path) # Load scaler data if path provided
+                # Check structure
+                if isinstance(loaded_scaler_data, dict) and 'means_stds' in loaded_scaler_data:
+                     means_stds = loaded_scaler_data['means_stds']
+                     clip_bounds = loaded_scaler_data.get(CLIP_BOUNDS_KEY, {})
+                else:
+                     # Backward compatibility
+                     means_stds = loaded_scaler_data
+                     clip_bounds = {}
+                     logging.info("FE Module - normalize_features - Loaded old scaler format (means_stds dict only) in transform mode.")
+            elif not means_stds:
+                 logging.warning("FE Module - normalize_features - Transform mode requested but no means_stds or valid scaler_path provided. Returning unnormalized df for target columns.")
+                 # Only remain filtered columns, discard others
+                 df = df[final_target_cols]
+                 return df # Return early if no means_stds available
 
-            logging.info(f"FE Module - normalize_features - Successfull Normalized, return df with columns: {df.columns.tolist()}, fit mode: {fit}")
-            return df, means_stds  # Return normalized df and computed means_stds in fit mode
+            if means_stds:
+                # Normalize using loaded parameters
+                for col in filter_normalize_cols:
+                    mean, std = means_stds.get(col, (0, 1))
+                    std = max(std, 1e-6)
+                    df[col] = (df[col] - mean) / std
+                
+                # Apply Clipping using loaded bounds (using helper)
+                df, _ = _apply_clipping(df, filter_normalize_cols, clipping_bounds_dict=clip_bounds, calculate_bounds=False, operation_desc=f"for {data_type} data (transform mode)")
+
+            # Filter columns (applies clipping result and filters)
+            df = df[final_target_cols] 
+
+        logging.info(f"FE Module - normalize_features - Successfully Normalized and Clipped, return df with columns: {df.columns.tolist()}, fit mode: {fit}")
+        # Return normalized (and clipped) df and computed means_stds in fit mode
+        if fit:
+            # If we calculated new scaler data to save (e.g., in the recalculate branch), return it.
+            # Otherwise, return the original loaded means_stds.
+            return_scaler_data = scaler_data_to_save if scaler_data_to_save else means_stds
+            if isinstance(return_scaler_data, dict) and 'means_stds' in return_scaler_data:
+                # Return the means_stds part for consistency with original signature if needed,
+                # or the whole dict. Let's return the whole dict as it contains both.
+                # The original signature for fit=True was (df, means_stds_dict).
+                # To be precise, we should return the 'means_stds' part of the dict.s
+                return df, return_scaler_data.get('means_stds', {})
+            else:
+                # Backward compatibility or if scaler_data_to_save was just means_stds
+                return df, return_scaler_data
+        else:
+            return df
+
 
     def prepare_rl_data(self, fused_df, symbols=None, data_type='train'):
         """
@@ -528,12 +666,12 @@ class FeatureEngineer:
         - Targets extracted as matrix for multi-symbol prediction.
         - Logs prepared RL data count; assumes symbols ordered for consistent concat.
         """
-        logging.info(f"FE Module - prepare_rl_data - Debug info:")
-        logging.info(f"  fused_df shape: {fused_df.shape}")
-        logging.info(f"  symbols: {symbols or self.config.symbols}")
-        logging.info(f"  window_size: {self.window_size}")
-        logging.info(f"  W_f: {self.W_f}, W_e: {self.W_e}")
-        logging.info(f"  min_episode_length: {self.W_f * self.window_size + self.W_e}")
+        logging.debug(f"FE Module - prepare_rl_data - Debug info:")
+        logging.debug(f"  fused_df shape: {fused_df.shape}")
+        logging.debug(f"  symbols: {symbols or self.config.symbols}")
+        logging.debug(f"  window_size: {self.window_size}")
+        logging.debug(f"  W_f: {self.W_f}, W_e: {self.W_e}")
+        logging.debug(f"  min_episode_length: {self.W_f * self.window_size + self.W_e}")
 
         symbols = symbols or self.config.symbols  # Default to config symbols if not provided
         logging.info(f"FE Module - prepare_rl_data - Begin preparing RL data with window={self.window_size}, prediction_days={self.prediction_days}, symbols={symbols}")  # Log preparation params
@@ -799,7 +937,45 @@ class FeatureEngineer:
             logging.warning(f"FE Module - _generate_path_suffix - Fail to generate path suffix : {e}")
             return None  # Return None on failure to prevent downstream errors
     
-    def save_target_data_csv(self, target_df, prefix=None, extension='.csv', save_path=None):
+    def load_fused_df_cache(self, prefix='Fused_data'):
+        """
+        Load the fused DataFrame from a cache file if available.
+
+        Returns
+        -------
+        pd.DataFrame or None
+            The loaded fused DataFrame if a valid cache file is found, otherwise None.
+
+        Notes
+        -----
+        - The cache file is identified by a unique suffix based on the current configuration.
+        - If a valid cache file is found, it is loaded and returned.
+        - If no valid cache file is found, None is returned, and a new cache file will be generated.
+        """
+        logging.info("FE Module - generate_experiment_data - Trying to load fused_df cache")
+        fused_data_list = os.listdir(self.fused_data_dir)
+
+        # Trying to load cache fused_df
+        fused_df = None
+        if len(fused_data_list) > 0 and not self.force_fuse_data:
+            logging.debug(f"FE Module - generate_experiment_data - Exist {len(fused_data_list)} processed news cache : {fused_data_list}")
+            fused_data_path = f"{prefix}_{self._generate_path_suffix(extension='.csv')}"
+            
+            # Check target cache
+            for filename in fused_data_list:
+                if filename.endswith(fused_data_path):
+                    self.config.fused_cache_path = os.path.join(self.fused_data_dir, filename)
+                    logging.info(f"FE Module - generate_experiment_data - Target cache path : {self.config.fused_cache_path}")
+                    
+                    # Load cache
+                    logging.info(f"FE Module - generate_experiment_data - Load fused_df for {self.config.symbols}")
+                    fused_df = pd.read_csv(self.config.fused_cache_path, parse_dates=['Date'])
+                    logging.debug(f"FE Module - generate_experiment_data - Loaded fused_df: {len(fused_df)} rows")
+                    return fused_df
+        logging.warning(f"FE Module - load_fused_df_cache - No cache fused_df exist. Return Empty DataFrame")
+        return fused_df
+
+    def save_target_data_csv(self, target_df, prefix=None, save_path=None, extension='.csv'):
         """
         Save the fused DataFrame to a CSV file.
 
@@ -824,13 +1000,15 @@ class FeatureEngineer:
         logging.info("FE Module - save_fused_data_csv - Initial fused_data_csv save path")
         try:
             path_suffix = self._generate_path_suffix(extension=extension)
+            filename = f"{prefix}_{path_suffix}"
             if path_suffix:
-                file_path = os.path.join(save_path if save_path else self.processed_news_dir, f"{prefix}_{path_suffix}")
+                file_path = os.path.join(save_path if save_path else self.processed_news_dir, filename)
                 target_df.to_csv(file_path, index=False)
                 logging.info(f"FE Module - save_fused_data_csv - Successfully saved fused data to {file_path}")
                 return file_path
             else:
                 logging.warning("FE Module - save_fused_data_csv - Failed to generate path suffix for CSV file")
+                return None
         except Exception as e:
             logging.error(f"FE Module - save_fused_data_csv - Error saving fused data: {e}")
 
@@ -1084,12 +1262,12 @@ class FeatureEngineer:
                 self.config.features_risk[symbol] = risk_cols  # Store risk cols
                 self.config.features_all[symbol] = features_cols_per_symbol  # Store all combined
                 logging.info(f"FE Module - _update_features_categories - Update feature categories for symbol: {symbol}")  # Log per-symbol update
-                logging.info(f"FE Module - _update_features_categories - Features dim : features_price {price_cols}, features_ind {ind_cols}, features_senti {senti_cols}, features_risk {risk_cols}, features_all:{len(price_cols + ind_cols + senti_cols + risk_cols)}")
+                logging.debug(f"FE Module - _update_features_categories - Features dim : features_price {price_cols}, features_ind {ind_cols}, features_senti {senti_cols}, features_risk {risk_cols}, features_all:{len(price_cols + ind_cols + senti_cols + risk_cols)}")
 
                 if self.config.features_dim_per_symbol is None:
                     # Compute and update dimension per symbol
                     self.config.features_dim_per_symbol = len(features_cols_per_symbol)
-                    logging.info(f"FE Module - _update_features_categories - Update Features dim per symbol : {self.config.features_dim_per_symbol}")  # Log computed dim
+                    logging.debug(f"FE Module - _update_features_categories - Update Features dim per symbol : {self.config.features_dim_per_symbol}")  # Log computed dim
             
             logging.info(f"FE Module - _update_features_categories - Successfully update all feature categories to ConfigSetup")  # Log overall success
         except Exception as e:
@@ -1144,12 +1322,12 @@ class FeatureEngineer:
             # Directory is empty; proceed to generate new experiment data
             logging.info("=========== Start to generate experiment data dict ===========")
             exper_data_dict = {}    # Initialize dictionary to store data for each mode
-            exper_news_cols = {
-                'benchmark': [],
-                'title_only': ['Article_title'],
-                'title_textrank': ['Article_title', 'Textrank_summary'],
-                'title_fulltext': ['Article_title', 'Full_Text']
-            }   # Define news column configurations for different modes
+            exper_news_cols = getattr(self.config, 'exper_mode', {
+                                        'benchmark': [],
+                                        'title_only': ['Article_title'],
+                                        'title_textrank': ['Article_title', 'Textrank_summary'],
+                                        'title_fulltext': ['Article_title', 'Full_Text']
+                                    })   # Define news column configurations for different modes
             
             # Flag to control feature analysis execution (execute only once)
             pre_feature_analysis_completed = False
@@ -1185,33 +1363,15 @@ class FeatureEngineer:
                 # Determine model_type and news_cols based on group
                 group = next((group for group, modes in self.exper_mode.items() if mode in modes), None)    # Re-fetch group if needed
                 if group == 'rl_algorithm':
-                    self.news_engineer.text_cols = exper_news_cols['title_textrank']  # Fix to title_textrank, reference from FinRL_DeepSeek (4.2: stock recommendation prompt)
+                    self.news_engineer.text_cols = original_exper_news_cols  # Dynamic changed by Config
                     model_type = mode  # PPO, CPPO, etc.
                 else:
-                    self.news_engineer.text_cols = exper_news_cols.get(mode, [])    # Use mode-specific news columns
+                    self.news_engineer.text_cols = exper_news_cols.get(mode, ['Article_title', 'Textrank_summary'])    # Use mode-specific news columns, default ['Article_title', 'Textrank_summary']
                     model_type = 'PPO'  # Default for indicator/news group
                 logging.info(f"FE Module - generate_experiment_data - Mode {mode} in group {group}, model_type={model_type}, news_cols={self.news_engineer.text_cols}")    # Log configuration for this mode
 
-                logging.info("FE Module - generate_experiment_data - Trying to load fused_df cache")
-                fused_data_list = os.listdir(self.fused_data_dir)
-
                 # Trying to load cache fused_df
-                fused_df = None
-                if len(fused_data_list) > 0 and not self.force_fuse_data:
-                    logging.info(f"FE Module - generate_experiment_data - Exist {len(fused_data_list)} processed news cache : {fused_data_list}")
-                    fused_data_path_suffix = f"{mode}_Fused_Data_{self._generate_path_suffix(extension='.csv')}"
-                    
-                    # Check target cache
-                    for filename in fused_data_list:
-                        if filename.endswith(fused_data_path_suffix):
-                            self.config.fused_cache_path = os.path.join(self.fused_data_dir, filename)
-                            logging.info(f"FE Module - generate_experiment_data - Target cache path : {self.config.fused_cache_path}")
-                            
-                            # Load cache
-                            logging.info(f"FE Module - generate_experiment_data - Load fused_df for {self.config.symbols}")
-                            fused_df = pd.read_csv(self.config.fused_cache_path, parse_dates=['Date'])
-                            logging.info(f"FE Module - generate_experiment_data - Loaded fused_df: {len(fused_df)} rows")
-                            break
+                fused_df = self.load_fused_df_cache()
 
                 # If no cache fused_df, recompute
                 if fused_df is None or fused_df.empty:
@@ -1237,7 +1397,7 @@ class FeatureEngineer:
                         raise ValueError(f"Fused DataFrame empty for mode {mode}")  # Error if fusion results in empty DF
                 
                 # Generate pre-normalization feature analysis (only once)
-                if not pre_feature_analysis_completed:
+                if not pre_feature_analysis_completed and self.plot_feature_visualization:
                     logging.info(f"FE Module - generate_experiment_data - Generating pre-normalization feature analysis for mode {mode}")
                     pre_normalize_results = generate_standard_feature_visualizations(
                         fused_df, self.config, prefix="pre_normalization"
@@ -1260,13 +1420,13 @@ class FeatureEngineer:
                 test_df = self.smooth_features(test_df)
 
                 # Normalize indicators + sentiment + risk columns for RL training
-                train_scaler_path = self._generate_scaler_path(self.scaler_cache_path, group, mode)   # Dynamic per-group/mode
+                train_scaler_path = self._generate_scaler_path(self.scaler_cache_path, group=group, mode=mode)   # Dynamic per-group/mode
                 train_df, means_stds = self.normalize_features(train_df, fit=True, scaler_path=train_scaler_path, data_type='train') # Load cache scaler if existed
                 valid_df, _ = self.normalize_features(valid_df, fit=False, means_stds=means_stds, data_type='valid') # Load cache scaler if existed
                 test_df, _ = self.normalize_features(test_df, fit=False, means_stds=means_stds, data_type='test')   # Load cache scaler if existed
                 logging.info(f"FE Module - generate_experiment_data - Normalized features for mode {mode}")
 
-                if not pro_feature_analysis_completed:
+                if not pro_feature_analysis_completed and self.plot_feature_visualization:
                     # Generate post-normalization feature analysis for each dataset split
                     logging.info(f"FE Module - generate_experiment_data - Generating post-normalization feature analysis")
                     # Train set analysis

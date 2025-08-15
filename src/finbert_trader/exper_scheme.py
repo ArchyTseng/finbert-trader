@@ -118,6 +118,7 @@ class ExperimentScheme:
             'force_process_news': self.config.force_process_news,
             'force_fuse_data': self.config.force_fuse_data,
             'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
+            'plot_feature_visualization': self.config.plot_feature_visualization,
             'use_senti_factor': False,
             'use_risk_factor': False,
             'use_senti_features': False,
@@ -139,7 +140,7 @@ class ExperimentScheme:
         
         trading_config = {
             'initial_cash': 100000,
-            'total_timesteps': 200000,  
+            'total_timesteps': 100000,  
             'reward_scaling': 1e-3,
             'cash_penalty_proportion': 0.0005,
             'commission_rate': 0.001
@@ -194,6 +195,7 @@ class ExperimentScheme:
             'force_process_news': self.config.force_process_news,
             'force_fuse_data': self.config.force_fuse_data,
             'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
+            'plot_feature_visualization': self.config.plot_feature_visualization,
             'use_senti_factor': True,
             'use_risk_factor': True,
             'use_senti_features': True,
@@ -215,7 +217,7 @@ class ExperimentScheme:
         
         trading_config = {
             'initial_cash': 1000000,  # Larger capital for better signal-to-noise
-            'total_timesteps': 200000,
+            'total_timesteps': 100000,
             'reward_scaling': 1e-3,   # Enhanced reward scaling
             'cash_penalty_proportion': 0.0005,  # Reduced cash penalty
             'infusion_strength': 0.05,  # Increased sentiment/risk influence
@@ -271,6 +273,7 @@ class ExperimentScheme:
             'force_process_news': self.config.force_process_news,
             'force_fuse_data': self.config.force_fuse_data,
             'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
+            'plot_feature_visualization': self.config.plot_feature_visualization,
             'use_senti_factor': True,
             'use_risk_factor': True,
             'use_senti_features': True,
@@ -291,8 +294,8 @@ class ExperimentScheme:
         }
         
         trading_config = {
-            'initial_cash': 500000,
-            'total_timesteps': 150000,
+            'initial_cash': 100000,
+            'total_timesteps': 100000,
             'reward_scaling': 1e-2
         }
         
@@ -356,6 +359,7 @@ class ExperimentScheme:
             'force_process_news': self.config.force_process_news,
             'force_fuse_data': self.config.force_fuse_data,
             'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
+            'plot_feature_visualization': self.config.plot_feature_visualization,
             'RAW_DATA_DIR': self.raw_data_dir,
             'PROCESSED_NEWS_DIR': self.processed_news_dir,
             'FUSED_DATA_DIR': self.fused_data_dir,
@@ -370,7 +374,7 @@ class ExperimentScheme:
         
         trading_config = {
             'initial_cash': 1000000,
-            'total_timesteps': 500000,  # Extended training
+            'total_timesteps': 100000,  # Extended training
             'reward_scaling': 1e-3,
             'cash_penalty_proportion': 0.001,
             'commission_rate': 0.001,
@@ -422,6 +426,7 @@ class ExperimentScheme:
             'force_process_news': self.config.force_process_news,
             'force_fuse_data': self.config.force_fuse_data,
             'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
+            'plot_feature_visualization': self.config.plot_feature_visualization,
             'use_senti_factor': True,
             'use_risk_factor': True,
             'use_senti_features': True,
@@ -440,7 +445,7 @@ class ExperimentScheme:
         
         trading_config = {
             'initial_cash': 1000000,
-            'total_timesteps': 1000000,  # Long training for complex reward function
+            'total_timesteps': 200000,  # Long training for complex reward function
             'reward_scaling': 1e-2,
             'cash_penalty_proportion': 0.0005,
             'infusion_strength': 0.05,
@@ -515,6 +520,7 @@ class ExperimentScheme:
             'force_process_news': self.config.force_process_news,
             'force_fuse_data': self.config.force_fuse_data,
             'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
+            'plot_feature_visualization': self.config.plot_feature_visualization,
             'use_senti_factor': True,
             'use_risk_factor': True,
             'use_senti_features': True,
@@ -535,7 +541,7 @@ class ExperimentScheme:
         
         trading_config = {
             'initial_cash': 1000000,
-            'total_timesteps': 2000000,  # Production-level training
+            'total_timesteps': 500000,  # Production-level training
             'reward_scaling': 1e-2,
             'cash_penalty_proportion': 0.0001,  # Minimal cash penalty
             'infusion_strength': 0.1,   # Maximum sentiment/risk influence

@@ -55,16 +55,16 @@ Setup basic configuration for quick experiments
 
 # Set experiment configuration
 custom_setup_config = {
-    'start': '2000-01-01',
-    'end': '2022-12-31',
-    'train_start_date': '2000-01-01',
-    'train_end_date': '2021-12-31',
-    'valid_start_date': '2022-01-01',
-    'valid_end_date': '2022-06-30',
-    'test_start_date': '2022-07-01',
-    'test_end_date': '2022-12-31',
+    'start': '2015-01-01',
+    'end': '2023-12-31',
+    'train_start_date': '2015-01-01',
+    'train_end_date': '2019-12-31',
+    'valid_start_date': '2020-01-01',
+    'valid_end_date': '2021-12-31',
+    'test_start_date': '2022-01-01',
+    'test_end_date': '2023-12-31',
     'use_symbol_name': False,
-    'ind_mode': 'long',
+    'timeperiods': 30,
 }
 
 # Initial config_setup for experiment
@@ -101,23 +101,22 @@ print(f"news data length: {len(news_df)}")
 selected_symbols, coverage_stats, plot_paths = select_stocks_by_news_coverage(
     config=config_setup,
     symbols_list=config_setup.symbols,
-    top_n=10,  # Select top_n symbols with highest news coverage
-    min_news_count=2000,  # minimum news data
-    min_coverage_days=2000, # minimum news coverage period
+    top_n=None,  # Select top_n symbols with highest news coverage
+    min_news_count=5000,  # minimum news data if top_n is None
+    min_coverage_days=2500, # minimum news coverage period if top_n is None
     news_df=news_df,  
 )
 
 print("News analysis successfully!")
 print(f"Selected symbols: {selected_symbols}")
+print(f"Update selected symbols to ConfigSetup: {config_setup.selected_symbols}")
+print(f"Symbols for feature analysis: {config_setup.symbols}")
 
 # %%
 """
 Step 3: Explore stock features
 Merge stock features and news features, generate stock features analysis report
 """
-
-# Set selected_symbols to ConfigSetup
-config_setup.symbols = selected_symbols
 
 # Fetch stock data
 stock_data_dict = dr.fetch_stock_data()
@@ -136,8 +135,13 @@ risk_score_df = fe.news_engineer.compute_sentiment_risk_score(filtered_news_df.c
 fused_df = fe.merge_features(stock_data_dict, sentiment_score_df, risk_score_df)
 
 # Generate stock features analysis report
-standard_visualize_results = generate_standard_feature_visualizations(fused_df, config_setup)
-logging.info(f"FE Module - generate_experiment_data - Successfully generate Standard Visualization Results: {standard_visualize_results}")
+pre_normalize_results = generate_standard_feature_visualizations(fused_df, config_setup, prefix="pre_normalization")
+logging.info(f"FE Module - generate_experiment_data - Successfully generate Standard Visualization Results: {pre_normalize_results}")
+
+scaler_path = fe._generate_scaler_path(fe.scaler_cache_path)
+normalized_df, _ = fe.normalize_features(fused_df, fit=True, scaler_path=scaler_path, data_type='train')
+
+pro_normalize_results = generate_standard_feature_visualizations(normalized_df, config_setup, prefix="pro_normalization")
 
 # %%
 # Test all symbols per group (5 symbols each)
@@ -166,11 +170,11 @@ for i in range(0, len(symbols_list), 5):
     selected_symbols, coverage_stats, plot_paths = select_stocks_by_news_coverage(
         config=config_setup,
         symbols_list=symbols,
-        top_n=3,  # Select top_n symbols with highest news coverage
-        min_news_count=100,  # minimum news data
+        top_n=None,  # Select top_n symbols with highest news coverage
+        min_news_count=100,  # minimum news data 
         min_coverage_days=365, # minimum news coverage period
         news_df=news_df,  
     )
 
 print("News analysis successfully!")
-    
+

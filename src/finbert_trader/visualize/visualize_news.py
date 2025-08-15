@@ -69,7 +69,7 @@ class VisualizeNews:
             plt.close(fig)
             return ""
 
-    def analyze_news_coverage(self, news_df: pd.DataFrame) -> pd.DataFrame:
+    def analyze_news_coverage(self, news_df: pd.DataFrame, filter_cols: List =None) -> pd.DataFrame:
         """
         Analyzes news coverage for each symbol within the specified date range.
 
@@ -89,13 +89,23 @@ class VisualizeNews:
             logging.warning("VN Module - analyze_news_coverage - No news data provided.")
             return pd.DataFrame()
 
+        filter_cols = filter_cols if filter_cols is not None else self.config.text_cols
+
+        mask = ((news_df[filter_cols].notna()) & (news_df[filter_cols] != '')).all(axis=1)
+        filtered_news_df = news_df[mask]
+        logging.info(f"VN Module - analyze_news_coverage - Raw news data length: {len(news_df)}, after filtered length: {len(filtered_news_df)}")
+
+        if filtered_news_df.empty:
+            logging.warning(f"VN Module - analyze_news_coverage - No valid news data after filtering empty {filter_cols}")
+            return pd.DataFrame()
+
         stats_list = []
         for symbol in self.symbols:
-            df_sym = news_df[news_df['Symbol'] == symbol]
-            total_count = len(df_sym)
-            unique_dates = df_sym['Date'].nunique()
-            start_date = df_sym['Date'].min() if not df_sym.empty else pd.NaT
-            end_date = df_sym['Date'].max() if not df_sym.empty else pd.NaT
+            df_symbol = filtered_news_df[filtered_news_df['Symbol'] == symbol]
+            total_count = len(df_symbol)
+            unique_dates = df_symbol['Date'].nunique()
+            start_date = df_symbol['Date'].min() if not df_symbol.empty else pd.NaT
+            end_date = df_symbol['Date'].max() if not df_symbol.empty else pd.NaT
             coverage_days = (end_date - start_date).days + 1 if pd.notna(start_date) and pd.notna(end_date) else 0
             news_per_day = total_count / coverage_days if coverage_days > 0 else 0.0
 
@@ -278,7 +288,7 @@ class VisualizeNews:
             return pd.DataFrame(), {}
 
         try:
-            # Step 1: Analyze news coverage
+            # Analyze news coverage
             coverage_stats = self.analyze_news_coverage(news_df)
 
             # Step 2: Generate visualizations
@@ -300,8 +310,8 @@ class VisualizeNews:
 def select_stocks_by_news_coverage(config: Any,
                                   symbols_list: List[str],
                                   top_n: Optional[int] = None,
-                                  min_news_count: int = 10,
-                                  min_coverage_days: int = 30,
+                                  min_news_count: int = None,
+                                  min_coverage_days: int = None,
                                   news_data_path: Optional[str] = None,
                                   news_df: Optional[pd.DataFrame] = None) -> Tuple[List[str], pd.DataFrame, Dict[str, str]]:
     """
@@ -338,19 +348,29 @@ def select_stocks_by_news_coverage(config: Any,
 
         # Select stocks based on criteria
         selected_symbols = []
-        if top_n is not None:
-            # Select top N by news count
-            selected_symbols = coverage_stats.nlargest(top_n, 'Total_News_Count')['Symbol'].tolist()
+        # Get max news count and max coverage days if not provided
+        max_news_count = coverage_stats['Total_News_Count'].max()
+        max_coverage_days = coverage_stats['Coverage_Days'].max()
+        # Set news selection threshold
+        min_news_count = min_news_count if min_news_count is not None else int(max_news_count * 0.8)
+        min_coverage_days = min_coverage_days if min_coverage_days is not None else int(max_coverage_days * 0.8)
+        # Select target symbols
+        mask = (coverage_stats['Total_News_Count'] >= min_news_count) & (coverage_stats['Coverage_Days'] >= min_coverage_days)
+        selected_symbols_temp = coverage_stats[mask]['Symbol'].tolist()
+        logging.info(f"VN Module - select_stocks_by_news_coverage - Selected stocks meeting criteria (count>={min_news_count}, days>={min_coverage_days}): {selected_symbols}")
+
+        if top_n is not None and top_n < len(selected_symbols_temp):
+            # Select top N 
+            selected_symbols = selected_symbols_temp[:top_n]
             logging.info(f"VN Module - select_stocks_by_news_coverage - Selected top {top_n} stocks by news count: {selected_symbols}")
         else:
-            # Select based on thresholds
-            mask = (coverage_stats['Total_News_Count'] >= min_news_count) & (coverage_stats['Coverage_Days'] >= min_coverage_days)
-            selected_symbols = coverage_stats[mask]['Symbol'].tolist()
-            logging.info(f"VN Module - select_stocks_by_news_coverage - Selected stocks meeting criteria (count>={min_news_count}, days>={min_coverage_days}): {selected_symbols}")
-
+            # Select all stocks meeting criteria
+            selected_symbols = selected_symbols_temp
         if not selected_symbols:
             logging.warning("VN Module - select_stocks_by_news_coverage - No stocks met the selection criteria.")
 
+        analyzer.config._update_selected_symbols(selected_symbols, min_count=min_news_count, min_days=min_coverage_days)
+        logging.debug(f"VN Module - select_stocks_by_news_coverage - Updated config symbols with selected symbols: {analyzer.config.symbols}")
         return selected_symbols, coverage_stats, plot_paths
 
     except Exception as e:

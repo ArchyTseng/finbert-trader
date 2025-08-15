@@ -141,6 +141,42 @@ class ConfigTrading:
         self.model_params = self._model_params.get(self.model, {})  # Load model-specific params from class dict
         logging.info(f"CT Module - Selected model: {self.model} with params {self.model_params}")
 
+        # Complete indicator threshold configuration
+        self._ind_signal_threshold = {
+            "rsi": {
+                "oversold": 30,        # RSI below 30 indicates oversold conditions
+                "overbought": 70       # RSI above 70 indicates overbought conditions
+            },
+            "boll_ub": {
+                "ub": 1.02,            # Upper band threshold (2% above band)
+                "dev": 0.03            # Deviation for strength calculation
+            },
+            "boll_lb": {
+                "lb": 0.98,            # Lower band threshold (2% below band)
+                "dev": 0.03            # Deviation for strength calculation
+            },
+            "close_sma": {
+                "below": 0.97,         # Price below SMA threshold (3% deviation)
+                "above": 1.03,         # Price above SMA threshold (3% deviation)
+                "dev": 0.05            # Deviation for strength calculation
+            },
+            "macd": {
+                "positive": 0.25,       # MACD positive threshold for bullish signal
+                "negative": -0.25,      # MACD negative threshold for bearish signal
+                "max_range": 0.5       # Maximum expected MACD range for normalization
+            },
+            "cci": {
+                "oversold": -100,      # CCI below -100 indicates oversold conditions
+                "overbought": 100,     # CCI above 100 indicates overbought conditions
+                "neutral_range": 50    # Neutral range around zero
+            },
+            "dx": {
+                "trend_threshold": 25, # Minimum DX value to consider trend valid
+                "strong_trend": 40     # DX value indicating strong trend
+            }
+        }
+        logging.info(f"CT Module - __init__ - Initial indicator signal threshold for {list(self._ind_signal_threshold.values())}")
+        
         # Inherit from upstream_config if provided (linkage to upstream pipeline)
         if upstream_config:
             shared_params = ['symbols',  # List of stock symbols
@@ -152,6 +188,7 @@ class ConfigTrading:
                              'k_folds',  # Cross-validation folds
                              'batch_size',  # Training batch size
                              'exper_mode',  # Experiment mode
+                             'filter_ind',
                              'features_dim_per_symbol',  # Feature dimensions per symbol
                              'features_price',  # Price-based features
                              'features_ind',  # Indicator features
