@@ -45,19 +45,23 @@ class ExperimentScheme:
         self.filter_ind = self.config.filter_ind
         
         # Use unified cache directories from ConfigSetup
+        self.config_cache_dir = getattr(config, 'CONFIG_CACHE_DIR', 'config_cache')
         self.raw_data_dir = getattr(config, 'RAW_DATA_DIR', 'raw_data_cache')
         self.processed_news_dir = getattr(config, 'PROCESSED_NEWS_DIR', 'processed_news_cache')
         self.fused_data_dir = getattr(config, 'FUSED_DATA_DIR', 'fused_data_cache')
         self.exper_data_dir = getattr(config, 'EXPER_DATA_DIR', 'exper_data_cache')
-        self.plot_cache_dir = getattr(config, 'PLOT_CACHE_DIR', 'plot_cache')
+        self.plot_features_dir = getattr(config, 'PLOT_FEATURES_DIR', 'plot_features_cache')
         self.plot_news_dir = getattr(config, 'PLOT_NEWS_DIR', 'plot_news_cache')
+        self.plot_exper_dir = getattr(config, 'PLOT_EXPER_DIR', 'plot_exper_cache')
         self.results_cache_dir = getattr(config, 'RESULTS_CACHE_DIR', 'results_cache')
         self.experiment_cache_dir = getattr(config, 'EXPERIMENT_CACHE_DIR', 'exper_cache')
         self.scaler_cache_dir = getattr(config, 'SCALER_CACHE_DIR', 'scaler_cache')
         self.log_dir = getattr(config, 'LOG_SAVE_DIR', 'logs')
         
         # Ensure all directories exist
-        for dir_path in [self.raw_data_dir, self.exper_data_dir, self.plot_cache_dir,
+        for dir_path in [self.config_cache_dir, self.raw_data_dir, self.exper_data_dir, 
+                         self.processed_news_dir, self.fused_data_dir,self.scaler_cache_dir,
+                         self.plot_features_dir,self.plot_news_dir, self.plot_exper_dir,
                         self.results_cache_dir, self.experiment_cache_dir, self.log_dir]:
             os.makedirs(dir_path, exist_ok=True)
         
@@ -68,15 +72,15 @@ class ExperimentScheme:
         logging.info("ES Module - Initialized ExperimentScheme with unified configuration")
         logging.info(f"ES Module - Raw data directory: {self.raw_data_dir}")
         logging.info(f"ES Module - Experiment data directory: {self.exper_data_dir}")
-        logging.info(f"ES Module - Plot cache directory: {self.plot_cache_dir}")
+        logging.info(f"ES Module - Plot cache directory: {self.plot_features_dir}")
         logging.info(f"ES Module - Results cache directory: {self.results_cache_dir}")
         logging.info(f"ES Module - Experiment cache directory: {self.experiment_cache_dir}")
     
         from .visualize.visualize_experiment import VisualizeExperiment
         self.experiment_visualizer = VisualizeExperiment(config)
         logging.info("ES Module - Initialized ExperimentScheme with experiment visualization support")
+
     # ==================== QUICK EXPERIMENTS ====================
-    
     def quick_exper_1(self, symbols: List[str] = None) -> Dict[str, Any]:
         """
         Quick Experiment 1: Basic Parameter Validation
@@ -114,11 +118,10 @@ class ExperimentScheme:
             'window_extend': 50,
             'smooth_window_size': self.config.smooth_window_size,
             'filter_ind': self.filter_ind,
-            'ind_mode': 'long',
             'force_process_news': self.config.force_process_news,
             'force_fuse_data': self.config.force_fuse_data,
             'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
-            'plot_feature_visualization': self.config.plot_feature_visualization,
+            'plot_feature_visualization': True,
             'use_senti_factor': False,
             'use_risk_factor': False,
             'use_senti_features': False,
@@ -126,12 +129,15 @@ class ExperimentScheme:
             'use_senti_threshold': False,
             'use_risk_threshold': False,
             'use_dynamic_infusion': False,
+            'use_symbol_name': self.config.use_symbol_name,
+            'CONFIG_CACHE_DIR': self.config_cache_dir,
             'RAW_DATA_DIR': self.raw_data_dir,
             'PROCESSED_NEWS_DIR': self.processed_news_dir,
             'FUSED_DATA_DIR': self.fused_data_dir,
             'EXPER_DATA_DIR': self.exper_data_dir,
-            'PLOT_CACHE_DIR': self.plot_cache_dir,
+            'PLOT_FEATURES_DIR': self.plot_features_dir,
             'PLOT_NEWS_DIR': self.plot_news_dir,
+            'PLOT_EXPER_DIR': self.plot_exper_dir,
             'RESULTS_CACHE_DIR': self.results_cache_dir,
             'EXPERIMENT_CACHE_DIR': self.experiment_cache_dir,
             'SCALER_CACHE_DIR': self.scaler_cache_dir,
@@ -141,7 +147,7 @@ class ExperimentScheme:
         trading_config = {
             'initial_cash': 100000,
             'total_timesteps': 100000,  
-            'reward_scaling': 1e-3,
+            'reward_scaling': 1e-5,
             'cash_penalty_proportion': 0.0005,
             'commission_rate': 0.001
         }
@@ -191,11 +197,10 @@ class ExperimentScheme:
             'window_extend': 50,
             'smooth_window_size': self.config.smooth_window_size,
             'filter_ind': self.filter_ind,
-            'ind_mode': self.config.ind_mode,
             'force_process_news': self.config.force_process_news,
             'force_fuse_data': self.config.force_fuse_data,
             'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
-            'plot_feature_visualization': self.config.plot_feature_visualization,
+            'plot_feature_visualization': False,
             'use_senti_factor': True,
             'use_risk_factor': True,
             'use_senti_features': True,
@@ -203,12 +208,15 @@ class ExperimentScheme:
             'use_senti_threshold': False,
             'use_risk_threshold': False,
             'use_dynamic_infusion': False,
+            'use_symbol_name': self.config.use_symbol_name,
+            'CONFIG_CACHE_DIR': self.config_cache_dir,
             'RAW_DATA_DIR': self.raw_data_dir,
             'PROCESSED_NEWS_DIR': self.processed_news_dir,
             'FUSED_DATA_DIR': self.fused_data_dir,
             'EXPER_DATA_DIR': self.exper_data_dir,
-            'PLOT_CACHE_DIR': self.plot_cache_dir,
+            'PLOT_FEATURES_DIR': self.plot_features_dir,
             'PLOT_NEWS_DIR': self.plot_news_dir,
+            'PLOT_EXPER_DIR': self.plot_exper_dir,
             'RESULTS_CACHE_DIR': self.results_cache_dir,
             'EXPERIMENT_CACHE_DIR': self.experiment_cache_dir,
             'SCALER_CACHE_DIR': self.scaler_cache_dir,
@@ -217,8 +225,8 @@ class ExperimentScheme:
         
         trading_config = {
             'initial_cash': 1000000,  # Larger capital for better signal-to-noise
-            'total_timesteps': 100000,
-            'reward_scaling': 1e-3,   # Enhanced reward scaling
+            'total_timesteps': 150000,
+            'reward_scaling': 1e-4,   # Enhanced reward scaling
             'cash_penalty_proportion': 0.0005,  # Reduced cash penalty
             'infusion_strength': 0.05,  # Increased sentiment/risk influence
             'commission_rate': 0.0001   # Lower transaction costs
@@ -269,11 +277,10 @@ class ExperimentScheme:
             'window_extend': 50,
             'smooth_window_size': self.config.smooth_window_size,
             'filter_ind': self.filter_ind,
-            'ind_mode': self.config.ind_mode,
             'force_process_news': self.config.force_process_news,
             'force_fuse_data': self.config.force_fuse_data,
             'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
-            'plot_feature_visualization': self.config.plot_feature_visualization,
+            'plot_feature_visualization': False,
             'use_senti_factor': True,
             'use_risk_factor': True,
             'use_senti_features': True,
@@ -281,12 +288,15 @@ class ExperimentScheme:
             'use_senti_threshold': True,
             'use_risk_threshold': True,
             'use_dynamic_infusion': False,
+            'use_symbol_name': self.config.use_symbol_name,
+            'CONFIG_CACHE_DIR': self.config_cache_dir,
             'RAW_DATA_DIR': self.raw_data_dir,
             'PROCESSED_NEWS_DIR': self.processed_news_dir,
             'FUSED_DATA_DIR': self.fused_data_dir,
             'EXPER_DATA_DIR': self.exper_data_dir,
-            'PLOT_CACHE_DIR': self.plot_cache_dir,
+            'PLOT_FEATURES_DIR': self.plot_features_dir,
             'PLOT_NEWS_DIR': self.plot_news_dir,
+            'PLOT_EXPER_DIR': self.plot_exper_dir,
             'RESULTS_CACHE_DIR': self.results_cache_dir,
             'EXPERIMENT_CACHE_DIR': self.experiment_cache_dir,
             'SCALER_CACHE_DIR': self.scaler_cache_dir,
@@ -295,8 +305,8 @@ class ExperimentScheme:
         
         trading_config = {
             'initial_cash': 100000,
-            'total_timesteps': 100000,
-            'reward_scaling': 1e-2
+            'total_timesteps': 200000,
+            'reward_scaling': 1e-3
         }
         
         # Custom model parameters for this experiment
@@ -321,7 +331,6 @@ class ExperimentScheme:
         )
     
     # ==================== FULL EXPERIMENTS ====================
-    
     def full_exper_1(self, symbols: List[str] = None) -> Dict[str, Any]:
         """
         Full Experiment 1: Comprehensive Basic Validation
@@ -360,12 +369,15 @@ class ExperimentScheme:
             'force_fuse_data': self.config.force_fuse_data,
             'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
             'plot_feature_visualization': self.config.plot_feature_visualization,
+            'use_symbol_name': self.config.use_symbol_name,
+            'CONFIG_CACHE_DIR': self.config_cache_dir,
             'RAW_DATA_DIR': self.raw_data_dir,
             'PROCESSED_NEWS_DIR': self.processed_news_dir,
             'FUSED_DATA_DIR': self.fused_data_dir,
             'EXPER_DATA_DIR': self.exper_data_dir,
-            'PLOT_CACHE_DIR': self.plot_cache_dir,
+            'PLOT_FEATURES_DIR': self.plot_features_dir,
             'PLOT_NEWS_DIR': self.plot_news_dir,
+            'PLOT_EXPER_DIR': self.plot_exper_dir,
             'RESULTS_CACHE_DIR': self.results_cache_dir,
             'EXPERIMENT_CACHE_DIR': self.experiment_cache_dir,
             'SCALER_CACHE_DIR': self.scaler_cache_dir,
@@ -431,12 +443,15 @@ class ExperimentScheme:
             'use_risk_factor': True,
             'use_senti_features': True,
             'use_risk_features': True,
+            'use_symbol_name': self.config.use_symbol_name,
+            'CONFIG_CACHE_DIR': self.config_cache_dir,
             'RAW_DATA_DIR': self.raw_data_dir,
             'PROCESSED_NEWS_DIR': self.processed_news_dir,
             'FUSED_DATA_DIR': self.fused_data_dir,
             'EXPER_DATA_DIR': self.exper_data_dir,
-            'PLOT_CACHE_DIR': self.plot_cache_dir,
+            'PLOT_FEATURES_DIR': self.plot_features_dir,
             'PLOT_NEWS_DIR': self.plot_news_dir,
+            'PLOT_EXPER_DIR': self.plot_exper_dir,
             'RESULTS_CACHE_DIR': self.results_cache_dir,
             'EXPERIMENT_CACHE_DIR': self.experiment_cache_dir,
             'SCALER_CACHE_DIR': self.scaler_cache_dir,
@@ -521,18 +536,21 @@ class ExperimentScheme:
             'force_fuse_data': self.config.force_fuse_data,
             'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
             'plot_feature_visualization': self.config.plot_feature_visualization,
+            'use_symbol_name': self.config.use_symbol_name,
             'use_senti_factor': True,
             'use_risk_factor': True,
             'use_senti_features': True,
             'use_risk_features': True,
             'use_senti_threshold': True,
             'use_risk_threshold': True,
+            'CONFIG_CACHE_DIR': self.config_cache_dir,
             'RAW_DATA_DIR': self.raw_data_dir,
             'PROCESSED_NEWS_DIR': self.processed_news_dir,
             'FUSED_DATA_DIR': self.fused_data_dir,
             'EXPER_DATA_DIR': self.exper_data_dir,
-            'PLOT_CACHE_DIR': self.plot_cache_dir,
+            'PLOT_FEATURES_DIR': self.plot_features_dir,
             'PLOT_NEWS_DIR': self.plot_news_dir,
+            'PLOT_EXPER_DIR': self.plot_exper_dir,
             'RESULTS_CACHE_DIR': self.results_cache_dir,
             'EXPERIMENT_CACHE_DIR': self.experiment_cache_dir,
             'SCALER_CACHE_DIR': self.scaler_cache_dir,
@@ -581,7 +599,6 @@ class ExperimentScheme:
         )
     
     # ==================== UTILITY METHODS ====================
-    
     def _execute_experiment(self, experiment_id: str, setup_config: Dict[str, Any], 
                           trading_config: Dict[str, Any], model_params: Dict[str, Any] = None,
                           description: str = "", notes: str = "") -> Dict[str, Any]:
@@ -611,11 +628,11 @@ class ExperimentScheme:
         try:
             logging.info(f"ES Module - Executing experiment: {experiment_id}")
             
-            # Step 1: Initialize configuration
+            # Initialize configuration
             config_setup = ConfigSetup(setup_config)
             logging.info(f"ES Module - ConfigSetup initialized with symbols: {config_setup.symbols}")
             
-            # Step 2: Fetch data
+            # Fetch data
             data_resource = DataResource(config_setup)
             stock_data_dict = data_resource.fetch_stock_data()
             if not stock_data_dict:
@@ -629,14 +646,14 @@ class ExperimentScheme:
             news_chunks_gen = data_resource.load_news_data(cache_path, filtered_cache_path)
             logging.info("ES Module - News data loaded successfully")
             
-            # Step 3: Feature engineering
+            # Feature engineering
             feature_engineer = FeatureEngineer(config_setup)
             exper_data_dict = feature_engineer.generate_experiment_data(
                 stock_data_dict, news_chunks_gen, exper_mode='rl_algorithm'
             )
             logging.info(f"ES Module - Generated experiment data for modes: {list(exper_data_dict.keys())}")
             
-            # Step 4: Process each experiment mode
+            # Process each experiment mode
             pipeline_results = {}
             
             for mode_name, mode_data in exper_data_dict.items():
@@ -681,8 +698,8 @@ class ExperimentScheme:
             raise
 
     def _execute_experiment_with_visualization(self, experiment_id: str, setup_config: Dict[str, Any], 
-                                         trading_config: Dict[str, Any], model_params: Dict[str, Any] = None,
-                                         description: str = "", notes: str = "") -> Dict[str, Any]:
+                                     trading_config: Dict[str, Any], model_params: Dict[str, Any] = None,
+                                     description: str = "", notes: str = "") -> Dict[str, Any]:
         """
         Execute experiment with immediate visualization after completion.
         
@@ -713,23 +730,49 @@ class ExperimentScheme:
             results = self._execute_experiment(experiment_id, setup_config, trading_config, 
                                             model_params, description, notes)
             
-            # Visualize in time
+            # Visualize in time with benchmark support
             visualization_results = {}
             try:
-                # Generate asset curve
-                asset_plot = self.experiment_visualizer.base_visualizer.generate_asset_curve_comparison(results)
-                visualization_results['asset_curve_plot'] = asset_plot
+                # Initial benchmark data collection
+                benchmark_data = None
+                benchmark_returns = None
                 
-                # Generate performance heatmap
-                heatmap_plot = self.experiment_visualizer.base_visualizer.generate_performance_heatmap(results)
-                visualization_results['heatmap_plot'] = heatmap_plot
+                # Get first mode benchmark results, assume all modes have same date range
+                first_mode = next(iter(results.keys()))
+                if first_mode not in ['experiment_id', 'setup_config', 'trading_config', 'model_params', 'description']:
+                    mode_result = results[first_mode]
+                    benchmark_data = mode_result.get('benchmark_data')
+                    benchmark_returns = mode_result.get('benchmark_returns')
                 
-                logging.info(f"ES Module - Generated immediate visualizations for {experiment_id}")
-                logging.info(f"  Asset curve plot: {asset_plot}")
-                logging.info(f"  Heatmap plot: {heatmap_plot}")
+                # Generate enhanced visualizations with benchmark
+                from .visualize.visualize_backtest import generate_all_visualizations_with_benchmark
+                
+                enhanced_visualizations = generate_all_visualizations_with_benchmark(
+                    pipeline_results=results,
+                    config_trading=self.config,  # Use experiment configuration
+                    benchmark_data=benchmark_data,
+                    benchmark_returns=benchmark_returns,
+                    benchmark_name='Nasdaq-100'
+                )
+                
+                visualization_results.update(enhanced_visualizations)
+                
+                logging.info(f"ES Module - Generated enhanced visualizations for {experiment_id}")
+                for viz_name, viz_path in enhanced_visualizations.items():
+                    if viz_path:
+                        logging.info(f"  {viz_name}: {viz_path}")
                 
             except Exception as viz_error:
-                logging.warning(f"ES Module - Could not generate immediate visualizations: {viz_error}")
+                logging.warning(f"ES Module - Could not generate enhanced visualizations: {viz_error}")
+                
+                # Fallback to basic visualizations
+                try:
+                    from .visualize.visualize_backtest import generate_all_visualizations
+                    basic_visualizations = generate_all_visualizations(results, self.config)
+                    visualization_results.update(basic_visualizations)
+                    logging.info("ES Module - Generated basic visualizations as fallback")
+                except Exception as basic_viz_error:
+                    logging.warning(f"ES Module - Could not generate basic visualizations: {basic_viz_error}")
             
             # Extend visualization to results
             results['immediate_visualizations'] = visualization_results
@@ -742,7 +785,7 @@ class ExperimentScheme:
 
     
     def _process_mode(self, mode_name: str, mode_data: Dict[str, Any], 
-                     config_trading: ConfigTrading) -> Dict[str, Any]:
+                 config_trading: ConfigTrading) -> Dict[str, Any]:
         """
         Process a single experiment mode.
         
@@ -795,10 +838,25 @@ class ExperimentScheme:
             model_save_path = agent.save_model()
             logging.info(f"ES Module - Mode {mode_name} - Model saved to: {model_save_path}")
             
-            # Backtesting
-            logging.info(f"ES Module - Mode {mode_name} - Starting backtesting")
+            # Backtesting with benchmark support
+            logging.info(f"ES Module - Mode {mode_name} - Starting backtesting with benchmark")
             backtester = TradingBacktest(config_trading)
-            backtest_results = backtester.run_backtest(agent, test_env, record_trades=True)
+            backtest_results = backtester.run_backtest(agent, test_env, record_trades=True, use_benchmark=True)
+            
+            # Fetch benchmark data for visualization
+            benchmark_data = None
+            benchmark_returns = None
+            if hasattr(test_env, 'df') and len(test_env.df) > 0:
+                try:
+                    start_date = test_env.df['date'].min()
+                    end_date = test_env.df['date'].max()
+                    benchmark_data = backtester._get_nasdaq100_benchmark(start_date, end_date)
+                    logging.info(f"ES Module - Mode {mode_name} - Fetched benchmark data for visualization")
+                    if benchmark_data is not None:
+                        benchmark_returns = backtester._calculate_benchmark_returns(benchmark_data)
+                        logging.info(f"ES Module - Mode {mode_name} - Calculated benchmark returns")
+                except Exception as e:
+                    logging.warning(f"ES Module - Could not fetch benchmark data: {e}")
             
             # Generate detailed report
             detailed_report = backtester.generate_detailed_report(backtest_results)
@@ -824,7 +882,9 @@ class ExperimentScheme:
                 'results_path': results_save_path,
                 'metrics': backtest_results['metrics'],
                 'detailed_report': detailed_report,
-                'backtest_results': backtest_results
+                'backtest_results': backtest_results,
+                'benchmark_data': benchmark_data,  # Add benchmark data
+                'benchmark_returns': benchmark_returns  # Add benchmark_returns
             }
             
             # Log key metrics
@@ -835,6 +895,12 @@ class ExperimentScheme:
             logging.info(f"  Max Drawdown: {metrics.get('max_drawdown', 0)*100:.2f}%")
             logging.info(f"  Win Rate: {metrics.get('win_rate', 0)*100:.2f}%")
             
+            # Record benchmark metrics
+            if 'benchmark_cagr' in metrics:
+                logging.debug(f"  Benchmark CAGR: {metrics.get('benchmark_cagr', 0)*100:.2f}%")
+                logging.debug(f"  Information Ratio: {metrics.get('information_ratio', 0):.4f}")
+                logging.debug(f"  Alpha: {metrics.get('alpha', 0):.4f}")
+            
             return mode_results
             
         except Exception as e:
@@ -842,7 +908,7 @@ class ExperimentScheme:
             raise
     
     def run_experiment_sequence(self, experiment_names: List[str], 
-                              symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
+                          symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
         """
         Run a sequence of experiments.
         

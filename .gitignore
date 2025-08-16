@@ -52,6 +52,8 @@ exper_cache/
 # plot_cache
 plot_cache/
 plot_news_cache/
+plot_features_cache/
+plot_exper_cache
 
 # config_cache
 config_cache/

@@ -33,11 +33,13 @@ class ConfigSetup:
     # Config directories, from FinRL reference
     CONFIG_CACHE_DIR = 'config_cache'
     RAW_DATA_DIR = 'raw_data_cache'
+    FUSED_DATA_DIR = 'fused_data_dir'
     PROCESSED_NEWS_DIR = 'processed_news_cache'
     CONFIG_CACHE_DIR = 'fused_data_cache'
     EXPER_DATA_DIR = 'exper_data_cache'
-    PLOT_CACHE_DIR = 'plot_cache'
+    PLOT_FEATURES_DIR = 'plot_features_cache'
     PLOT_NEWS_DIR = 'plot_news_cache'
+    PLOT_EXPER_DIR = 'plot_exper_cache'
     RESULTS_CACHE_DIR = 'results_cache'
     EXPERIMENT_CACHE_DIR = 'exper_cache'
     SCALER_CACHE_DIR = 'scaler_cache'
@@ -66,7 +68,7 @@ class ConfigSetup:
         - risk_mode enables risk_prompt (ref: FinRL_DeepSeek 3).
         """
         # Default values centralized here
-        self.symbols = self.nasdaq_100_tickers_july_17_2023[:5]  # Example S&P500 symbols; extensible list
+        self.symbols = self.nasdaq_100_tickers_july_17_2023[:5]  # Example S&P500 symbols; extensible list, defense coding.
         self.start = '2015-01-01'   # Global fallback start for overall data range
         self.end = '2023-12-31'    # Global fallback end for overall data range
         self.chunksize = 100000  # For large data loading to manage memory in chunk processing
@@ -118,17 +120,19 @@ class ConfigSetup:
         }
 
         # Initialize directory
-        os.makedirs(self.CONFIG_CACHE_DIR, exist_ok=True)
-        os.makedirs(self.RAW_DATA_DIR, exist_ok=True)
-        os.makedirs(self.PROCESSED_NEWS_DIR, exist_ok=True)
-        os.makedirs(self.CONFIG_CACHE_DIR, exist_ok=True)
-        os.makedirs(self.EXPER_DATA_DIR, exist_ok=True)
-        os.makedirs(self.PLOT_CACHE_DIR, exist_ok=True)
-        os.makedirs(self.PLOT_NEWS_DIR, exist_ok=True)
-        os.makedirs(self.RESULTS_CACHE_DIR, exist_ok=True)
-        os.makedirs(self.EXPERIMENT_CACHE_DIR, exist_ok=True)
-        os.makedirs(self.SCALER_CACHE_DIR, exist_ok=True)
-        os.makedirs(self.LOG_SAVE_DIR, exist_ok=True)
+        for dir in [self.CONFIG_CACHE_DIR,
+                    self.RAW_DATA_DIR,
+                    self.PROCESSED_NEWS_DIR,
+                    self.FUSED_DATA_DIR,
+                    self.EXPER_DATA_DIR,
+                    self.PLOT_FEATURES_DIR,
+                    self.PLOT_NEWS_DIR,
+                    self.PLOT_EXPER_DIR,
+                    self.RESULTS_CACHE_DIR,
+                    self.EXPERIMENT_CACHE_DIR,
+                    self.SCALER_CACHE_DIR,
+                    self.LOG_SAVE_DIR]:
+            os.makedirs(dir, exist_ok=True)
 
         # Initialize features attributes, updating in FeatureEngineer "prepare_rl_data()" function, inherited by ConfigTrading
         self.features_dim_per_symbol = None   # Expected: Adj_Close + indicators + sentiment + risk; compute total features per stock in FeatureEngineer Module
@@ -152,6 +156,8 @@ class ConfigSetup:
         self.top_n_symbols = None
         self.selected_symbols = []
 
+        self.load_config = True
+
         self.save_npz = True    # Control saveing .npz file in FeatureEngineer
         self.load_npz = False   # Control loading .npz file in FeatureEngineer
         
@@ -163,8 +169,6 @@ class ConfigSetup:
         
         self.fused_cache_path = None # Update fused cache path dynamicly
         self.news_cache_path = None # Update news cache path dynamicly
-
-        self._features_initialized = self.load_or_init_features()   # Update True / False dynamicly
 
         self.use_senti_factor = False   # Control sentiment score column
         self.use_risk_factor = False    # Control risk score column
@@ -187,6 +191,8 @@ class ConfigSetup:
                     logging.info(f"CS Module - __init__ - Overrode config: {key} = {value}")  # Log override for auditing
                 else:
                     logging.warning(f"CS Module - __init__ - Ignored unknown config key: {key}")  # Warn on unknown keys
+
+        self._features_initialized = self.load_or_init_features()   # Update True / False dynamicly
 
         # Fallback for train/valid/test dates if split_mode is 'ratio'
         if self.split_mode == 'ratio':
@@ -346,17 +352,20 @@ class ConfigSetup:
 
     def load_config_cache(self, symbols):
         """Load dynamic attributes from cache file"""
+        path = ""
         config_cache_list = os.listdir(self.CONFIG_CACHE_DIR)
         if len(config_cache_list) > 0:
-            logging.info(f"CS Module - load_selected_symbols_cache - Exist {len(config_cache_list)} processed news cache : {config_cache_list}")
+            logging.info(f"CS Module - load_config_cache - Exist {len(config_cache_list)} processed news cache : {config_cache_list}")
             path_suffix = self._generate_path_suffix(symbols=symbols)
             # Check cache file
             for filename in config_cache_list:
                 if filename.endswith(path_suffix):
                     path = os.path.join(self.CONFIG_CACHE_DIR, filename)
-                    logging.info(f"CS Module - load_selected_symbols_cache - Target cache path : {path}")
+                    logging.info(f"CS Module - load_config_cache - Target cache path : {path}")
+                    print(f"CS Module - load_config_cache - Target cache path : {path}")
+                    break
         if not os.path.exists(path):
-            logging.info(f"CS Module - load_selected_symbols_cache - [ConfigSetup] No selected symbols cache found at {path}")
+            logging.warning(f"CS Module - load_config_cache - [ConfigSetup] No cache found at {path}")
             return False
         with open(path, 'r') as f:
             data = json.load(f)
@@ -370,12 +379,12 @@ class ConfigSetup:
         self.senti_threshold = data.get("senti_threshold", {})
         self.risk_threshold = data.get("risk_threshold", {})
         self.threshold_factor = data.get("threshold_factor", 0.5)
-        logging.info(f"CS Module - load_config_cache - [ConfigSetup] Loaded config cache from {path}")
+        logging.debug(f"CS Module - load_config_cache - [ConfigSetup] Loaded config cache from {path}")
         return True
     
     def load_or_init_features(self):
         """First Running Pipeline initials config features, otherwise load from cache"""
-        if self.load_config_cache() and self.load_npz:
+        if self.load_config_cache(self.symbols) and self.load_config:
             print("[ConfigSetup] Features already cached, will skip recalculation.")
             return True
         return False

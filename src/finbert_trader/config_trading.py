@@ -10,6 +10,7 @@
 
 import logging
 import numpy as np
+from .config_setup import ConfigSetup
 
 # Logging setup (shared)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -72,7 +73,9 @@ class ConfigTrading:
     SCALER_CACHE_DIR = 'scaler_cache'
     MODEL_CACHE_DIR = 'model_cache'
     TENSORBOARD_LOG_DIR = 'tensorboard_cache'
-    PLOT_CACHE_DIR = 'plot_cache'
+    PLOT_FEATURES_DIR = 'plot_features_cache'
+    PLOT_NEWS_DIR = 'plot_news_cache'
+    PLOT_EXPER_DIR = 'plot_exper_cache'
     RESULTS_CACHE_DIR = 'results_cache'
     EXPERIMENT_CACHE_DIR = 'exper_cache'
     LOG_SAVE_DIR = 'logs'
@@ -114,6 +117,43 @@ class ConfigTrading:
         - State dimension is calculated as (window_size * num_flattened_features) + 3 (e.g., for cash, positions, etc.).
         - Action dimension equals the number of symbols (multi-stock setup).
         """
+        # Inherit from upstream_config if provided (linkage to upstream pipeline)
+        if upstream_config:
+            shared_params = ['symbols',  # List of stock symbols
+                             'start',
+                             'end',
+                             'indicators',  # Technical indicators
+                             'sentiment_keys',  # Sentiment analysis keys
+                             'window_size',  # Historical window for state
+                             'prediction_days',  # Days ahead for predictions
+                             'split_ratio',  # Train/valid/test split
+                             'k_folds',  # Cross-validation folds
+                             'batch_size',  # Training batch size
+                             'exper_mode',  # Experiment mode
+                             'filter_ind',
+                             'features_dim_per_symbol',  # Feature dimensions per symbol
+                             'features_price',  # Price-based features
+                             'features_ind',  # Indicator features
+                             'features_senti',  # Sentiment features
+                             'features_risk',  # Risk features
+                             'features_all',
+                             'senti_threshold',
+                             'risk_threshold',
+                             'threshold_factor',
+                             'use_senti_factor',
+                             'use_risk_factor',
+                             'use_senti_features',
+                             'use_risk_features',
+                             'use_senti_threshold',
+                             'use_risk_threshold',
+                             'use_dynamic_infusion',]  # All combined features
+            for param in shared_params:
+                if hasattr(upstream_config, param):  # Check if param exists in upstream
+                    setattr(self, param, getattr(upstream_config, param))  # Inherit to maintain consistency
+                    logging.info(f"CT Module - Inherited from upstream: {param} = {getattr(self, param)}")
+                else:
+                    logging.warning(f"CT Module - Upstream missing {param}; using default if available")  # Warn for missing to debug pipeline
+
         # Set default trading parameters for backtesting realism
         self.initial_cash = 1e6  # Initial capital; large value for stability in simulations
         self.buy_cost_pct = 1e-3  # Buy transaction cost as percentage (0.1%)
@@ -176,41 +216,6 @@ class ConfigTrading:
             }
         }
         logging.info(f"CT Module - __init__ - Initial indicator signal threshold for {list(self._ind_signal_threshold.values())}")
-        
-        # Inherit from upstream_config if provided (linkage to upstream pipeline)
-        if upstream_config:
-            shared_params = ['symbols',  # List of stock symbols
-                             'indicators',  # Technical indicators
-                             'sentiment_keys',  # Sentiment analysis keys
-                             'window_size',  # Historical window for state
-                             'prediction_days',  # Days ahead for predictions
-                             'split_ratio',  # Train/valid/test split
-                             'k_folds',  # Cross-validation folds
-                             'batch_size',  # Training batch size
-                             'exper_mode',  # Experiment mode
-                             'filter_ind',
-                             'features_dim_per_symbol',  # Feature dimensions per symbol
-                             'features_price',  # Price-based features
-                             'features_ind',  # Indicator features
-                             'features_senti',  # Sentiment features
-                             'features_risk',  # Risk features
-                             'features_all',
-                             'senti_threshold',
-                             'risk_threshold',
-                             'threshold_factor',
-                             'use_senti_factor',
-                             'use_risk_factor',
-                             'use_senti_features',
-                             'use_risk_features',
-                             'use_senti_threshold',
-                             'use_risk_threshold',
-                             'use_dynamic_infusion',]  # All combined features
-            for param in shared_params:
-                if hasattr(upstream_config, param):  # Check if param exists in upstream
-                    setattr(self, param, getattr(upstream_config, param))  # Inherit to maintain consistency
-                    logging.info(f"CT Module - Inherited from upstream: {param} = {getattr(self, param)}")
-                else:
-                    logging.warning(f"CT Module - Upstream missing {param}; using default if available")  # Warn for missing to debug pipeline
 
         # Override with custom_config (can override model_params as dict)
         if custom_config:
@@ -273,6 +278,12 @@ class ConfigTrading:
         # Log start of flattening process for traceability
         logging.info("CT Module - Flattening features categories")
         try:
+            # Varify data list exist
+            feature_attrs = ['features_all', 'features_price', 'features_ind', 'features_senti', 'features_risk']
+            if any(getattr(self.config, attr) is None or len(getattr(self.config, attr)) == 0 for attr in feature_attrs):
+                logging.warning(f"CT Module - Missing or empty feature categories: {feature_attrs}")
+                self.features_all_flatten = []
+                return
             # Initialize empty lists for each category to collect flattened features
             self.features_price_flatten = []  # Flattened price features across all symbols
             self.features_ind_flatten = []    # Flattened indicator features

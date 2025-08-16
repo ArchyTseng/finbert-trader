@@ -13,16 +13,18 @@ import logging
 import os
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any, Union
 import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import datetime
 import warnings
 from scipy import stats
+import yfinance as yf
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore')
 # Logging setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 class TradingBacktest:
     """
     Comprehensive backtesting framework for multi-stock RL trading agents.
@@ -63,7 +65,7 @@ class TradingBacktest:
         # Inherit configuration for pipeline consistency
         self.config = config_trading
         # Set results cache directory, default to 'results_cache'
-        self.results_cache_dir = getattr(self.config, 'RESULTS_SAVE_DIR', 'results_cache')
+        self.results_cache_dir = getattr(self.config, 'RESULTS_CACHE_DIR', 'results_cache')
         # Create directory if not exists for robust file handling
         os.makedirs(self.results_cache_dir, exist_ok=True)
 
@@ -78,7 +80,68 @@ class TradingBacktest:
         logging.info("TB Module - Initialized TradingBacktest")
         logging.info(f"TB Module - Results cache directory: {self.results_cache_dir}")
 
-    def run_backtest(self, agent, test_env, render=False, record_trades=True):
+    def _get_nasdaq100_benchmark(self) -> pd.Series:
+        """
+        Fetch Nasdaq-100 ETF benchmark
+        
+        Parameters
+        ----------
+        start_date : str
+            start format 'YYYY-MM-DD'
+        end_date : str
+            end format 'YYYY-MM-DD'
+            
+        Returns
+        -------
+        pd.Series
+            Nasdaq-100 ETF price series
+        """
+        try:
+            # Fetch Nasdaq-100 ETF (QQQ) data by yfinance
+            ticker = "QQQ"
+            nasdaq_data = yf.download(ticker, start=self.config.start, end=self.config.end)
+            
+            if nasdaq_data.empty:
+                logging.warning("TB Module - Failed to fetch Nasdaq-100 data, using fallback")
+                return None
+            
+            # Initial DataResource instance for cleaning raw data
+            from .data_resource import DataResource
+            dr = DataResource(self.config)
+
+            # Clean raw data, convert columns name to ['Adj_Close_QQQ', ...]
+            nasdaq_data = dr.clean_yf_ohlcv(nasdaq_data, ticker)
+            nasdaq_data = nasdaq_data[f"Adj_Close_{ticker}"]
+            logging.debug(f"TB Module - Nasdaq-100 benchmark data: {nasdaq_data.head()}")
+            # Return Adj_Close price
+            return nasdaq_data
+            
+        except Exception as e:
+            logging.error(f"TB Module - Error fetching Nasdaq-100 benchmark: {e}")
+            return None
+
+    def _calculate_benchmark_returns(self, benchmark_prices: pd.Series) -> np.ndarray:
+        """
+        Calculate Benchmark returns
+        
+        Parameters
+        ----------
+        benchmark_prices : pd.Series
+            Benchmark price series
+            
+        Returns
+        -------
+        np.ndarray
+            Benchmark returns
+        """
+        if benchmark_prices is None or len(benchmark_prices) < 2:
+            return np.array([])
+        
+        # Calculate daily returns
+        benchmark_returns = benchmark_prices.pct_change().dropna()
+        return benchmark_returns.values
+
+    def run_backtest(self, agent, test_env, render=False, record_trades=True, use_benchmark=True):
         """
         Run backtest on test environment with trained agent.
 
@@ -92,17 +155,13 @@ class TradingBacktest:
             Whether to render environment steps
         record_trades : bool, optional
             Whether to record detailed trade history
+        use_benchmark : bool, optional
+            Whether to compute benchmark-relative metrics
 
         Returns
         -------
         dict
             Backtest results including metrics and history
-
-        Notes
-        -----
-        - Uses deterministic predictions for consistent backtesting.
-        - Records comprehensive info from env.step for analysis.
-        - Computes metrics post-loop for efficiency.
         """
         try:
             # Log backtest start
@@ -166,8 +225,26 @@ class TradingBacktest:
             # Log completion
             logging.info(f"TB Module - Backtest completed with {step_count} steps")
 
+            # Calculate benchmark returns
+            benchmark_returns = None
+            if use_benchmark and hasattr(test_env, 'df') and len(test_env.df) > 0:
+                try:
+                    # Get Date from test environment
+                    start_date = test_env.df['date'].min()
+                    end_date = test_env.df['date'].max()
+                    
+                    # Fetch Nasdaq-100 Benchmark data
+                    benchmark_prices = self._get_nasdaq100_benchmark(start_date, end_date)
+                    if benchmark_prices is not None:
+                        benchmark_returns = self._calculate_benchmark_returns(benchmark_prices)
+                        logging.info(f"TB Module - Benchmark data fetched, {len(benchmark_returns)} returns")
+                    else:
+                        logging.warning("TB Module - Failed to fetch benchmark data")
+                except Exception as e:
+                    logging.warning(f"TB Module - Error processing benchmark  {e}")
+
             # Compute and store metrics
-            metrics = self._compute_metrics()
+            metrics = self._compute_metrics(benchmark_returns)
             self.metrics = metrics
 
             # Compile results dict
@@ -188,21 +265,19 @@ class TradingBacktest:
             logging.error(f"TB Module - Error during backtest: {e}")
             raise
 
-    def _compute_metrics(self):
+    def _compute_metrics(self, benchmark_returns: np.ndarray = None):
         """
         Compute comprehensive performance metrics from backtest results.
+
+        Parameters
+        ----------
+        benchmark_returns : np.ndarray, optional
+            Benchmark returns for relative performance comparison
 
         Returns
         -------
         dict
             Dictionary of computed performance metrics
-
-        Notes
-        -----
-        - Assumes daily data (252 trading days) for annualization.
-        - Handles edge cases like zero returns or divisions.
-        - Metrics include performance (CAGR), risk (CVaR, Drawdown), adjusted (Sharpe/Sortino), trade (Win Rate).
-        - Extensible: Add new metrics here with similar numpy/scipy ops.
         """
         try:
             # Validate asset history
@@ -221,25 +296,25 @@ class TradingBacktest:
             # Log computation start
             logging.info(f"TB Module - Computing metrics for {len(returns)} returns")
 
-            # 1. Total Return: overall growth
+            # Total Return: overall growth
             total_return = (assets[-1] / assets[0] - 1) if len(assets) > 1 else 0.0
 
-            # 2. CAGR: annualized compounding
+            # CAGR: annualized compounding
             if len(assets) > 1:
                 total_days = len(assets)
                 cagr = (assets[-1] / assets[0]) ** (252 / total_days) - 1  # 252 trading days
             else:
                 cagr = 0.0
 
-            # 3. Volatility: std dev annualized
+            # Volatility: std dev annualized
             volatility = np.std(returns) * np.sqrt(252) if len(returns) > 1 else 0.0
 
-            # 4. Sharpe Ratio: risk-adjusted, assume rf=0
+            # Sharpe Ratio: risk-adjusted, assume rf=0
             risk_free_rate = 0.0  # Simplification; can be from config
             sharpe_ratio = (np.mean(returns) - risk_free_rate) / (np.std(returns) + 1e-8) * np.sqrt(252) \
                           if len(returns) > 1 and np.std(returns) > 0 else 0.0
 
-            # 5. Maximum Drawdown: peak-to-trough
+            # Maximum Drawdown: peak-to-trough
             if len(assets) > 1:
                 rolling_max = np.maximum.accumulate(assets)
                 drawdown = (assets - rolling_max) / (rolling_max + 1e-8)
@@ -247,10 +322,10 @@ class TradingBacktest:
             else:
                 max_drawdown = 0.0
 
-            # 6. Calmar Ratio: CAGR / |MDD|
+            # Calmar Ratio: CAGR / |MDD|
             calmar_ratio = cagr / (abs(max_drawdown) + 1e-8) if max_drawdown < 0 else 0.0
 
-            # 7. Profit Factor and Win Rate: trade efficiency
+            # Profit Factor and Win Rate: trade efficiency
             positive_returns = returns[returns > 0]
             negative_returns = returns[returns < 0]
 
@@ -260,7 +335,7 @@ class TradingBacktest:
             profit_factor = total_positive / total_negative if total_negative > 0 else 0.0
             win_rate = len(positive_returns) / len(returns) if len(returns) > 0 else 0.0
 
-            # 8. CVaR at 5%: tail risk
+            # CVaR at 5%: tail risk
             if len(returns) > 10:  # Sufficient data threshold
                 alpha = 0.05  # 5% CVaR
                 var_index = int(alpha * len(returns))
@@ -269,7 +344,7 @@ class TradingBacktest:
             else:
                 cvar = np.min(returns) if len(returns) > 0 else 0.0
 
-            # 9. Additional: Annual Return
+            # Additional: Annual Return
             annual_return = np.mean(returns) * 252 if len(returns) > 0 else 0.0
 
             # Sortino Ratio: downside-focused
@@ -303,7 +378,7 @@ class TradingBacktest:
             # Volatility-Adjusted Return: return per vol unit
             volatility_adjusted_return = annual_return / (volatility + 1e-8) if volatility > 0 else 0.0
 
-            # Compile metrics dict (cast to float/int for serialization)
+            # Initial benchmark metrics
             metrics = {
                 'total_return': float(total_return),
                 'cagr': float(cagr),
@@ -323,6 +398,51 @@ class TradingBacktest:
                 'final_asset': float(assets[-1]) if len(assets) > 0 else 0.0,
                 'initial_asset': float(assets[0]) if len(assets) > 0 else 0.0
             }
+
+            # Calculate relative metrics based on benchmark data
+            if benchmark_returns is not None and len(benchmark_returns) > 0:
+                # Align lengths ，take the shorter one
+                min_length = min(len(returns), len(benchmark_returns))
+                aligned_strategy_returns = returns[:min_length]
+                aligned_benchmark_returns = benchmark_returns[:min_length]
+
+                # Alpha and Beta compute
+                if len(aligned_strategy_returns) > 1 and np.std(aligned_benchmark_returns) > 0:
+                    # Calculate Alpha and Beta using linear regression
+                    beta, alpha = np.polyfit(aligned_benchmark_returns, aligned_strategy_returns, 1)
+                    alpha_annualized = alpha * 252  # Calculate annualized Alpha
+                else:
+                    beta = 0.0
+                    alpha_annualized = 0.0
+
+                # Information ratio
+                tracking_error = np.std(aligned_strategy_returns - aligned_benchmark_returns) * np.sqrt(252)
+                information_ratio = (np.mean(aligned_strategy_returns - aligned_benchmark_returns) * 252) / (tracking_error + 1e-8) \
+                                  if tracking_error > 0 else 0.0
+
+                # Excess returns
+                excess_return = np.mean(aligned_strategy_returns - aligned_benchmark_returns) * 252
+
+                # Benchmark related metrics
+                benchmark_total_return = (1 + aligned_benchmark_returns).prod() - 1
+                benchmark_volatility = np.std(aligned_benchmark_returns) * np.sqrt(252)
+                benchmark_cagr = (1 + benchmark_total_return) ** (252 / len(aligned_benchmark_returns)) - 1
+
+                # Relative win rate
+                relative_win_rate = np.mean(aligned_strategy_returns > aligned_benchmark_returns)
+
+                # Add benchmark-related metrics
+                metrics.update({
+                    'benchmark_total_return': float(benchmark_total_return),
+                    'benchmark_cagr': float(benchmark_cagr),
+                    'benchmark_volatility': float(benchmark_volatility),
+                    'alpha': float(alpha_annualized),
+                    'beta': float(beta),
+                    'information_ratio': float(information_ratio),
+                    'excess_return': float(excess_return),
+                    'relative_win_rate': float(relative_win_rate),
+                    'tracking_error': float(tracking_error)
+                })
 
             # Log key metrics summary
             logging.info("TB Module - Metrics computation completed")
@@ -741,6 +861,70 @@ class TradingBacktest:
             # Log and default
             logging.error(f"TB Module - Error generating recommendation: {e}")
             return "Hold - Unable to generate recommendation"
+
+    def plot_performance_comparison(self, results, benchmark_prices=None):
+        """
+        Generate strategy vs benchmark performance comparison plot
+        
+        Parameters
+        ----------
+        results : dict
+            Backtest results
+        benchmark_prices : pd.Series, optional
+            Benchmark price series
+        """
+        try:
+            asset_history = results.get('asset_history', [])
+            if not asset_history:
+                logging.warning("TB Module - No asset history for plotting")
+                return
+
+            # Generate figure
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+            
+            # Normalize asset values to initial value of 1
+            initial_asset = asset_history[0] if len(asset_history) > 0 else 1
+            normalized_strategy = [asset / initial_asset for asset in asset_history]
+            
+            # Strategy cumulative returns curve
+            ax1.plot(normalized_strategy, label='Trading Strategy', linewidth=2)
+            
+            # Plot benchmark curve 
+            if benchmark_prices is not None and len(benchmark_prices) > 0:
+                # Normalize benchmark prices
+                normalized_benchmark = benchmark_prices / benchmark_prices.iloc[0]
+                # Align lengths
+                min_length = min(len(normalized_strategy), len(normalized_benchmark))
+                ax1.plot(normalized_benchmark.iloc[:min_length].values, 
+                        label='Nasdaq-100 Benchmark', linewidth=2)
+            
+            ax1.set_title('Performance Comparison: Strategy vs Benchmark')
+            ax1.set_xlabel('Trading Days')
+            ax1.set_ylabel('Normalized Value (Initial = 1.0)')
+            ax1.legend()
+            ax1.grid(True, alpha=0.3)
+            
+            # Plot maximum drawdown curve
+            strategy_assets = np.array(asset_history)
+            if len(strategy_assets) > 1:
+                rolling_max = np.maximum.accumulate(strategy_assets)
+                drawdown = (strategy_assets - rolling_max) / (rolling_max + 1e-8) * 100
+                
+                ax2.plot(drawdown, label='Strategy Drawdown', color='red', linewidth=2)
+                ax2.fill_between(range(len(drawdown)), drawdown, 0, alpha=0.3, color='red')
+                
+                ax2.set_title('Drawdown Analysis')
+                ax2.set_xlabel('Trading Days')
+                ax2.set_ylabel('Drawdown (%)')
+                ax2.legend()
+                ax2.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plt.show()
+            
+        except Exception as e:
+            logging.error(f"TB Module - Error plotting performance comparison: {e}")
+
 # Utility functions for common backtest scenarios
 def run_single_backtest(config_trading, agent, test_env, save_results=True):
     """
@@ -775,6 +959,7 @@ def run_single_backtest(config_trading, agent, test_env, save_results=True):
         backtester.save_results(results)
 
     return results
+
 def run_batch_comparison(config_trading, agent_configs, test_env, save_results=True):
     """
     Utility function to run batch comparison of multiple agents.
@@ -801,7 +986,7 @@ def run_batch_comparison(config_trading, agent_configs, test_env, save_results=T
     """
     # Instantiate
     backtester = TradingBacktest(config_trading)
-    # Run
+    # Run backtest
     results = backtester.batch_backtest(agent_configs, test_env)
 
     if save_results:

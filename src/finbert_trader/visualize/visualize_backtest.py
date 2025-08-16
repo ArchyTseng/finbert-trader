@@ -32,26 +32,32 @@ class VisualizeBacktest:
         Parameters
         ----------
         config_trading: Class instance
-            Inherit config_trading, globally config DIR path, default 'plot_cache'.
+            Inherit config_trading, globally config DIR path, default 'plot_exper_cache'.
         """
         self.config = config
-        self.plot_cache_dir = getattr(self.config, 'PLOT_CACHE_DIR', 'plot_cache')
+        self.plot_exper_dir = getattr(self.config, 'PLOT_EXPER_DIR', 'plot_exper_cache')
 
-        os.makedirs(self.plot_cache_dir, exist_ok=True)
+        os.makedirs(self.plot_exper_dir, exist_ok=True)
 
-        logging.info(f"VB Module - Initialized VisualizeBacktest with plot cache: {self.plot_cache_dir}")
+        logging.info(f"VB Module - Initialized VisualizeBacktest with plot cache: {self.plot_exper_dir}")
     
     def generate_asset_curve_comparison(self, pipeline_results: Dict[str, Any], 
-                                      benchmark_data: Optional[List[float]] = None) -> str:
+                                      benchmark_data: Optional[Union[List[float], pd.Series]] = None,
+                                      benchmark_name: str = 'Nasdaq-100',
+                                      show_performance_metrics: bool = True) -> str:
         """
-        Generate a comparison plot of asset curves for all algorithms.
+        Generate a comparison plot of asset curves with performance metrics.
         
         Parameters
         ----------
         pipeline_results : dict
             Dictionary containing results for all algorithms
-        benchmark_data : list, optional
+        benchmark_data : list or pd.Series, optional
             Benchmark data for comparison
+        benchmark_name : str, optional
+            Name of the benchmark for legend display
+        show_performance_metrics : bool, optional
+            Whether to include performance metrics in legend
             
         Returns
         -------
@@ -64,50 +70,102 @@ class VisualizeBacktest:
             # Create a DataFrame to store asset curves
             asset_curve_df = pd.DataFrame()
             
-            # Extract asset history for each algorithm
+            # Extract asset history and dates for each algorithm
+            strategy_dates = {}
+            
             for mode_name, results in pipeline_results.items():
                 if 'backtest_results' in results and 'asset_history' in results['backtest_results']:
-                    asset_curve = pd.Series(results['backtest_results']['asset_history'], name=mode_name)
+                    asset_history = results['backtest_results']['asset_history']
+                    # Get Date information from environmeng
+                    if hasattr(results['backtest_results'], 'dates') and results['backtest_results'].dates:
+                        dates = results['backtest_results'].dates
+                    else:
+                        dates = range(len(asset_history))
+                    
+                    asset_curve = pd.Series(asset_history, index=dates, name=mode_name)
                     asset_curve_df = pd.concat([asset_curve_df, asset_curve], axis=1)
+                    strategy_dates[mode_name] = dates
+                elif 'asset_history' in results:
+                    asset_history = results['asset_history']
+                    dates = range(len(asset_history))
+                    asset_curve = pd.Series(asset_history, index=dates, name=mode_name)
+                    asset_curve_df = pd.concat([asset_curve_df, asset_curve], axis=1)
+                    strategy_dates[mode_name] = dates
             
             # Add benchmark if provided
             if benchmark_data is not None:
-                benchmark_series = pd.Series(benchmark_data, name='Benchmark')
+                if isinstance(benchmark_data, (list, np.ndarray)):
+                    benchmark_series = pd.Series(benchmark_data, name=benchmark_name)
+                else:
+                    benchmark_series = benchmark_data.rename(benchmark_name)
+                
+                # Align benchmark length with strategy data if needed
+                if len(asset_curve_df) > 0:
+                    min_length = min(len(asset_curve_df), len(benchmark_series))
+                    benchmark_series = benchmark_series.iloc[:min_length]
+                    asset_curve_df = asset_curve_df.iloc[:min_length]
+                
                 asset_curve_df = pd.concat([asset_curve_df, benchmark_series], axis=1)
-            else:
-                # Use initial cash as simple benchmark
-                if len(asset_curve_df) > 0 and 'backtest_results' in list(pipeline_results.values())[0]:
-                    first_results = list(pipeline_results.values())[0]['backtest_results']
-                    if 'asset_history' in first_results and len(first_results['asset_history']) > 0:
-                        initial_cash = first_results['asset_history'][0]
-                        benchmark = pd.Series([initial_cash] * len(asset_curve_df), name='Initial_Cash')
-                        asset_curve_df = pd.concat([asset_curve_df, benchmark], axis=1)
+            
+            # Normalize all curves to start from 1.0
+            if len(asset_curve_df) > 0:
+                for column in asset_curve_df.columns:
+                    if len(asset_curve_df[column].dropna()) > 0:
+                        initial_value = asset_curve_df[column].dropna().iloc[0]
+                        if initial_value != 0:
+                            asset_curve_df[column] = asset_curve_df[column] / initial_value
             
             # Plot the asset curves
             plt.figure(figsize=(15, 8))
             sns.set_style("whitegrid")
             palette = sns.color_palette("husl", len(asset_curve_df.columns))
             
+            # Prepare legend labels with performance metrics
+            legend_labels = []
+            
+            for i, column in enumerate(asset_curve_df.columns):
+                label = column
+                
+                # Add metrics to labels
+                if show_performance_metrics and column != benchmark_name:
+                    # Get strategy information ratio from pipeline_results
+                    if column in pipeline_results:
+                        results = pipeline_results[column]
+                        if 'backtest_results' in results:
+                            metrics = results['backtest_results'].get('metrics', {})
+                        else:
+                            metrics = results.get('metrics', {})
+                        
+                        ir = metrics.get('information_ratio', 0)
+                        if abs(ir) > 0.001:  # Threshold to filter information ratio
+                            label += f" (IR={ir:.4f})"
+                
+                legend_labels.append(label)
+            
+            # Plot asset curve
             for i, column in enumerate(asset_curve_df.columns):
                 plt.plot(asset_curve_df.index, asset_curve_df[column], 
-                        label=column, linewidth=2, color=palette[i])
+                        label=legend_labels[i], linewidth=2, color=palette[i])
             
-            plt.title("Asset Curve Comparison", fontsize=16, fontweight='bold')
-            plt.xlabel("Trading Steps", fontsize=12)
-            plt.ylabel("Portfolio Value ($)", fontsize=12)
-            plt.legend(title="Strategies", bbox_to_anchor=(1.05, 1), loc='upper left')
+            # Set title and label
+            plt.title("Cumulative Returns with Performance Metrics", fontsize=16, fontweight='bold')
+            plt.xlabel("Trading Days", fontsize=12)
+            plt.ylabel("Cumulative Return (Normalized to 1.0)", fontsize=12)
+            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
             
-            # Generate dynamic filename
-            plot_filename = f"asset_curve_comparison_{timestamp}.png"
-            plot_path = os.path.join(self.plot_cache_dir, plot_filename)
+            # Add benchmark line
+            if benchmark_name in asset_curve_df.columns:
+                plt.axhline(y=1.0, color='black', linestyle='--', alpha=0.5)
             
-            # Save the plot
+            # Generate filename and save
+            plot_filename = f"cumulative_returns_with_metrics_{timestamp}.png"
+            plot_path = os.path.join(self.plot_exper_dir, plot_filename)
             plt.savefig(plot_path, dpi=300, bbox_inches='tight')
             plt.close()
             
-            logging.info(f"VB Module - Asset curve comparison plot saved to: {plot_path}")
+            logging.info(f"VB Module - Cumulative returns with metrics plot saved to: {plot_path}")
             return plot_path
             
         except Exception as e:
@@ -170,7 +228,7 @@ class VisualizeBacktest:
             fig, axes = plt.subplots(2, 2, figsize=(20, 15))
             fig.suptitle('Experiment Comparison Analysis', fontsize=16, fontweight='bold')
             
-            # 1. CAGR Comparison
+            # CAGR Comparison
             if 'CAGR' in df.columns:
                 pivot_cagr = df.pivot(index='Experiment', columns='Algorithm', values='CAGR')
                 pivot_cagr.plot(kind='bar', ax=axes[0, 0])
@@ -179,7 +237,7 @@ class VisualizeBacktest:
                 axes[0, 0].tick_params(axis='x', rotation=45)
                 axes[0, 0].grid(True, alpha=0.3)
             
-            # 2. Sharpe Ratio Comparison
+            # Sharpe Ratio Comparison
             if 'Sharpe_Ratio' in df.columns:
                 pivot_sharpe = df.pivot(index='Experiment', columns='Algorithm', values='Sharpe_Ratio')
                 pivot_sharpe.plot(kind='bar', ax=axes[0, 1])
@@ -188,7 +246,7 @@ class VisualizeBacktest:
                 axes[0, 1].tick_params(axis='x', rotation=45)
                 axes[0, 1].grid(True, alpha=0.3)
             
-            # 3. Max Drawdown Comparison
+            # Max Drawdown Comparison
             if 'Max_Drawdown' in df.columns:
                 pivot_dd = df.pivot(index='Experiment', columns='Algorithm', values='Max_Drawdown')
                 pivot_dd.plot(kind='bar', ax=axes[1, 0])
@@ -197,7 +255,7 @@ class VisualizeBacktest:
                 axes[1, 0].tick_params(axis='x', rotation=45)
                 axes[1, 0].grid(True, alpha=0.3)
             
-            # 4. Win Rate Comparison
+            # Win Rate Comparison
             if 'Win_Rate' in df.columns:
                 pivot_win = df.pivot(index='Experiment', columns='Algorithm', values='Win_Rate')
                 pivot_win.plot(kind='bar', ax=axes[1, 1])
@@ -210,7 +268,7 @@ class VisualizeBacktest:
             
             # Save plot
             plot_filename = f"experiment_comparison_{timestamp}.png"
-            plot_path = os.path.join(self.plot_cache_dir, plot_filename)
+            plot_path = os.path.join(self.plot_exper_dir, plot_filename)
             plt.savefig(plot_path, dpi=300, bbox_inches='tight')
             plt.close()
             
@@ -307,9 +365,9 @@ class VisualizeBacktest:
             
             plt.tight_layout()
             
-            # Save plot
+            # Generate filename and save
             plot_filename = f"parameter_sensitivity_{parameter_name.replace('.', '_')}_{timestamp}.png"
-            plot_path = os.path.join(self.plot_cache_dir, plot_filename)
+            plot_path = os.path.join(self.plot_exper_dir, plot_filename)
             plt.savefig(plot_path, dpi=300, bbox_inches='tight')
             plt.close()
             
@@ -406,9 +464,9 @@ class VisualizeBacktest:
             
             # Generate dynamic filename
             plot_filename = f"performance_heatmap_{timestamp}.png"
-            plot_path = os.path.join(self.plot_cache_dir, plot_filename)
+            plot_path = os.path.join(self.plot_exper_dir, plot_filename)
             
-            # Save the plot
+            # Save plot
             plt.savefig(plot_path, dpi=300, bbox_inches='tight')
             plt.close()
             
@@ -417,6 +475,177 @@ class VisualizeBacktest:
             
         except Exception as e:
             logging.error(f"VB Module - Error generating performance heatmap: {e}")
+            plt.close()
+            raise
+
+    def generate_benchmark_relative_performance(self, pipeline_results: Dict[str, Any], 
+                                              benchmark_returns: np.ndarray) -> str:
+        """
+        Generate relative performance comparison against benchmark.
+        
+        Parameters
+        ----------
+        pipeline_results : dict
+            Dictionary containing results for all algorithms
+        benchmark_returns : np.ndarray
+            Benchmark returns for comparison
+            
+        Returns
+        -------
+        str
+            Path to saved relative performance plot
+        """
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            if benchmark_returns is None or len(benchmark_returns) == 0:
+                logging.warning("VB Module - No benchmark returns provided for relative performance plot")
+                return ""
+            
+            # Calculate relative performance for each algorithm
+            relative_performance_data = {}
+            
+            for mode_name, results in pipeline_results.items():
+                asset_history = None
+                if 'backtest_results' in results and 'asset_history' in results['backtest_results']:
+                    asset_history = results['backtest_results']['asset_history']
+                elif 'asset_history' in results:
+                    asset_history = results['asset_history']
+                
+                if asset_history is not None and len(asset_history) > 1:
+                    # Calculate strategy returns
+                    strategy_returns = np.diff(asset_history) / asset_history[:-1]
+                    
+                    # Align lengths
+                    min_length = min(len(strategy_returns), len(benchmark_returns))
+                    aligned_strategy_returns = strategy_returns[:min_length]
+                    aligned_benchmark_returns = benchmark_returns[:min_length]
+                    
+                    # Calculate excess returns (strategy - benchmark)
+                    excess_returns = aligned_strategy_returns - aligned_benchmark_returns
+                    
+                    # Calculate cumulative excess returns
+                    cumulative_excess = np.cumsum(excess_returns)
+                    
+                    relative_performance_data[mode_name] = cumulative_excess
+            if not relative_performance_data:
+                logging.warning("VB Module - No valid strategy data for relative performance calculation")
+                return ""
+            
+            # Plot relative performance
+            plt.figure(figsize=(15, 8))
+            sns.set_style("whitegrid")
+            palette = sns.color_palette("Set2", len(relative_performance_data))
+            
+            for i, (strategy_name, cumulative_excess) in enumerate(relative_performance_data.items()):
+                plt.plot(range(len(cumulative_excess)), cumulative_excess, 
+                        label=f"{strategy_name} vs Benchmark", linewidth=2, color=palette[i])
+            
+            plt.title("Relative Performance vs Benchmark (Cumulative Excess Returns)", fontsize=16, fontweight='bold')
+            plt.xlabel("Trading Days", fontsize=12)
+            plt.ylabel("Cumulative Excess Return", fontsize=12)
+            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            plt.grid(True, alpha=0.3)
+            plt.axhline(y=0, color='black', linestyle='--', alpha=0.5)
+            plt.tight_layout()
+            
+            # Generate filename and save
+            plot_filename = f"relative_performance_{timestamp}.png"
+            plot_path = os.path.join(self.plot_exper_dir, plot_filename)
+            plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            logging.info(f"VB Module - Relative performance plot saved to: {plot_path}")
+            return plot_path
+        except Exception as e:
+            logging.error(f"VB Module - Error generating relative performance plot: {e}")
+            plt.close()
+            raise
+
+    def generate_drawdown_comparison(self, pipeline_results: Dict[str, Any], 
+                                   benchmark_data: Optional[Union[List[float], pd.Series]] = None,
+                                   benchmark_name: str = 'Nasdaq-100') -> str:
+        """
+        Generate drawdown comparison plot for strategies and benchmark.
+        
+        Parameters
+        ----------
+        pipeline_results : dict
+            Dictionary containing results for all algorithms
+        benchmark_data : list or pd.Series, optional
+            Benchmark data for comparison
+        benchmark_name : str, optional
+            Name of the benchmark for legend display
+            
+        Returns
+        -------
+        str
+            Path to saved drawdown comparison plot
+        """
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            # Calculate drawdowns for all strategies
+            drawdown_data = {}
+            
+            for mode_name, results in pipeline_results.items():
+                asset_history = None
+                if 'backtest_results' in results and 'asset_history' in results['backtest_results']:
+                    asset_history = results['backtest_results']['asset_history']
+                elif 'asset_history' in results:
+                    asset_history = results['asset_history']
+                
+                if asset_history is not None and len(asset_history) > 1:
+                    assets = np.array(asset_history)
+                    rolling_max = np.maximum.accumulate(assets)
+                    drawdown = (assets - rolling_max) / (rolling_max + 1e-8) * 100  # Percentage
+                    drawdown_data[mode_name] = drawdown
+
+            # Add benchmark drawdown if provided
+            if benchmark_data is not None:
+                if isinstance(benchmark_data, (list, np.ndarray)):
+                    benchmark_prices = np.array(benchmark_data)
+                else:
+                    benchmark_prices = benchmark_data.values
+                
+                if len(benchmark_prices) > 1:
+                    rolling_max = np.maximum.accumulate(benchmark_prices)
+                    benchmark_drawdown = (benchmark_prices - rolling_max) / (rolling_max + 1e-8) * 100
+                    drawdown_data[benchmark_name] = benchmark_drawdown
+            
+            if not drawdown_data:
+                logging.warning("VB Module - No data available for drawdown comparison")
+                return ""
+            
+            # Plot drawdowns
+            plt.figure(figsize=(15, 8))
+            sns.set_style("whitegrid")
+            palette = sns.color_palette("Set1", len(drawdown_data))
+
+            for i, (name, drawdown) in enumerate(drawdown_data.items()):
+                plt.plot(range(len(drawdown)), drawdown, 
+                        label=name, linewidth=2, color=palette[i])
+                plt.fill_between(range(len(drawdown)), drawdown, 0, alpha=0.3, color=palette[i])
+            
+            plt.title("Drawdown Comparison", fontsize=16, fontweight='bold')
+            plt.xlabel("Trading Days", fontsize=12)
+            plt.ylabel("Drawdown (%)", fontsize=12)
+            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            plt.grid(True, alpha=0.3)
+            plt.axhline(y=0, color='black', linestyle='-', alpha=0.5)
+            plt.tight_layout()
+            
+            # Generate filename and save
+            plot_filename = f"drawdown_comparison_{timestamp}.png"
+            plot_path = os.path.join(self.plot_exper_dir, plot_filename)
+            plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            logging.info(f"VB Module - Drawdown comparison plot saved to: {plot_path}")
+            return plot_path
+            
+        except Exception as e:
+            logging.error(f"VB Module - Error generating drawdown comparison plot: {e}")
             plt.close()
             raise
 
@@ -455,4 +684,60 @@ def generate_all_visualizations(pipeline_results: Dict[str, Any],
         
     except Exception as e:
         logging.error(f"VB Module - Error generating standard visualizations: {e}")
+        raise
+
+def generate_all_visualizations_with_benchmark(pipeline_results: Dict[str, Any], 
+                                             config_trading: Any,
+                                             benchmark_data: Optional[Union[List[float], pd.Series]] = None,
+                                             benchmark_returns: Optional[np.ndarray] = None,
+                                             benchmark_name: str = 'Nasdaq-100') -> Dict[str, str]:
+    """
+    Generate all standard visualizations for pipeline results with benchmark support.
+    
+    Parameters
+    ----------
+    pipeline_results : dict
+        Dictionary containing results for all algorithms
+    config_trading : ConfigTrading
+        Trading configuration
+    benchmark_data : list or pd.Series, optional
+        Benchmark price/asset data for comparison
+    benchmark_returns : np.ndarray, optional
+        Benchmark returns for relative performance analysis
+    benchmark_name : str, optional
+        Name of the benchmark for display
+        
+    Returns
+    -------
+    dict
+        Dictionary containing paths to all generated plots
+    """
+    try:
+        visualizer = VisualizeBacktest(config_trading)
+        
+        # Generate all visualizations
+        asset_curve_plot = visualizer.generate_asset_curve_comparison(
+            pipeline_results, benchmark_data, benchmark_name, show_performance_metrics=True)
+        
+        heatmap_plot = visualizer.generate_performance_heatmap(pipeline_results)
+        
+        drawdown_plot = visualizer.generate_drawdown_comparison(
+            pipeline_results, benchmark_data, benchmark_name)
+        
+        relative_performance_plot = ""
+        if benchmark_returns is not None:
+            relative_performance_plot = visualizer.generate_benchmark_relative_performance(
+                pipeline_results, benchmark_returns)
+        
+        visualization_results = {
+            'asset_curve_comparison': asset_curve_plot,
+            'performance_heatmap': heatmap_plot,
+            'drawdown_comparison': drawdown_plot,
+            'relative_performance': relative_performance_plot
+        }
+        logging.info("VB Module - All visualizations with benchmark generated successfully")
+        return visualization_results
+        
+    except Exception as e:
+        logging.error(f"VB Module - Error generating visualizations with benchmark: {e}")
         raise

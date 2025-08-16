@@ -20,8 +20,6 @@ import seaborn as sns
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
 
-# Suppress specific warnings for cleaner output if needed
-# warnings.filterwarnings('ignore', category=UserWarning) # Example
 
 # Logging setup (shared)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -39,7 +37,7 @@ class VisualizeFeatures:
         ----------
         config : object
             Configuration object (e.g., ConfigTrading or ConfigSetup) containing paths and settings.
-            Expected attributes: PLOT_CACHE_DIR, symbols.
+            Expected attributes: PLOT_FEATURES_DIR, symbols.
         prefix : str, optional
             Prefix to add to generated filenames (e.g., "pre_normalization", "post_normalization_train").
         suffix : str, optional
@@ -48,10 +46,10 @@ class VisualizeFeatures:
         self.config = config
         self.prefix = prefix
         self.suffix = suffix
-        self.plot_cache_dir = getattr(self.config, 'PLOT_CACHE_DIR', 'plot_cache')
-        os.makedirs(self.plot_cache_dir, exist_ok=True)
+        self.plot_features_dir = getattr(self.config, 'PLOT_FEATURES_DIR', 'plot_features_cache')
+        os.makedirs(self.plot_features_dir, exist_ok=True)
         self.symbols = getattr(self.config, 'symbols', [])
-        logging.info(f"VF Module - Initialized VisualizeFeatures with plot cache: {self.plot_cache_dir}")
+        logging.info(f"VF Module - Initialized VisualizeFeatures with plot cache: {self.plot_features_dir}")
 
         self.use_symbol_name = getattr(self.config, 'use_symbol_name', True)
 
@@ -76,7 +74,7 @@ class VisualizeFeatures:
 
     def _save_plot(self, fig: plt.Figure, filename: str) -> str:
         """Saves a matplotlib figure."""
-        filepath = os.path.join(self.plot_cache_dir, filename)
+        filepath = os.path.join(self.plot_features_dir, filename)
         try:
             fig.savefig(filepath, dpi=300, bbox_inches='tight')
             logging.info(f"VF Module - Saved plot to: {filepath}")
@@ -112,7 +110,7 @@ class VisualizeFeatures:
         -------
         Dict[str, str]
             A dictionary mapping plot descriptions to file paths.
-            E.g., {'price_plot': 'plot_cache/feature_price_20231027_120000.png', ...}
+            E.g., {'price_plot': 'plot_features_cache/feature_price_20231027_120000.png', ...}
         """
         symbols = symbols or self.symbols
         if not symbols:
@@ -132,7 +130,7 @@ class VisualizeFeatures:
         generated_plots = {}
 
         try:
-            # --- 1. Price Time Series ---
+            # Price Time Series 
             if features_to_plot.get('price', 0) > 0:
                 price_cols = [col for col in plot_df.columns if "Adj_Close" in col and any(symbol in col for symbol in symbols)]
                 if price_cols:
@@ -150,7 +148,7 @@ class VisualizeFeatures:
                     if path:
                         generated_plots['price_plot'] = path
 
-            # --- 2. Technical Indicators (Top Variance per Symbol) ---
+            # Technical Indicators (Top Variance per Symbol) 
             n_ind = features_to_plot.get('indicator', 3)
             if n_ind > 0:
                  for symbol in symbols:
@@ -184,7 +182,7 @@ class VisualizeFeatures:
                             if path:
                                 generated_plots[f'indicators_plot_{symbol}'] = path
 
-            # --- 3. Sentiment Score Time Series ---
+            # Sentiment Score Time Series 
             n_senti = features_to_plot.get('sentiment', 1)
             if n_senti > 0:
                 senti_cols = [col for col in plot_df.columns if "sentiment_score" in col and any(sym in col for sym in symbols)]
@@ -205,7 +203,7 @@ class VisualizeFeatures:
                     if path:
                         generated_plots['sentiment_plot'] = path
 
-            # --- 4. Risk Score Time Series (if enabled) ---
+            # Risk Score Time Series (if enabled) 
             n_risk = features_to_plot.get('risk', 1)
             if getattr(self.config, 'risk_mode', False) and n_risk > 0:
                 risk_cols = [col for col in plot_df.columns if "risk_score" in col and any(sym in col for sym in symbols)]
@@ -264,7 +262,7 @@ class VisualizeFeatures:
         generated_plots = {}
 
         try:
-             # --- 1. Price Distributions ---
+             # Price Distributions 
             price_cols = [col for col in plot_df.columns if "Adj_Close" in col and any(symbol in col for symbol in symbols)]
             if price_cols:
                 fig, ax = plt.subplots(figsize=figsize)
@@ -281,7 +279,7 @@ class VisualizeFeatures:
                 if path:
                     generated_plots['price_dist_plot'] = path
 
-            # --- 2. Sentiment Score Distributions ---
+            # Sentiment Score Distributions 
             senti_cols = [col for col in plot_df.columns if "sentiment_score" in col and any(sym in col for sym in symbols)]
             if senti_cols:
                 fig, ax = plt.subplots(figsize=figsize)
@@ -296,7 +294,7 @@ class VisualizeFeatures:
                 if path:
                     generated_plots['sentiment_dist_plot'] = path
 
-            # --- 3. Risk Score Distributions (if enabled) ---
+            # Risk Score Distributions (if enabled) 
             if getattr(self.config, 'risk_mode', False):
                 risk_cols = [col for col in plot_df.columns if "risk_score" in col and any(sym in col for sym in symbols)]
                 if risk_cols:
@@ -312,7 +310,7 @@ class VisualizeFeatures:
                     if path:
                         generated_plots['risk_dist_plot'] = path
 
-            # --- 4. Sample Technical Indicator Distributions ---
+            # Sample Technical Indicator Distributions 
             # Plotting distributions for a few sample indicators from the first symbol
             if symbols:
                 sample_symbol = symbols[0]
@@ -423,7 +421,7 @@ class VisualizeFeatures:
             return ""
 
 
-# --- Utility Functions (Optional, for direct script usage) ---
+# --- Utility Functions ---
 
 def generate_standard_feature_visualizations(fused_df: pd.DataFrame, config: Any, prefix: str = "", suffix: str = "") -> Dict[str, Any]:
     """

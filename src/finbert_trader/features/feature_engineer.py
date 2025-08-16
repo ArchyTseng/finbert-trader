@@ -419,20 +419,20 @@ class FeatureEngineer:
         - In 'fit' mode, quantile clipping bounds are calculated and saved.
         - In 'transform' mode, saved quantile bounds are loaded and applied.
         """
-        logging.info(f"FE Module - normalize_features - Full Data Columns : {df.columns.tolist()}")
+        logging.info(f"FE Module - normalize_features - {data_type} - Full Data Columns : {df.columns.tolist()}")
         if self.filter_ind and all(any(col.startswith(ind) for col in df.columns) for ind in self.filter_ind):
-            logging.info(f"FE Module - normalize_features - Filter columns to normalize: {self.filter_ind}")
+            logging.info(f"FE Module - normalize_features - {data_type} - Filter columns to normalize: {self.filter_ind}")
             filtered_ind_cols = [col for col in df.columns if any(col.startswith(ind) for ind in self.filter_ind)]
             to_normalize = filtered_ind_cols + ['sentiment_score', 'risk_score']  # List of filtered columns to target for normalization
-            logging.info(f"FE Module - normalize_features - Target columns to normalize: {to_normalize}")
+            logging.info(f"FE Module - normalize_features - {data_type} - Target columns to normalize: {to_normalize}")
         else:
             to_normalize = self.stock_engineer.indicators + ['sentiment_score', 'risk_score']  # List of base columns to target for normalization
-            logging.info(f"FE Module - normalize_features - Target columns to normalize: {to_normalize}")
+            logging.info(f"FE Module - normalize_features - {data_type} - Target columns to normalize: {to_normalize}")
         filter_normalize_cols = [col for col in df.columns 
                         if any(ind in col for ind in to_normalize) 
                         and not any(x in col for x in ['Adj_Open', 'Adj_High', 'Adj_Low', 'Adj_Close', 'Volume']) 
                         and pd.api.types.is_numeric_dtype(df[col])]  # Filter columns: match targets, exclude raw prices/volumes, ensure numeric
-        logging.info(f"FE Module - normalize_features - Filtered Normalizing columns: {filter_normalize_cols}")
+        logging.info(f"FE Module - normalize_features - {data_type} - Filtered Normalizing columns: {filter_normalize_cols}")
         # Prepare target columns
         final_target_cols = [col for col in df.columns if 'Adj_Close' in col] + filter_normalize_cols
 
@@ -441,7 +441,7 @@ class FeatureEngineer:
 
         if not filter_normalize_cols:
             # Early exit if no valid columns found; avoid unnecessary processing
-            logging.warning("FE Module - normalize_features - No valid columns to normalize.")
+            logging.warning(f"FE Module - normalize_features - {data_type} - No valid columns to normalize.")
             return (df, {}) if fit else df # Always return tuple for consistency in fit mode
 
         # Define Clipping Parameters
@@ -459,180 +459,168 @@ class FeatureEngineer:
             If calculate_bounds is False, it uses the provided clipping_bounds_dict.
             """
             if not columns_to_clip:
-                logging.info(f"FE Module - normalize_features - No columns provided for clipping ({operation_desc}).")
+                logging.info(f"FE Module - _apply_clipping - No columns provided for clipping ({operation_desc}).")
                 return dataframe, {} # Return empty dict for bounds if none to clip
 
             clipped_df = dataframe.copy() # Work on a copy to avoid modifying the original passed df immediately
-            calculated_bounds = {}
+            calculated_bounds_dict = {}
             
             if calculate_bounds:
-                logging.info(f"FE Module - normalize_features - Calculating and applying clipping based on quantiles [{LOWER_QUANTILE}, {UPPER_QUANTILE}] ({operation_desc}).")
+                logging.info(f"FE Module - _apply_clipping - Calculating and applying clipping based on current data's quantiles [{LOWER_QUANTILE}, {UPPER_QUANTILE}] ({operation_desc}).")
                 for col in columns_to_clip:
                     if col in clipped_df.columns:
                         lower_bound = clipped_df[col].quantile(LOWER_QUANTILE)
                         upper_bound = clipped_df[col].quantile(UPPER_QUANTILE)
-                        calculated_bounds[col] = (lower_bound, upper_bound)
+                        calculated_bounds_dict[col] = (lower_bound, upper_bound)
                         clipped_df[col] = clipped_df[col].clip(lower=lower_bound, upper=upper_bound)
-                        logging.debug(f"FE Module - normalize_features - Clipping bounds for {col} ({operation_desc}): [{lower_bound:.4f}, {upper_bound:.4f}]")
+                        logging.debug(f"FE Module - _apply_clipping - Clipping bounds for {col} ({operation_desc}): [{lower_bound:.4f}, {upper_bound:.4f}]")
                     else:
-                        logging.warning(f"FE Module - normalize_features - Column '{col}' not found in DataFrame for clipping ({operation_desc}).")
-            else: # Apply provided bounds
+                        logging.warning(f"FE Module - _apply_clipping - Column '{col}' not found in DataFrame for clipping ({operation_desc}).")
+            else:
                 if not clipping_bounds_dict:
-                    logging.info(f"FE Module - normalize_features - No clipping bounds provided ({operation_desc}). Skipping clipping or applying default.")
-                    for col in columns_to_clip:
-                        if col in clipped_df.columns:
-                            lower_bound = clipped_df[col].min()
-                            upper_bound = clipped_df[col].max()
-                            clipped_df[col] = clipped_df[col].clip(lower=lower_bound, upper=upper_bound)
-                            logging.debug(f"FE Module - normalize_features - Applied default clipping bounds for {col} ({operation_desc}): [{lower_bound:.4f}, {upper_bound:.4f}]")
+                    logging.info(f"FE Module - _apply_clipping - No clipping bounds provided ({operation_desc}). Applying default [min, max].")
                 else:
-                    logging.info(f"FE Module - normalize_features - Applying provided clipping bounds ({operation_desc}).")
-                    for col in columns_to_clip:
-                        if col in clipped_df.columns and col in clipping_bounds_dict:
-                            lower_bound, upper_bound = clipping_bounds_dict[col]
-                            clipped_df[col] = clipped_df[col].clip(lower=lower_bound, upper=upper_bound)
-                            logging.debug(f"FE Module - normalize_features - Applied clipping bounds for {col} ({operation_desc}): [{lower_bound:.4f}, {upper_bound:.4f}]")
-                        elif col not in clipped_df.columns:
-                             logging.warning(f"FE Module - normalize_features - Column '{col}' not found in DataFrame for clipping ({operation_desc}).")
-                        else: # col not in clipping_bounds_dict
-                             # Fallback to data min/max if not found in provided bounds
-                             lower_bound = clipped_df[col].min()
-                             upper_bound = clipped_df[col].max()
-                             clipped_df[col] = clipped_df[col].clip(lower=lower_bound, upper=upper_bound)
-                             logging.debug(f"FE Module - normalize_features - Applied fallback (min/max) clipping bounds for {col} ({operation_desc}): [{lower_bound:.4f}, {upper_bound:.4f}]")
+                    logging.info(f"FE Module - _apply_clipping - Applying provided clipping bounds ({operation_desc}).")
+                
+                for col in columns_to_clip:
+                    if col not in clipped_df.columns:
+                        logging.warning(f"FE Module - _apply_clipping - Column '{col}' not found for clipping ({operation_desc}).")
+                        continue
+                    
+                    if clipping_bounds_dict and col in clipping_bounds_dict:
+                        lower_bound, upper_bound = clipping_bounds_dict[col]
+                        log_msg_suffix = "provided"
+                    else: # Fallback or no bounds dict
+                        lower_bound = clipped_df[col].min()
+                        upper_bound = clipped_df[col].max()
+                        log_msg_suffix = "default (min/max)"
+                    
+                    clipped_df[col] = clipped_df[col].clip(lower=lower_bound, upper=upper_bound)
+                    logging.debug(f"FE Module - _apply_clipping - Applied {log_msg_suffix} clipping bounds for {col} ({operation_desc}): [{lower_bound:.4f}, {upper_bound:.4f}]")
 
-            return clipped_df, calculated_bounds
+            return clipped_df, calculated_bounds_dict
 
         # Main Logic 
-        scaler_data_to_save = None
-        loaded_scaler_data = None
-        means_stds = None
-        clip_bounds = {}
-
         if fit:
-            # Fit mode: Compute or load means_stds and clipping bounds
-            if scaler_path and os.path.exists(scaler_path) and self.force_normalize_features:
-                logging.info(f"FE Module - normalize_features - Removed old scaler at {scaler_path} to recompute.")
-                os.remove(scaler_path)  # Remove scaler cache and recompute
+            # --- Fit Mode: Calculate statistics and save scaler ---
+            scaler_data_to_save = None
+            # Handle force recompute or loading existing scaler
             if scaler_path and os.path.exists(scaler_path):
-                logging.info(f"FE Module - normalize_features - Loaded existing scaler from {scaler_path} (fit mode)")
-                loaded_scaler_data = joblib.load(scaler_path)   # Load scaler data if path provided
-                # Check if it contains the expected structure (dict with means_stds and clip_bounds)
-                if isinstance(loaded_scaler_data, dict) and 'means_stds' in loaded_scaler_data:
-                     means_stds = loaded_scaler_data['means_stds']
-                     # Load clip bounds if they exist in the loaded data
-                     clip_bounds = loaded_scaler_data.get(CLIP_BOUNDS_KEY, {})
+                if self.force_normalize_features:
+                    logging.info(f"FE Module - normalize_features - {data_type} - Removed old scaler at {scaler_path} to recompute.")
+                    os.remove(scaler_path)
                 else:
-                    # Backward compatibility: if it's just the old means_stds dict
-                    means_stds = loaded_scaler_data
-                    clip_bounds = {}
-                    logging.info("FE Module - normalize_features - Loaded old scaler format (means_stds dict only).")
+                    logging.info(f"FE Module - normalize_features - {data_type} - Loading existing scaler from {scaler_path} (fit mode)")
+                    loaded_data = joblib.load(scaler_path)
+                    if isinstance(loaded_data, dict) and 'means_stds' in loaded_data:
+                        # Use loaded scaler if it's the new format
+                        means_stds = loaded_data['means_stds']
+                        clip_bounds = loaded_data.get(CLIP_BOUNDS_KEY, {})
+                        logging.info(f"FE Module - normalize_features - {data_type} - Using loaded scaler (new format).")
+                    else:
+                        # Backward compatibility
+                        means_stds = loaded_data
+                        clip_bounds = {}
+                        logging.info(f"FE Module - normalize_features - {data_type} - Using loaded scaler (old format).")
 
+            # If no valid scaler loaded or forced to recompute
             if not means_stds or self.force_normalize_features:
-                means_stds = {}  # Initialize dict for column-wise means and stds
-                # Normalize columns
+                logging.info(f"FE Module - normalize_features - {data_type} - Calculating new scaler for {data_type} data.")
+                # Calculate means and stds
+                means_stds = {}
                 for col in filter_normalize_cols:
-                    logging.info(f"FE Module - normalize_features - Normalizing column for {data_type} data: {col}")
-                    mean = df[col].mean()  # Compute mean
-                    std = df[col].std()  # Compute std
-                    std = max(std, 1e-6)  # Enforce min std to prevent division by zero
-                    means_stds[col] = (mean, std)  # Store tuple
-                    df[col] = (df[col] - mean) / std  # Apply normalization
+                    logging.debug(f"FE Module - normalize_features - {data_type} - Calculating mean/std for {col}")
+                    mean = df[col].mean()
+                    std = df[col].std()
+                    std = max(std, 1e-6)
+                    means_stds[col] = (mean, std)
+                    df[col] = (df[col] - mean) / std
 
-                # Apply Clipping and Calculate Bounds (using helper)
+                # Calculate and apply clipping bounds
                 df, clip_bounds = _apply_clipping(df, filter_normalize_cols, calculate_bounds=True, operation_desc=f"for {data_type} data (fit - calculate)")
-                
-                # Filter columns
-                df = df[final_target_cols]
-                
-                # Save combined scaler data (means_stds + clip_bounds)
+
+                # Save scaler
                 if scaler_path:
-                    scaler_data_to_save = {
-                        'means_stds': means_stds,
-                        CLIP_BOUNDS_KEY: clip_bounds
-                    }
-                    os.makedirs(os.path.dirname(scaler_path), exist_ok=True)  # Ensure directory exists for saving
-                    joblib.dump(scaler_data_to_save, scaler_path)  # Save combined scaler data for future use
-                    logging.info(f"FE Module - normalize_features - Saved new scaler (means_stds + clip_bounds) to {scaler_path}")
+                    scaler_data_to_save = {'means_stds': means_stds, CLIP_BOUNDS_KEY: clip_bounds}
+                    os.makedirs(os.path.dirname(scaler_path), exist_ok=True)
+                    joblib.dump(scaler_data_to_save, scaler_path)
+                    logging.info(f"FE Module - normalize_features - {data_type} - Saved new scaler to {scaler_path}")
             else:
-                # Transform mode using loaded means_stds and clip_bounds
-                # Normalize using loaded parameters
+                # Use loaded scaler
+                logging.info(f"FE Module - normalize_features - {data_type} - Using loaded scaler for normalization of {data_type} data.")
+                # Apply normalization
                 for col in filter_normalize_cols:
                     mean, std = means_stds.get(col, (0, 1))
                     std = max(std, 1e-6)
                     df[col] = (df[col] - mean) / std
                 
-                # Apply Clipping using loaded bounds (using helper)
-                # Determine if we need to recalculate bounds (backward compatibility or bounds missing)
-                recalculate_clip_bounds = not bool(clip_bounds)
-                if recalculate_clip_bounds:
-                    df, clip_bounds = _apply_clipping(df, filter_normalize_cols, calculate_bounds=True, operation_desc=f"for {data_type} data (fit - recalculate due to missing bounds)")
-                    # Update scaler_data_to_save if we are saving
-                    if scaler_path:
-                        scaler_data_to_save = {
-                            'means_stds': means_stds,
-                            CLIP_BOUNDS_KEY: clip_bounds
-                        }
-                        os.makedirs(os.path.dirname(scaler_path), exist_ok=True)
-                        joblib.dump(scaler_data_to_save, scaler_path)
-                        logging.info(f"FE Module - normalize_features - Updated and saved scaler (means_stds + recalculated clip_bounds) to {scaler_path}")
-                else:
-                    df, _ = _apply_clipping(df, filter_normalize_cols, clipping_bounds_dict=clip_bounds, calculate_bounds=False, operation_desc=f"for {data_type} data (fit - using loaded bounds)")
-                
-                # Filter columns
+                # Apply clipping (loaded bounds)
+                df, _ = _apply_clipping(df, filter_normalize_cols, clipping_bounds_dict=clip_bounds, calculate_bounds=False, operation_desc=f"for {data_type} data (fit - using loaded)")
+
+            # Filter final columns
+            df = df[final_target_cols]
+            
+            logging.info(f"FE Module - normalize_features - {data_type} - Fit mode completed for {data_type}. Returning df and means_stds.")
+            # Return the means_stds part for consistency with the original signature
+            # If we saved new data, return the means_stds from it, otherwise return the one we used/created.
+            if scaler_data_to_save and 'means_stds' in scaler_data_to_save:
+                 return df, scaler_data_to_save['means_stds']
+            else:
+                 return df, means_stds # This should be the one we created/calculated
+
+        else: # Transform Mode
+            # --- Transform Mode: Apply existing statistics ---
+            # Determine source of means_stds and clip_bounds
+            # Priority: 1. Load from `scaler_path` 2. Function argument `means_stds`
+            local_means_stds = None # Initialize
+            local_clip_bounds = {} # Initialize 
+            
+            # Try loading from `scaler_path` first
+            if scaler_path and os.path.exists(scaler_path):
+                logging.info(f"FE Module - normalize_features - {data_type} - Loading scaler from {scaler_path} for {data_type} data (transform mode)")
+                try: # Add try-except for robustness
+                    loaded_data = joblib.load(scaler_path)
+                    if isinstance(loaded_data, dict) and 'means_stds' in loaded_data:
+                        local_means_stds = loaded_data['means_stds']
+                        local_clip_bounds = loaded_data.get(CLIP_BOUNDS_KEY, {})
+                        logging.info(f"FE Module - normalize_features - {data_type} - Loaded scaler (new format) for transform.")
+                    else:
+                        # Backward compatibility - if file contains only old means_stds dict
+                        local_means_stds = loaded_data 
+                        local_clip_bounds = {} # No clip bounds in old format
+                        logging.info(f"FE Module - normalize_features - {data_type} - Loaded scaler (old format) for transform.")
+                except Exception as e:
+                    logging.error(f"FE Module - normalize_features - {data_type} - Failed to load scaler from {scaler_path}: {e}")
+
+            #  Get parameters from means_stds
+            if not local_means_stds and means_stds:
+                 logging.info(f"FE Module - normalize_features - {data_type} - Using provided means_stds argument for {data_type} data (transform mode). Clip bounds will be default.")
+                 local_means_stds = means_stds
+                 # Use default clip bouns when local_clip_bounds is empty
+                 logging.warning(f"FE Module - normalize_features - Provided means_stds but no clip_bounds for {data_type}. Using default clipping.")
+            
+            # Check again and set safe return
+            if not local_means_stds:
+                logging.warning(f"FE Module - normalize_features - {data_type} - No scaler (means_stds) available for {data_type} data (transform mode). Returning unnormalized df.")
                 df = df[final_target_cols]
+                return df
 
-        else: # Transform mode (fit=False)
-            # Transform mode (fit=False) when means_stds are provided or loaded
-            if not means_stds and scaler_path and os.path.exists(scaler_path):
-                logging.info(f"FE Module - normalize_features - Loaded existing scaler from {scaler_path} (transform mode)")
-                loaded_scaler_data = joblib.load(scaler_path) # Load scaler data if path provided
-                # Check structure
-                if isinstance(loaded_scaler_data, dict) and 'means_stds' in loaded_scaler_data:
-                     means_stds = loaded_scaler_data['means_stds']
-                     clip_bounds = loaded_scaler_data.get(CLIP_BOUNDS_KEY, {})
-                else:
-                     # Backward compatibility
-                     means_stds = loaded_scaler_data
-                     clip_bounds = {}
-                     logging.info("FE Module - normalize_features - Loaded old scaler format (means_stds dict only) in transform mode.")
-            elif not means_stds:
-                 logging.warning("FE Module - normalize_features - Transform mode requested but no means_stds or valid scaler_path provided. Returning unnormalized df for target columns.")
-                 # Only remain filtered columns, discard others
-                 df = df[final_target_cols]
-                 return df # Return early if no means_stds available
+            # Apply normalization
+            logging.info(f"FE Module - normalize_features - {data_type} - Applying normalization to {data_type} data.")
+            for col in filter_normalize_cols:
+                mean, std = local_means_stds.get(col, (0, 1))
+                std = max(std, 1e-6)
+                df[col] = (df[col] - mean) / std
 
-            if means_stds:
-                # Normalize using loaded parameters
-                for col in filter_normalize_cols:
-                    mean, std = means_stds.get(col, (0, 1))
-                    std = max(std, 1e-6)
-                    df[col] = (df[col] - mean) / std
-                
-                # Apply Clipping using loaded bounds (using helper)
-                df, _ = _apply_clipping(df, filter_normalize_cols, clipping_bounds_dict=clip_bounds, calculate_bounds=False, operation_desc=f"for {data_type} data (transform mode)")
+            # Apply clipping
+            logging.info(f"FE Module - normalize_features - {data_type} - Applying clipping based on {data_type} data's own quantiles.")
+            df, _ = _apply_clipping(df, filter_normalize_cols, clipping_bounds_dict=None, calculate_bounds=True, operation_desc=f"for {data_type} data (transform mode)")
 
-            # Filter columns (applies clipping result and filters)
-            df = df[final_target_cols] 
-
-        logging.info(f"FE Module - normalize_features - Successfully Normalized and Clipped, return df with columns: {df.columns.tolist()}, fit mode: {fit}")
-        # Return normalized (and clipped) df and computed means_stds in fit mode
-        if fit:
-            # If we calculated new scaler data to save (e.g., in the recalculate branch), return it.
-            # Otherwise, return the original loaded means_stds.
-            return_scaler_data = scaler_data_to_save if scaler_data_to_save else means_stds
-            if isinstance(return_scaler_data, dict) and 'means_stds' in return_scaler_data:
-                # Return the means_stds part for consistency with original signature if needed,
-                # or the whole dict. Let's return the whole dict as it contains both.
-                # The original signature for fit=True was (df, means_stds_dict).
-                # To be precise, we should return the 'means_stds' part of the dict.s
-                return df, return_scaler_data.get('means_stds', {})
-            else:
-                # Backward compatibility or if scaler_data_to_save was just means_stds
-                return df, return_scaler_data
-        else:
+            # Filter final columns
+            df = df[final_target_cols]
+            
+            logging.info(f"FE Module - normalize_features - {data_type} - Transform mode completed for {data_type}. Returning df.")
             return df
-
 
     def prepare_rl_data(self, fused_df, symbols=None, data_type='train'):
         """
@@ -937,7 +925,7 @@ class FeatureEngineer:
             logging.warning(f"FE Module - _generate_path_suffix - Fail to generate path suffix : {e}")
             return None  # Return None on failure to prevent downstream errors
     
-    def load_fused_df_cache(self, prefix='Fused_data'):
+    def load_fused_df_cache(self, prefix='Fused_Data'):
         """
         Load the fused DataFrame from a cache file if available.
 
@@ -1310,9 +1298,9 @@ class FeatureEngineer:
         - Supports risk score injection and FinBERT sentiment adjustment.
         """
         os.makedirs(self.exper_data_path, exist_ok=True)
-        fused_data_path_suffix = self._generate_path_suffix()
+        exper_data_path_suffix = self._generate_path_suffix()
         exper_data_list = os.listdir(self.exper_data_path)
-        if exper_data_list and exper_data_list[0].endswith(fused_data_path_suffix) and self.load_npz:
+        if exper_data_list and exper_data_list[0].endswith(exper_data_path_suffix) and self.load_npz:
             # Check if experiment data directory is not empty; if so, load existing data to avoid regeneration
             logging.info("=========== Start to load experiment data dict ===========")
             logging.info(f"FE Module - generate_experiment_data - Loading exper_data_dict from {self.exper_data_path}")
@@ -1392,8 +1380,9 @@ class FeatureEngineer:
                         logging.info("FE Module - generate_experiment_data - Benchmark mode: no sentiment")    # Log skipping sentiment for benchmark
 
                     # Merge features and split train/valid/test data by date
-                    fused_df = self.merge_features(stock_data_dict, sentiment_score_df, risk_score_df, mode=mode)    # Fuse stock data with sentiment/risk features
+                    fused_df = self.merge_features(stock_data_dict, sentiment_score_df, risk_score_df)    # Fuse stock data with sentiment/risk features
                     if fused_df.empty:
+                        logging.warning(f"FE Module - generate_experiment_data - Empty DataFrame for mode {mode}")
                         raise ValueError(f"Fused DataFrame empty for mode {mode}")  # Error if fusion results in empty DF
                 
                 # Generate pre-normalization feature analysis (only once)
@@ -1422,8 +1411,8 @@ class FeatureEngineer:
                 # Normalize indicators + sentiment + risk columns for RL training
                 train_scaler_path = self._generate_scaler_path(self.scaler_cache_path, group=group, mode=mode)   # Dynamic per-group/mode
                 train_df, means_stds = self.normalize_features(train_df, fit=True, scaler_path=train_scaler_path, data_type='train') # Load cache scaler if existed
-                valid_df, _ = self.normalize_features(valid_df, fit=False, means_stds=means_stds, data_type='valid') # Load cache scaler if existed
-                test_df, _ = self.normalize_features(test_df, fit=False, means_stds=means_stds, data_type='test')   # Load cache scaler if existed
+                valid_df = self.normalize_features(valid_df, fit=False, means_stds=means_stds, scaler_path=train_scaler_path, data_type='valid') # Load cache scaler if existed
+                test_df = self.normalize_features(test_df, fit=False, means_stds=means_stds, scaler_path=train_scaler_path, data_type='test')   # Load cache scaler if existed
                 logging.info(f"FE Module - generate_experiment_data - Normalized features for mode {mode}")
 
                 if not pro_feature_analysis_completed and self.plot_feature_visualization:
@@ -1498,430 +1487,3 @@ class FeatureEngineer:
                     logging.warning(f"FE Module - Failed to save NPZ files: {e}")
             logging.info(f"FE Module - generate_experiment_data - Save exper_data_dict successfully")
             return exper_data_dict  # Return the full experiment data dictionary
-
-# %%
-# from finbert_trader.data.data_resource import DataResource
-# from finbert_trader.config_setup import ConfigSetup
-
-# %%
-# %load_ext autoreload
-# %autoreload 2
-
-# # %%
-# custom_setup = {
-#     'symbols': ['GOOGL', 'AAPL'],  # Multi-stock for portfolio test
-#     # Optional: ['GOOGL', 'AAPL', 'MSFT', 'AMZN', 'NVDA', 'AMD', 'TSLA', 'META']
-#     'start': '2015-01-01',
-#     'end': '2023-12-31',
-#     'train_start_date': '2015-01-01',
-#     'train_end_date': '2021-12-31',
-#     'valid_start_date': '2022-01-01',
-#     'valid_end_date': '2022-12-31',
-#     'test_start_date': '2023-01-01',
-#     'test_end_date': '2023-12-31',
-#     'exper_mode': {
-#         'rl_algorithm': ['PPO', 'CPPO', 'A2C']  # Includes CPPO, aligned with FinRL_DeepSeek
-#     }
-# }
-# setup_config = ConfigSetup(custom_setup)
-# logging.info(f"Main - ConfigSetup initialized with symbols: {setup_config.symbols}")
-
-# # %%
-# dr = DataResource(setup_config)
-# stock_data_dict = dr.fetch_stock_data()
-# if not stock_data_dict:
-#     raise ValueError("No stock data fetched")
-# logging.info(f"Main - Prepared stock data for next step")
-# stock_data_dict
-
-# # %% [markdown]
-# # origin_dir = '/Users/archy/Projects/finbert_trader/'
-# # cache_path = origin_dir + cache_path
-# # filtered_cache_path = origin_dir + filtered_cache_path
-# # cache_path, filtered_cache_path
-
-# # %%
-# cache_path, filtered_cache_path = dr.cache_path_config()
-# cache_path, filtered_cache_path
-
-# # %%
-# news_chunks_gen = dr.load_news_data(cache_path, filtered_cache_path)
-
-# # %%
-# fe = FeatureEngineer(setup_config)
-
-# # %%
-# exper_data_dict = fe.generate_experiment_data(stock_data_dict, news_chunks_gen, exper_mode='rl_algorithm')
-# logging.info(f"Main - Generated experiment data for modes: {list(exper_data_dict.keys())}")
-
-# # %%
-# for mode, data_dict in exper_data_dict.items():
-#     print(f"Mode: {mode}")
-#     print(f"Data dict type: {type(data_dict)}")
-#     print(f"Data dict length: {len(data_dict)}")
-#     for target, data_list in data_dict.items():
-#         if target != 'model_type':
-#             print(f"target data: {target}")
-#             print(f"total data length: {len(data_list)}")
-#             print(f"data list keys: {data_list[0].keys()}")
-#             print(f"data shape: {data_list[0]['states'].shape, data_list[0]['targets'].shape}")
-#             print(f"data type: {type(data_list[0]['start_date']), type(data_list[0]['states']), type(data_list[0]['targets'])}")
-#             print(f"data sample: {data_list[50]['start_date'], data_list[50]['states'][0], data_list[50]['targets'][0]}")
-
-# # %%
-# from finbert_trader.config_trading import ConfigTrading
-
-# # %%
-# trading_config = ConfigTrading(upstream_config=setup_config)
-
-# # %%
-# import os
-# import datetime
-# import numpy as np
-# import matplotlib.pyplot as plt
-
-# def plot_senti_risk_distribution(
-#     exper_data_dict,
-#     senti_feature_index,
-#     risk_feature_index,
-#     symbol=None,
-#     features_all_flatten=None,
-#     model_name="PPO",
-#     save_folder="plot_cache",
-#     prefix="senti_risk_distribution",
-#     auto_save=False,
-#     show_plot=False
-# ):
-#     """
-#     Plot sentiment & risk feature distributions from exper_data_dict
-#     and automatically save the figure.
-#     """
-#     os.makedirs(save_folder, exist_ok=True)
-#     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-#     datasets = ['train', 'valid', 'test']
-    
-#     for dataset in datasets:
-#         if dataset not in exper_data_dict[model_name]:
-#             continue
-        
-#         data_list = exper_data_dict[model_name][dataset]
-#         all_states = np.concatenate([ep['states'] for ep in data_list], axis=0)
-
-#         if symbol and features_all_flatten:
-#             senti_col = f"sentiment_score_{symbol}"
-#             risk_col = f"risk_score_{symbol}"
-#             if senti_col not in features_all_flatten or risk_col not in features_all_flatten:
-#                 raise ValueError(f"Feature {senti_col} or {risk_col} not found")
-#             senti_idx = features_all_flatten.index(senti_col)
-#             risk_idx = features_all_flatten.index(risk_col)
-#             sentiments = all_states[:, senti_idx]
-#             risks = all_states[:, risk_idx]
-#         else:
-#             sentiments = all_states[:, senti_feature_index].flatten()
-#             risks = all_states[:, risk_feature_index].flatten()
-
-#         def stats(arr):
-#             return {
-#                 "mean": np.mean(arr),
-#                 "std": np.std(arr),
-#                 "min": np.min(arr),
-#                 "max": np.max(arr),
-#                 "q25": np.percentile(arr, 25),
-#                 "q50": np.percentile(arr, 50),
-#                 "q75": np.percentile(arr, 75)
-#             }
-        
-#         print(f"\n==== {dataset.upper()} ====")
-#         print("Sentiment Stats:", stats(sentiments))
-#         print("Risk Stats:", stats(risks))
-
-#         fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-#         axes[0].hist(sentiments, bins=50, color='skyblue', alpha=0.7, edgecolor="black")
-#         axes[0].set_title(f"{dataset} Sentiment {symbol or ''}".strip())
-#         axes[0].axvline(0, color='red', linestyle='--', linewidth=1)
-#         axes[0].set_xlabel("Sentiment Score")
-#         axes[0].set_ylabel("Frequency")
-
-#         axes[1].hist(risks, bins=50, color='salmon', alpha=0.7, edgecolor="black")
-#         axes[1].set_title(f"{dataset} Risk {symbol or ''}".strip())
-#         axes[1].axvline(0, color='red', linestyle='--', linewidth=1)
-#         axes[1].set_xlabel("Risk Score")
-#         axes[1].set_ylabel("Frequency")
-
-#         fig.tight_layout()
-
-#         if auto_save:
-#             safe_symbol = symbol or "ALL"
-#             save_path = os.path.join(
-#                 save_folder, 
-#                 f"{prefix}_{model_name}_{dataset}_{safe_symbol}_{timestamp}.png"
-#             )
-#             fig.savefig(save_path, dpi=300, bbox_inches="tight")
-#             print(f"[INFO] Plot saved to: {save_path}")
-
-#         if show_plot:
-#             plt.show()
-#         else:
-#             plt.close(fig)
-
-
-# # %%
-# plot_senti_risk_distribution(
-#     exper_data_dict,
-#     senti_feature_index=trading_config.senti_feature_index,
-#     risk_feature_index=trading_config.risk_feature_index,
-#     auto_save=True
-# )
-
-# # %%
-# plot_senti_risk_distribution(
-#     exper_data_dict,
-#     symbol="GOOGL",
-#     features_all_flatten=trading_config.features_all_flatten,
-#     senti_feature_index=trading_config.senti_feature_index,
-#     risk_feature_index=trading_config.risk_feature_index,
-# )
-
-# # %%
-# plot_senti_risk_distribution(
-#     exper_data_dict,
-#     symbol="AAPL",
-#     features_all_flatten=trading_config.features_all_flatten,
-#     senti_feature_index=trading_config.senti_feature_index,
-#     risk_feature_index=trading_config.risk_feature_index
-# )
-
-# # %%
-# import os
-# import datetime
-# import numpy as np
-# import matplotlib.pyplot as plt
-
-# def plot_senti_risk_grid(
-#     exper_data_dict,
-#     trading_config,
-#     dataset="train",               # 'train' / 'valid' / 'test'
-#     model_names=None,              # list of models to plot (None -> use exper_data_dict keys)
-#     symbols=None,                  # list of symbols to plot (None -> use trading_config.symbols)
-#     save_folder="plot_cache",
-#     filename_prefix="senti_risk_grid",
-#     bins=50,
-#     auto_save=True,
-#     show_fig=False
-# ):
-#     """
-#     Plot a grid: rows = algorithms, cols = [ALL] + symbols.
-#     Each cell overlays sentiment & risk histograms and prints basic stats.
-
-#     Parameters
-#     ----------
-#     exper_data_dict : dict
-#         your exper_data_dict (top-level keys = model names like 'PPO', 'CPPO', ...)
-#     trading_config : object
-#         config instance providing .symbols, .senti_feature_index (list of ints per symbol),
-#         .risk_feature_index (list of ints per symbol)
-#     dataset : str
-#         which split to use: 'train' / 'valid' / 'test'
-#     model_names : list[str] or None
-#         which algorithms to include; defaults to all keys in exper_data_dict
-#     symbols : list[str] or None
-#         symbol list; defaults to trading_config.symbols
-#     save_folder : str
-#         where to save the generated image
-#     filename_prefix : str
-#     bins : int
-#         histogram bins
-#     auto_save : bool
-#         whether to save the file
-#     show_fig : bool
-#         whether to plt.show() the figure (useful interactively)
-#     Returns
-#     -------
-#     save_path (str) or (None)
-#     """
-#     # --- prepare inputs ---
-#     os.makedirs(save_folder, exist_ok=True)
-#     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-#     if model_names is None:
-#         model_names = [k for k in exper_data_dict.keys()]
-
-#     if symbols is None:
-#         symbols = getattr(trading_config, "symbols", None)
-#         if symbols is None:
-#             raise ValueError("Provide symbols list either via argument or trading_config.symbols")
-
-#     senti_idx_list = getattr(trading_config, "senti_feature_index", None)
-#     risk_idx_list = getattr(trading_config, "risk_feature_index", None)
-#     if senti_idx_list is None or risk_idx_list is None:
-#         raise ValueError("trading_config must provide senti_feature_index and risk_feature_index (lists of indices)")
-
-#     n_algos = len(model_names)
-#     n_cols = 1 + len(symbols)   # ALL + each symbol
-#     n_rows = n_algos
-
-#     figsize = (4 * n_cols, 3 * max(1, n_rows))
-#     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
-
-#     for i, algo in enumerate(model_names):
-#         # guard if algo not present in dict
-#         if algo not in exper_data_dict:
-#             print(f"[WARN] Algorithm {algo} not in exper_data_dict, skipping.")
-#             for j in range(n_cols):
-#                 axes[i, j].axis('off')
-#             continue
-
-#         model_dict = exper_data_dict[algo]
-#         if dataset not in model_dict:
-#             print(f"[WARN] {algo} has no dataset '{dataset}', skipping row.")
-#             for j in range(n_cols):
-#                 axes[i, j].axis('off')
-#             continue
-
-#         data_list = model_dict[dataset]
-#         if not isinstance(data_list, (list, tuple)) or len(data_list) == 0:
-#             print(f"[WARN] {algo}/{dataset} empty or not list, skipping row.")
-#             for j in range(n_cols):
-#                 axes[i, j].axis('off')
-#             continue
-
-#         # concat episodes into one big states array (T_total, D)
-#         try:
-#             all_states = np.concatenate([ep['states'] for ep in data_list], axis=0)
-#         except Exception as e:
-#             raise RuntimeError(f"Failed to concat states for {algo}/{dataset}: {e}")
-
-#         # column 0: ALL (aggregate all symbols)
-#         ax = axes[i, 0]
-#         senti_all = all_states[:, senti_idx_list].flatten()    # flatten over symbols
-#         risk_all = all_states[:, risk_idx_list].flatten()
-#         _plot_two_hist(ax, senti_all, risk_all, bins=bins,
-#                        title=f"{algo} - ALL ({dataset})")
-#         _annotate_stats(ax, senti_all, risk_all)
-
-#         # subsequent columns: per-symbol
-#         for j, sym in enumerate(symbols, start=1):
-#             ax = axes[i, j]
-#             # get index for this symbol
-#             try:
-#                 sym_idx = symbols.index(sym)
-#             except ValueError:
-#                 # fallback: try to find the index by name mapping using features_all_flatten if available
-#                 raise ValueError(f"Symbol {sym} not found in provided symbols list")
-
-#             senti_col_idx = senti_idx_list[sym_idx]
-#             risk_col_idx = risk_idx_list[sym_idx]
-#             senti_vals = all_states[:, senti_col_idx]
-#             risk_vals = all_states[:, risk_col_idx]
-#             _plot_two_hist(ax, senti_vals, risk_vals, bins=bins,
-#                            title=f"{algo} - {sym} ({dataset})")
-#             _annotate_stats(ax, senti_vals, risk_vals)
-
-#     plt.tight_layout()
-
-#     save_path = None
-#     if auto_save:
-#         safe_fname = f"{filename_prefix}_{dataset}_{timestamp}.png"
-#         save_path = os.path.join(save_folder, safe_fname)
-#         fig.savefig(save_path, dpi=300, bbox_inches="tight")
-#         print(f"[INFO] Saved grid plot to: {save_path}")
-
-#     if show_fig:
-#         plt.show()
-#     else:
-#         plt.close(fig)
-
-#     return save_path
-
-
-# def _plot_two_hist(ax, arr1, arr2, bins=50, title=None):
-#     """Helper: overlay two histograms on ax (arr1 blue, arr2 orange) and draw zero line."""
-#     ax.hist(arr1, bins=bins, alpha=0.6, label="Sentiment", color="tab:blue", density=False)
-#     ax.hist(arr2, bins=bins, alpha=0.5, label="Risk", color="tab:orange", density=False)
-#     ax.axvline(0, color='red', linestyle='--', linewidth=1)
-#     ax.set_title(title if title else "")
-#     ax.legend(fontsize='small')
-#     ax.grid(alpha=0.3, linestyle='--')
-
-
-# def _annotate_stats(ax, senti_arr, risk_arr):
-#     """Helper: annotate mean/std/median in the top-right of the axis."""
-#     s_mean, s_std, s_med = np.mean(senti_arr), np.std(senti_arr), np.median(senti_arr)
-#     r_mean, r_std, r_med = np.mean(risk_arr), np.std(risk_arr), np.median(risk_arr)
-#     txt = (f"S mean={s_mean:.3f}, std={s_std:.3f}, med={s_med:.3f}\n"
-#            f"R mean={r_mean:.3f}, std={r_std:.3f}, med={r_med:.3f}")
-#     ax.text(0.98, 0.95, txt, transform=ax.transAxes, ha='right', va='top',
-#             fontsize='small', bbox=dict(facecolor='white', alpha=0.6, edgecolor='none'))
-
-
-# # %%
-# save_path = plot_senti_risk_grid(
-#     exper_data_dict=exper_data_dict,
-#     trading_config=trading_config,
-#     dataset="train",
-#     model_names=None,        # Use exper_data_dict keys default
-#     symbols=None,            # Use trading_config.symbols default
-#     save_folder="plot_cache",
-#     filename_prefix="senti_risk_grid_all_single",
-#     bins=60,
-#     auto_save=False,
-#     show_fig=True
-# )
-
-# # %%
-# save_path = plot_senti_risk_grid(
-#     exper_data_dict=exper_data_dict,
-#     trading_config=trading_config,
-#     dataset="valid",
-#     model_names=None,        # Use exper_data_dict keys default
-#     symbols=None,            # Use trading_config.symbols default
-#     save_folder="plot_cache",
-#     filename_prefix="senti_risk_grid_all_single",
-#     bins=60,
-#     auto_save=True,
-#     show_fig=True
-# )
-
-# # %%
-# save_path = plot_senti_risk_grid(
-#     exper_data_dict=exper_data_dict,
-#     trading_config=trading_config,
-#     dataset="test",
-#     model_names=None,        # Use exper_data_dict keys default
-#     symbols=None,            # Use trading_config.symbols default
-#     save_folder="plot_cache",
-#     filename_prefix="senti_risk_grid_all_single",
-#     bins=60,
-#     auto_save=True,
-#     show_fig=True
-# )
-
-# # %%
-# import numpy as np
-# import pandas as pd
-
-# def summarize_feature_by_split(exper_data_dict, model='PPO', senti_idx=None, risk_idx=None, nsamples=1000):
-#     for split in ['train','valid','test']:
-#         if split not in exper_data_dict[model]:
-#             continue
-#         data_list = exper_data_dict[model][split]
-
-#         all_states = np.concatenate([ep['states'] for ep in data_list], axis=0)
-#         senti = all_states[:, senti_idx].ravel()
-#         risk = all_states[:, risk_idx].ravel()
-#         print(f"=== {split} ===")
-#         for name, arr in [('senti', senti), ('risk', risk)]:
-#             arr = np.asarray(arr, dtype=np.float64)
-#             n = len(arr)
-#             n_zero = np.sum(arr == 0)
-#             n_three = np.sum(arr == 3.0)
-#             n_nan = np.sum(np.isnan(arr))
-#             print(f"{name} -> mean={arr.mean():.4f}, std={arr.std():.4f}, min={arr.min():.4f}, max={arr.max():.4f}, n={n}, zeros={n_zero} ({n_zero/n*100:.2f}%), three={n_three} ({n_three/n*100:.2f}%), nans={n_nan}")
-#         print()
-
-
-# # %%
-# summarize_feature_by_split(exper_data_dict,senti_idx=trading_config.senti_feature_index,risk_idx=trading_config.risk_feature_index)
-
-# # %%

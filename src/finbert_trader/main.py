@@ -31,13 +31,38 @@ import logging
 import numpy as np
 import pandas as pd
 import os
+import sys
 import random
 import warnings
 from datetime import datetime
 import json
 
 # %%
-os.chdir('/Users/archy/Projects/finbert_trader/')
+# Generate project root path
+if '__file__' in globals():
+    project_root = os.path.join(os.path.dirname(__file__), '..')
+else:
+    # For interactive environments, use current working directory
+    project_root = os.path.join(os.getcwd(), '..')
+
+sys.path.insert(0, project_root)
+
+# Logging setup
+def setup_logging():
+    # Config logging level
+    logging.getLogger().setLevel(logging.WARNING)
+    
+    logging.basicConfig(
+        level=logging.WARNING,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler('trading.log'),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+
+setup_logging()
+# %%
 # Set random seeds for reproducibility
 def set_random_seeds(seed=42):
     """
@@ -86,15 +111,6 @@ from .trading_backtest import TradingBacktest
 from .exper_tracker import ExperimentTracker
 from .trading_analysis import analyze_trade_history
 from .visualize.visualize_backtest import VisualizeBacktest
-# Logging setup
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('pipeline.log'),  # File handler for persistent logs
-        logging.StreamHandler()  # Console handler for real-time output
-    ]
-)
 
 # %%
 def execute_pipeline(custom_setup_config, custom_trading_config):
@@ -526,14 +542,13 @@ def main():
         
         # Configuration setup
         custom_setup_config = {
-            'symbols': ['GOOGL', 'AAPL'],
             'start': '2015-01-01',
             'end': '2023-12-31',
             'train_start_date': '2015-01-01',
-            'train_end_date': '2021-12-31',
-            'valid_start_date': '2022-01-01',
-            'valid_end_date': '2022-12-31',
-            'test_start_date': '2023-01-01',
+            'train_end_date': '2019-12-31',
+            'valid_start_date': '2020-01-01',
+            'valid_end_date': '2021-12-31',
+            'test_start_date': '2022-01-01',
             'test_end_date': '2023-12-31',
             'exper_mode': {
                 'rl_algorithm': ['PPO', 'CPPO', 'A2C']
