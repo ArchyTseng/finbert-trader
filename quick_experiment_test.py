@@ -98,6 +98,7 @@ custom_setup_config = {
     'window_size': 50,  # Initial small window size
     'window_factor': 2,
     'window_extend': 50,
+    'prediction_days': 5,
     'smooth_window_size': 10,
     'plot_feature_visualization': False,
     'save_npz': True,  # Disable saving for quick experiments
@@ -217,8 +218,8 @@ experiments = [
 ]
 
 for exp_name, exp_results in experiments:
-    if 'PPO' in exp_results:
-        metrics = exp_results['PPO'].get('metrics', {})
+    for mode in exp_results:
+        metrics = exp_results[mode].get('metrics', {})
         print(f"{exp_name}:")
         print(f"  CAGR: {metrics.get('cagr', 0)*100:.2f}%")
         print(f"  Sharpe Ratio: {metrics.get('sharpe_ratio', 0):.4f}")
@@ -241,7 +242,7 @@ for exp_name, exp_results in experiments:
 # print("This will test the experiment sequence functionality...")
 #
 # # Run all quick experiments
-# all_quick_results = run_quick_experiment_sequence(config_setup, ['GOOGL', 'AAPL'])
+# all_quick_results = run_quick_experiment_sequence(config_setup, config_setup.symbols)
 #
 # print("All quick experiments completed!")
 # print(f"Number of experiments run: {len(all_quick_results)}")

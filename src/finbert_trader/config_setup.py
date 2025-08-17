@@ -33,9 +33,8 @@ class ConfigSetup:
     # Config directories, from FinRL reference
     CONFIG_CACHE_DIR = 'config_cache'
     RAW_DATA_DIR = 'raw_data_cache'
-    FUSED_DATA_DIR = 'fused_data_dir'
+    FUSED_DATA_DIR = 'fused_data_cache'
     PROCESSED_NEWS_DIR = 'processed_news_cache'
-    CONFIG_CACHE_DIR = 'fused_data_cache'
     EXPER_DATA_DIR = 'exper_data_cache'
     PLOT_FEATURES_DIR = 'plot_features_cache'
     PLOT_NEWS_DIR = 'plot_news_cache'
@@ -149,7 +148,14 @@ class ConfigSetup:
         self.risk_threshold = {'train': {},
                                 'valid': {},
                                 'test': {}}
-        self.threshold_factor = 0.2
+        self.threshold_factor = 0.5
+
+        # Switch action strategy
+        self.bypass_interpretation = True
+        # Switch signal strategy
+        self.use_signal_consistency_bonus = True
+        # Switch for dynamic indicator threshold in stock_trading_env.py , _calculate_dynamic_ind_threshold()
+        self.use_dynamic_ind_threshold = True
 
         self.min_count = None
         self.min_days = None
@@ -176,10 +182,10 @@ class ConfigSetup:
         self.use_senti_features = False # Control sentiment features for window size, in StockTradingEnv
         self.use_risk_features = False  # Control risk features for window size, in StockTradingEnv
 
-        self.use_senti_threshold = False    # Control sentiment threshold for S_f mechanism
-        self.use_risk_threshold = False     # Control risk threshold for S_f mechanism
+        # self.use_senti_threshold = False    # Control sentiment threshold for S_f mechanism
+        # self.use_risk_threshold = False     # Control risk threshold for S_f mechanism
 
-        self.use_dynamic_infusion = False   # Control dynamic infusion_strength mechanism
+        # self.use_dynamic_infusion = False   # Control dynamic infusion_strength mechanism
 
         self.use_symbol_name = False     # Control saved filename rule
 
@@ -440,7 +446,7 @@ class ConfigSetup:
             'use_risk_features': False,
             'use_senti_threshold': False,
             'use_risk_threshold': False,
-            'use_dynamic_infusion': False,
+            # 'use_dynamic_infusion': False,
             'use_symbol_name': True,
             'exper_mode': {
                 'indicator/news': ['benchmark',

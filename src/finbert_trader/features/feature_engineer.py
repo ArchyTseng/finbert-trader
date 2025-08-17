@@ -673,6 +673,11 @@ class FeatureEngineer:
         if 'Date' in fused_df.columns:
             fused_df = fused_df.set_index('Date')  # Set Date as index to exclude from features
         logging.info(f"FE Module - prepare_rl_data - Feature Columns: {fused_df.columns.tolist()}")  # Log feature columns for debugging
+
+        logging.info(f"FE Module - prepare_rl_data - Columns before update features_categories: {fused_df.columns.tolist()}")
+        # Ensure fused_df columns order follows Adj_Close_symbol1, indicators_symbol1, senti/risk_score_symbol1, Adj_Close_symbol2, ......
+        fused_df = fused_df[[col for symbol in symbols for col in fused_df.columns if symbol in col]]
+        logging.info(f"FE Module - prepare_rl_data - Columns after reorder: {fused_df.columns.tolist()}")
         
         if self.config._features_initialized:
             logging.info(f"FE Module - prepare_rl_data - Skipping features/threshold update "
@@ -1469,9 +1474,9 @@ class FeatureEngineer:
                 self.news_engineer.text_cols = original_exper_news_cols # Restore original text columns after mode processing
 
             # Release FinBERT resources
-            if hasattr(self.news_engineer, 'model') and self.news_engineer.model is not None:
-                del self.news_engineer.model    # Delete model to free memory
-                del self.news_engineer.tokenizer    # Delete tokenizer
+            if hasattr(self.news_engineer, 'model') and self.news_engineer.finbert_model is not None:
+                del self.news_engineer.finbert_model    # Delete model to free memory
+                del self.news_engineer.finbert_tokenizer    # Delete tokenizer
                 torch.cuda.empty_cache()    # Clear GPU cache if using CUDA
                 logging.info("FE Module - generate_experiment_data - Released FinBERT resources")
 

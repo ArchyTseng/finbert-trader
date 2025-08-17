@@ -102,6 +102,7 @@ class ExperimentScheme:
         # Minimal configuration for quick validation
         setup_config = {
             'symbols': self.symbols,
+            # Train/valid/test Date split
             'start': self.config.start,
             'end': self.config.end,
             'train_start_date': self.config.train_start_date,
@@ -110,26 +111,38 @@ class ExperimentScheme:
             'valid_end_date': self.config.valid_end_date,
             'test_start_date': self.config.test_start_date,
             'test_end_date': self.config.test_end_date,
-            'exper_mode': {
-                'rl_algorithm': ['PPO']  # Single algorithm for speed
-            },
+            # Config exper_mode, extendable in ConfigSetup
+            'exper_mode': self.config.exper_mode,
+            # Config states window size for downstream pipeline
             'window_size': 50,  # Smaller window for faster processing
             'window_factor': 2,
             'window_extend': 50,
+            'prediction_days': self.config.prediction_days,
+            # Config smooth day in FeatureEngineer, enhancing data stableness
             'smooth_window_size': self.config.smooth_window_size,
-            'filter_ind': self.filter_ind,
+            # Config filter target indicator for experiment comparison
+            'filter_ind': self.filter_ind,  # Default [], monitoring all indicators
+            # Switch save/load cache file, enhancing pipeline performance
             'force_process_news': self.config.force_process_news,
             'force_fuse_data': self.config.force_fuse_data,
             'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
-            'plot_feature_visualization': True,
+            'plot_feature_visualization': self.config.plot_feature_visualization,
+            # Config cache name format
+            'use_symbol_name': self.config.use_symbol_name,
+            # Switch for interpretation strategy
+            'bypass_interpretation': True,  # Default True
+            # Switch for dynamic indicator threshold
+            'use_dynamic_ind_threshold': True,  # Default True
+            # Switch for signal strategy
+            'use_signal_consistency_bonus': False,  # Depend on experiment purpose
+            # Switch for senti/risk score and features
             'use_senti_factor': False,
             'use_risk_factor': False,
             'use_senti_features': False,
             'use_risk_features': False,
-            'use_senti_threshold': False,
-            'use_risk_threshold': False,
-            'use_dynamic_infusion': False,
-            'use_symbol_name': self.config.use_symbol_name,
+            # 'use_senti_threshold': False,
+            # 'use_risk_threshold': False,
+            # Configuration for Initializing cache dir
             'CONFIG_CACHE_DIR': self.config_cache_dir,
             'RAW_DATA_DIR': self.raw_data_dir,
             'PROCESSED_NEWS_DIR': self.processed_news_dir,
@@ -146,10 +159,10 @@ class ExperimentScheme:
         
         trading_config = {
             'initial_cash': 100000,
-            'total_timesteps': 100000,  
-            'reward_scaling': 1e-5,
-            'cash_penalty_proportion': 0.0005,
-            'commission_rate': 0.001
+            'total_timesteps': 150000,  
+            'reward_scaling': 1e-3,
+            'cash_penalty_proportion': 0.0001,
+            'commission_rate': 0.0001
         }
         
         return self._execute_experiment_with_visualization(
@@ -179,8 +192,10 @@ class ExperimentScheme:
         logging.info("ES Module - Running Quick Experiment 2: Reward Function Optimization")
         
         # Minimal configuration for quick validation
+        # Minimal configuration for quick validation
         setup_config = {
             'symbols': self.symbols,
+            # Train/valid/test Date split
             'start': self.config.start,
             'end': self.config.end,
             'train_start_date': self.config.train_start_date,
@@ -189,26 +204,38 @@ class ExperimentScheme:
             'valid_end_date': self.config.valid_end_date,
             'test_start_date': self.config.test_start_date,
             'test_end_date': self.config.test_end_date,
-            'exper_mode': {
-                'rl_algorithm': ['PPO']  # Single algorithm for speed
-            },
+            # Config exper_mode, extendable in ConfigSetup
+            'exper_mode': self.config.exper_mode,
+            # Config states window size for downstream pipeline
             'window_size': 50,  # Smaller window for faster processing
             'window_factor': 2,
             'window_extend': 50,
+            'prediction_days': self.config.prediction_days,
+            # Config smooth day in FeatureEngineer, enhancing data stableness
             'smooth_window_size': self.config.smooth_window_size,
-            'filter_ind': self.filter_ind,
+            # Config filter target indicator for experiment comparison
+            'filter_ind': self.filter_ind,  # Default [], monitoring all indicators
+            # Switch save/load cache file, enhancing pipeline performance
             'force_process_news': self.config.force_process_news,
             'force_fuse_data': self.config.force_fuse_data,
             'force_normalize_features': self.config.force_normalize_features,    # Ensure normalize target columns
-            'plot_feature_visualization': False,
+            'plot_feature_visualization': self.config.plot_feature_visualization,
+            # Config cache name format
+            'use_symbol_name': self.config.use_symbol_name,
+            # Switch for interpretation strategy
+            'bypass_interpretation': True,  # Default True
+            # Switch for dynamic indicator threshold
+            'use_dynamic_ind_threshold': True,  # Default True
+            # Switch for signal strategy
+            'use_signal_consistency_bonus': True,  # Depend on experiment purpose
+            # Switch for senti/risk score and features
             'use_senti_factor': True,
             'use_risk_factor': True,
             'use_senti_features': True,
             'use_risk_features': True,
-            'use_senti_threshold': False,
-            'use_risk_threshold': False,
-            'use_dynamic_infusion': False,
-            'use_symbol_name': self.config.use_symbol_name,
+            # 'use_senti_threshold': False,
+            # 'use_risk_threshold': False,
+            # Configuration for Initializing cache dir
             'CONFIG_CACHE_DIR': self.config_cache_dir,
             'RAW_DATA_DIR': self.raw_data_dir,
             'PROCESSED_NEWS_DIR': self.processed_news_dir,
@@ -224,12 +251,11 @@ class ExperimentScheme:
         }
         
         trading_config = {
-            'initial_cash': 1000000,  # Larger capital for better signal-to-noise
-            'total_timesteps': 150000,
-            'reward_scaling': 1e-4,   # Enhanced reward scaling
-            'cash_penalty_proportion': 0.0005,  # Reduced cash penalty
-            'infusion_strength': 0.05,  # Increased sentiment/risk influence
-            'commission_rate': 0.0001   # Lower transaction costs
+            'initial_cash': 100000,
+            'total_timesteps': 150000,  
+            'reward_scaling': 1e-3,
+            'cash_penalty_proportion': 0.0001,
+            'commission_rate': 0.0001
         }
         
         return self._execute_experiment_with_visualization(
@@ -269,12 +295,11 @@ class ExperimentScheme:
             'valid_end_date': self.config.valid_end_date,
             'test_start_date': self.config.test_start_date,
             'test_end_date': self.config.test_end_date,
-            'exper_mode': {
-                'rl_algorithm': ['PPO']  # Single algorithm for speed
-            },
+            'exper_mode': self.config.exper_mode,
             'window_size': 50,  # Smaller window for faster processing
             'window_factor': 2,
             'window_extend': 50,
+            'prediction_days': self.config.prediction_days,
             'smooth_window_size': self.config.smooth_window_size,
             'filter_ind': self.filter_ind,
             'force_process_news': self.config.force_process_news,
@@ -287,7 +312,7 @@ class ExperimentScheme:
             'use_risk_features': True,
             'use_senti_threshold': True,
             'use_risk_threshold': True,
-            'use_dynamic_infusion': False,
+            'use_dynamic_infusion': True,
             'use_symbol_name': self.config.use_symbol_name,
             'CONFIG_CACHE_DIR': self.config_cache_dir,
             'RAW_DATA_DIR': self.raw_data_dir,
@@ -304,16 +329,19 @@ class ExperimentScheme:
         }
         
         trading_config = {
-            'initial_cash': 100000,
+            'initial_cash': 100000,  # Larger capital for better signal-to-noise
             'total_timesteps': 200000,
-            'reward_scaling': 1e-3
+            'reward_scaling': 1e-2,   # Enhanced reward scaling
+            'cash_penalty_proportion': 0.0001,  # Reduced cash penalty
+            'infusion_strength': 0.05,  # Increased sentiment/risk influence
+            'commission_rate': 0.0005   # Lower transaction costs
         }
         
         # Custom model parameters for this experiment
         model_params = {
             'PPO': {
                 "n_steps": 1024,
-                "ent_coef": 0.01,       # Reduced entropy for more deterministic policy
+                "ent_coef": 0.0,       # Reduced entropy for more deterministic policy
                 "learning_rate": 0.0003, # Slightly higher learning rate
                 "batch_size": 32,       # Smaller batch size for more frequent updates
                 "gamma": 0.99,

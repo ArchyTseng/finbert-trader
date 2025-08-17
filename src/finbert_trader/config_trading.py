@@ -140,13 +140,15 @@ class ConfigTrading:
                              'senti_threshold',
                              'risk_threshold',
                              'threshold_factor',
+                             'selected_symbols',
                              'use_senti_factor',
                              'use_risk_factor',
                              'use_senti_features',
                              'use_risk_features',
-                             'use_senti_threshold',
-                             'use_risk_threshold',
-                             'use_dynamic_infusion',]  # All combined features
+                            #  'use_senti_threshold',
+                            #  'use_risk_threshold',
+                            #  'use_dynamic_infusion',  
+                             'use_dynamic_ind_threshold']
             for param in shared_params:
                 if hasattr(upstream_config, param):  # Check if param exists in upstream
                     setattr(self, param, getattr(upstream_config, param))  # Inherit to maintain consistency
@@ -181,7 +183,7 @@ class ConfigTrading:
         self.model_params = self._model_params.get(self.model, {})  # Load model-specific params from class dict
         logging.info(f"CT Module - Selected model: {self.model} with params {self.model_params}")
 
-        # Complete indicator threshold configuration
+        # Statical indicator threshold configuration
         self._ind_signal_threshold = {
             "rsi": {
                 "oversold": 30,        # RSI below 30 indicates oversold conditions
@@ -252,78 +254,79 @@ class ConfigTrading:
     def _flatten_features_categories(self):
         """
         Flatten feature categories across all symbols into unified lists and compute their indices.
-
-        This internal method processes inherited feature dictionaries (features_price, features_ind,
-        features_senti, features_risk) by flattening them per symbol, combining into a single
-        features_all_flatten list, validating the total length, and calculating indices for each category.
-
-        Parameters
-        ----------
-        None
-            This is an internal method with no parameters; relies on self.attributes from inheritance.
-
-        Returns
-        -------
-        None
-            Modifies instance attributes in place (e.g., features_all_flatten, category indices)
-            and does not return anything.
-
-        Notes
-        -----
-        - Assumes features_* are dictionaries with symbols as keys and lists of features as values.
-        - Flattening ensures a consistent state representation for multi-stock RL environments.
-        - Indices enable category-specific access or updates in downstream processing.
-        - Length assertion checks consistency: total features = num_symbols * features_dim_per_symbol.
+        This version relies on features_all[symbol] being pre-ordered as [Price, Ind, Senti, Risk] per symbol.
+        It flattens them in a symbol-wise manner: [S1_All_Features, S2_All_Features, ...].
         """
-        # Log start of flattening process for traceability
-        logging.info("CT Module - Flattening features categories")
+        logging.info("CT Module - Flattening features categories (Symbol-wise from features_all)")
         try:
-            # Varify data list exist
-            feature_attrs = ['features_all', 'features_price', 'features_ind', 'features_senti', 'features_risk']
-            if any(getattr(self.config, attr) is None or len(getattr(self.config, attr)) == 0 for attr in feature_attrs):
-                logging.warning(f"CT Module - Missing or empty feature categories: {feature_attrs}")
+            # Check if features_all exists and is populated
+            if not hasattr(self, 'features_all') or not self.features_all:
+                logging.warning("CT Module - Missing or empty features_all. Cannot flatten.")
                 self.features_all_flatten = []
+                self.price_feature_index = []
+                self.ind_feature_index = []
+                self.senti_feature_index = []
+                self.risk_feature_index = []
                 return
-            # Initialize empty lists for each category to collect flattened features
-            self.features_price_flatten = []  # Flattened price features across all symbols
-            self.features_ind_flatten = []    # Flattened indicator features
-            self.features_senti_flatten = []  # Flattened sentiment features
-            self.features_risk_flatten = []   # Flattened risk features
+            # Initialize features_all_flatten
+            self.features_all_flatten = []
             for symbol in self.symbols:
-                # Extend lists with features for each symbol to create a sequential flatten
-                self.features_price_flatten.extend(self.features_price[symbol])    # Price: e.g., open, close
-                self.features_ind_flatten.extend(self.features_ind[symbol])        # Indicators: e.g., RSI, MACD
-                self.features_senti_flatten.extend(self.features_senti[symbol])    # Sentiment: e.g., scores
-                self.features_risk_flatten.extend(self.features_risk[symbol])      # Risk: e.g., volatility metrics
+                if symbol in self.features_all and self.features_all[symbol]:
+                    self.features_all_flatten.extend(self.features_all[symbol])
+                else:
+                    logging.warning(f"CT Module - No features found for symbol {symbol} in features_all.")
 
-            # Combine all category lists into a single flattened features list for unified state
-            self.features_all_flatten = (
-                self.features_price_flatten +
-                self.features_ind_flatten +
-                self.features_senti_flatten +
-                self.features_risk_flatten
-            )
+            # Rebuild the index lists based on the new features_all_flatten
+            self.price_feature_index = []
+            self.ind_feature_index = []
+            self.senti_feature_index = []
+            self.risk_feature_index = []
 
-            # Assert total length matches expected dimension to catch data inconsistencies early
-            assert len(self.features_all_flatten) == len(self.symbols) * self.features_dim_per_symbol, f"Error length of flattened all features: {len(self.features_all_flatten)}, Expected: {len(self.symbols) * self.features_dim_per_symbol}"
-            # Log flattened size
-            logging.info(f"CT Module - Flattened all features for symbol: {self.symbols}, size: {len(self.features_all_flatten)} ")
+            # Keep track of the current index in the flattened list
+            current_index = 0
+            for symbol in self.symbols:
+                # Get the feature names for this symbol IN THE ORDER THEY WERE STORED
+                # (which is Price, Ind, Senti, Risk based on _update_features_categories)
+                symbol_features_ordered = self.features_all.get(symbol, [])
+                
+                # Get the counts for each category for this symbol from the config
+                # These were set in _update_features_categories
+                num_price = len(self.features_price.get(symbol, []))
+                num_ind = len(self.features_ind.get(symbol, []))
+                num_senti = len(self.features_senti.get(symbol, []))
+                num_risk = len(self.features_risk.get(symbol, []))
+                
+                # Assign indices based on the known order within each symbol's block
+                if num_price > 0:
+                    self.price_feature_index.extend(range(current_index, current_index + num_price))
+                
+                if num_ind > 0:
+                    self.ind_feature_index.extend(range(current_index + num_price, current_index + num_price + num_ind))
+                
+                if num_senti > 0:
+                    self.senti_feature_index.extend(range(current_index + num_price + num_ind, current_index + num_price + num_ind + num_senti))
+                
+                if num_risk > 0:
+                    self.risk_feature_index.extend(range(current_index + num_price + num_ind + num_senti, current_index + num_price + num_ind + num_senti + num_risk))
+                
+                # Move the pointer forward by the total number of features for this symbol
+                current_index += len(symbol_features_ordered)
 
-            # Compute indices for each category in the flattened list for quick access
-            self.price_feature_index = [self.features_all_flatten.index(feature) for feature in self.features_price_flatten if feature in self.features_all_flatten]  # Indices for price features
-            self.ind_feature_index = [self.features_all_flatten.index(feature) for feature in self.features_ind_flatten if feature in self.features_all_flatten]      # Indices for indicators
-            self.senti_feature_index = [self.features_all_flatten.index(feature) for feature in self.features_senti_flatten if feature in self.features_all_flatten]  # Indices for sentiment
-            self.risk_feature_index = [self.features_all_flatten.index(feature) for feature in self.features_risk_flatten if feature in self.features_all_flatten]    # Indices for risk
-            # Log indices for debugging and verification of category separation
-            logging.info(f"CT Module - Set indices for each feature categories: "
-                         f"Price indices: {self.price_feature_index}, "
-                         f"Indicator indices: {self.ind_feature_index}, "
-                         f"Sentiment indices: {self.senti_feature_index}, "
-                         f"Risk indices: {self.risk_feature_index}")
+            # Assert total length matches expected dimension
+            expected_total_features = sum(len(self.features_all.get(s, [])) for s in self.symbols)
+            assert len(self.features_all_flatten) == expected_total_features, \
+                f"Error length of flattened all features: {len(self.features_all_flatten)}, Expected: {expected_total_features}"
+
+            logging.info(f"CT Module - Flattened all features (Symbol-wise) for symbols: {self.symbols}, size: {len(self.features_all_flatten)} ")
+            logging.info(f"CT Module - Set indices (Symbol-wise): "
+                        f"Price indices: {self.price_feature_index}, "
+                        f"Indicator indices: {self.ind_feature_index}, "
+                        f"Sentiment indices: {self.senti_feature_index}, "
+                        f"Risk indices: {self.risk_feature_index}")
+                        
         except Exception as e:
-            # Log error and raise specific ValueError for better error handling in callers
-            logging.error(f"CT Module - Failed to flatten features categories: {e}")
-            raise ValueError("Error in flattening features categories")
+            logging.error(f"CT Module - Failed to flatten features categories (Symbol-wise from features_all): {e}")
+            raise ValueError("Error in flattening features categories (Symbol-wise from features_all)")
     
     def get_env_params(self):
         """

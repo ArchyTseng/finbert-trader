@@ -42,9 +42,9 @@ class NewsFeatureEngineer:
         self.batch_size = self.config.batch_size  # Batch size for efficient processing of news texts
         self.text_cols = self.config.text_cols  # List of text columns to use for sentiment/risk computation
 
-        self.tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")  # Load tokenizer for FinBERT model
-        self.model = AutoModelForSequenceClassification.from_pretrained("ProsusAI/finbert")  # Load pre-trained FinBERT model for sequence classification
-        self.model.eval()  # Set model to evaluation mode to disable training behaviors like dropout
+        self.finbert_tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")  # Load tokenizer for FinBERT model
+        self.finbert_model = AutoModelForSequenceClassification.from_pretrained("ProsusAI/finbert")  # Load pre-trained FinBERT model for sequence classification
+        self.finbert_model.eval()  # Set model to evaluation mode to disable training behaviors like dropout
 
         self.min_variance = 0.1  # Threshold for acceptable variance in computed scores; below this triggers adjustment
         self.noise_std_base = 0.3  # Increased base std from 0.2 to 0.3 for stronger baseline noise in low-variance adjustments
@@ -161,13 +161,13 @@ class NewsFeatureEngineer:
         - Clamps to [1.0, 5.0]; raises ValueError for invalid mode.
         - Inference with no_grad for efficiency; moves to CPU numpy for return.
         """
-        inputs = self.tokenizer(texts, padding=True, truncation=True, return_tensors="pt", max_length=512)  # Tokenize batch texts with padding and truncation for model input
+        inputs = self.finbert_tokenizer(texts, padding=True, truncation=True, return_tensors="pt", max_length=512)  # Tokenize batch texts with padding and truncation for model input
         # Compute without gradient
         with torch.no_grad():
-            outputs = self.model(**inputs)  # Forward pass through FinBERT model for logits
+            outputs = self.finbert_model(**inputs)  # Forward pass through FinBERT model for logits
 
         # Map the correct index for positive, negative, neutral
-        id2label = self.model.config.id2label  # Get id-to-label mapping from model config
+        id2label = self.finbert_model.config.id2label  # Get id-to-label mapping from model config
         label2id = {v: k for k, v in id2label.items()}  # Invert to label-to-id for indexing
         pos_idx = label2id['positive']  # Index for positive class
         neg_idx = label2id['negative']  # Index for negative class
