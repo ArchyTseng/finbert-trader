@@ -122,6 +122,12 @@ class ConfigTrading:
             shared_params = ['symbols',  # List of stock symbols
                              'start',
                              'end',
+                             'train_start_date',
+                             'train_end_date',
+                             'valid_start_date',
+                             'valid_end_date',
+                             'test_start_date',
+                             'test_end_date',
                              'indicators',  # Technical indicators
                              'sentiment_keys',  # Sentiment analysis keys
                              'window_size',  # Historical window for state

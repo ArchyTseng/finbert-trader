@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # ---
 # jupyter:
 #   jupytext:
@@ -35,6 +36,7 @@ from gymnasium.spaces import Box
 import numpy as np
 import pandas as pd
 import logging
+import pandas_market_calendars
 
 # %%
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -383,6 +385,49 @@ class StockTradingEnv(gym.Env):
             episode_data = self.data[self.episode_idx]
             self.trading_df = episode_data['states']  # [T, D]: Time x Features array
             self.targets = episode_data['targets']    # [T, N]: Time x Symbols price targets
+
+            # Generate and save trading date
+            self.trading_dates = None # Initialize
+            try:
+                # Fetch start_date from episode_data 
+                start_date_raw = episode_data.get('start_date')
+                if start_date_raw is not None:
+                    # Conver start_date to pandas Timestamp 
+                    start_date = pd.to_datetime(start_date_raw)
+
+                    # Calculate episode length
+                    num_trading_days = len(self.trading_df)
+                    
+                    # Generate trading date range
+                    if num_trading_days > 0:
+                        # Ensure alread import pandas_market_calenders
+                        # Initialize Nasdaq calender instance
+                        exchange_calendar = pandas_market_calendars.get_calendar('NASDAQ')
+
+                        # Generate a trading date range
+                        estimated_end_date = pd.bdate_range(start=start_date, periods=2 * num_trading_days)[-1]
+
+                        # Get estimated trading schedule
+                        schedule = exchange_calendar.schedule(start_date=start_date, end_date=estimated_end_date)
+
+                        # Get actual trading schedule
+                        actual_trading_days_index = schedule.index[: num_trading_days]
+
+                        # Convert to Pandas datetime
+                        self.trading_dates = actual_trading_days_index.tolist()
+                        logging.debug(f"STE Module - Env Reset - Generated EXACT trading dates from start_date using NASDAQ calendar, length: {len(self.trading_dates)}")
+                        if self.trading_dates:
+                            logging.debug(f"STE Module - Env Reset - Trading dates range: {self.trading_dates[0]} to {self.trading_dates[-1]}")
+                    else:
+                        logging.warning(f"STE Module - Env Reset - trading_df length is zero, cannot generate dates.")
+                else:
+                    logging.warning("STE Module - Env Reset - 'start_date' not found in episode_data.")
+            except ImportError:
+                logging.error("STE Module - Env Reset - 'pandas-market-calendars' not installed. Please install it for precise trading dates: pip install pandas-market-calendars")
+                self.trading_dates = pd.bdate_range(start=start_date, periods=num_trading_days).tolist() if 'start_date' in locals() and num_trading_days else None
+            except Exception as e:
+                logging.error(f"STE Module - Env Reset - Error generating EXACT trading dates: {e}", exc_info=True)
+                self.trading_dates = None
             
             logging.info(f"STE Module - Env Reset - Selected episode {self.episode_idx} with shapes - "
                     f"states: {self.trading_df.shape}, targets: {self.targets.shape}")
@@ -455,58 +500,6 @@ class StockTradingEnv(gym.Env):
             # Log error and raise specific ValueError for caller handling
             logging.error(f"STE Module - Env reset error: {e}")
             raise ValueError("Error in environment reset")
-
-    # def _get_threshold_and_strength(self, factor_array, senti_thr_dict, use_senti_threshold, use_dynamic_infusion):
-    #     """
-    #     Compute positive/negative thresholds and infusion strength based on configuration and dynamic options.
-
-    #     This internal method determines thresholds for factor application (e.g., sentiment/risk)
-    #     and computes infusion strength, either statically from config or dynamically from factor statistics.
-
-    #     Parameters
-    #     ----------
-    #     factor_array : ndarray
-    #         Array of factor values (e.g., sentiment scores or risk metrics) for the current step.
-    #     threshold_cfg : dict
-    #         Configuration dictionary with thresholds per env_type (e.g., {'train': {'pos_threshold': 0.5, 'neg_threshold': -0.5}}).
-    #     use_threshold : bool
-    #         Flag to enable/disable threshold application; if False, thresholds default to 0.0.
-    #     use_dynamic : bool
-    #         Flag to enable dynamic strength computation based on factor_array statistics.
-
-    #     Returns
-    #     -------
-    #     tuple
-    #         (pos_threshold: float, neg_threshold: float, infusion_strength: float)
-
-    #     Notes
-    #     -----
-    #     - Thresholds are fetched from threshold_cfg for the current env_type; defaults to 0.0 if missing or disabled.
-    #     - Dynamic strength = clip(std / max(|mean|, 1e-6), 0.001, 0.01) to adapt to data variability while bounding values.
-    #     - Falls back to self.config.infusion_strength (default 0.001) if not dynamic or array is empty.
-    #     """
-    #     # Determine thresholds based on use_threshold flag
-    #     if use_senti_threshold and senti_thr_dict:
-    #         # print(senti_thr_dict)
-    #         # Fetch env-specific thresholds from config, fallback to defaults if not found
-    #         thresholds = senti_thr_dict.get(self.env_type, {'pos_threshold': 0.0, 'neg_threshold': 0.0}) \
-    #                     or {'pos_threshold': 0.0, 'neg_threshold': 0.0}
-    #         # print(thresholds)
-    #     else:
-    #         # Disable thresholds by setting to zero if flag is False
-    #         thresholds = {'pos_threshold': 0.0, 'neg_threshold': 0.0}
-
-    #     # Compute infusion strength dynamically if enabled and array is non-empty
-    #     if use_dynamic_infusion and factor_array is not None and factor_array.size > 0:
-    #         # Calculate strength as std / |mean| (normalized variability), with safeguards against zero mean
-    #         infusion_strength = np.clip(factor_array.std() / max(abs(factor_array.mean()), 1e-6), 0.001, 0.01)
-    #     else:
-    #         # Fallback to static config value for consistency when dynamic is off or data insufficient
-    #         infusion_strength = getattr(self.config, 'infusion_strength', 0.001)
-
-    #     logging.info(f"STE Module - _get_threshold_and_strength - Dynamic: {use_dynamic_infusion}, Infusion strength: {infusion_strength}, Positiv Thresholds: {thresholds['pos_threshold']}, Negative Thresholds: {thresholds['neg_threshold']}")
-    #     # Return the computed values as a tuple
-    #     return thresholds['pos_threshold'], thresholds['neg_threshold'], infusion_strength
     
     def _identify_trading_signals(self, current_row):
         """
@@ -645,11 +638,11 @@ class StockTradingEnv(gym.Env):
                 percentiles_to_calculate = set()
                 # Map common static threshold keys to percentile values
                 percentile_mapping = {
-                    'oversold': 30, 'overbought': 70,
-                    'below': 10, 'above': 90, 'dev': 50,
-                    'ub': 90, 'lb': 10,
-                    'positive': 75, 'negative': 25, 'max_range': 50,
-                    'trend_threshold': 50, 'strong_trend': 75
+                    'oversold': 30, 'overbought': 70,   # rsi, cci
+                    'below': 10, 'above': 90, 'dev': 50,    # close_sma
+                    'ub': 90, 'lb': 10, # boll_ub, boll_lb
+                    'positive': 75, 'negative': 25, 'max_range': 50,    # macd
+                    'trend_threshold': 50, 'strong_trend': 75   # dx
                 }
                 for key, default_val in static_thr.items():
                     percentile_val = percentile_mapping.get(key, default_val)
@@ -1059,44 +1052,6 @@ class StockTradingEnv(gym.Env):
                             elif sig_type == 'sell':
                                 final_actions[i] = np.clip(final_actions[i] - push_factor, -1.0, 1.0)
                             # If it's a 'hold' signal, then don't push, maintain original action (near 0)
-
-                    # # Only act if signal is strong enough
-                    # if signal['strength'] > self.signal_threshold:
-                    #     # Get the primary signal type
-                    #     sig_type = signal['type']
-                        
-                    #     # If signal is 'buy' and raw action is positive (buy-ish)
-                    #     if sig_type == 'buy' and raw_action > 0:
-                    #         # Adjust position size based on signal strength
-                    #         # Strength 0.2 -> multiplier ~0.44, Strength 1.0 -> multiplier 1.0
-                    #         position_multiplier = 0.3 + 0.7 * signal['strength'] 
-                    #         final_actions[i] = np.clip(raw_action * position_multiplier, 0, 1)
-                    #     # If signal is 'sell' and raw action is negative (sell-ish)
-                    #     elif sig_type == 'sell' and raw_action < 0:
-                    #         # Adjust position size based on signal strength
-                    #         position_multiplier = 0.3 + 0.7 * signal['strength']
-                    #         final_actions[i] = np.clip(raw_action * position_multiplier, -1, 0)
-                    #     # If signal is 'buy' but raw action is negative (contradiction)
-                    #     elif sig_type == 'buy' and raw_action <= 0:
-                    #         # Weaken the negative action or set to zero
-                    #         # This prevents strong buy signals from causing sells
-                    #         final_actions[i] = 0.0 # Or a small positive value if you want minimal buy
-                    #     # If signal is 'sell' but raw action is positive (contradiction)
-                    #     elif sig_type == 'sell' and raw_action >= 0:
-                    #         # Weaken the positive action or set to zero
-                    #         # This prevents strong sell signals from causing buys
-                    #         final_actions[i] = 0.0 # Or a small negative value if you want minimal sell
-                    #     # If signal is 'hold' or strength is low
-                    #     else:
-                    #         # If raw action is significant, dampen it
-                    #         if abs(raw_action) > self.hold_threshold:
-                    #             # Dampen action towards zero based on confidence
-                    #             dampening_factor = 1.0 - signal.get('confidence', 0.5) # Less confident = more dampening
-                    #             final_actions[i] = raw_action * dampening_factor
-                    #         else:
-                    #             # Action is small, keep it as is (likely a hold)
-                    #             final_actions[i] = raw_action
-
                     else:
                         # Signal is weak, only act if raw action is very strong
                         if abs(raw_action) > hold_threshold:
@@ -1383,73 +1338,12 @@ class StockTradingEnv(gym.Env):
             final_actions = self._interpret_actions_strategy(actions, signals)
             # Ensure dtype
             final_actions = np.clip(final_actions, -1.0, 1.0).astype(np.float32)
-            
-            # Core improvment: Move senti/risk factor mechanism to _calculate_strategy_reward() function, modulating reward calculation
-            # # Get thresholds and infusion strengths for sentiment
-            # # print(self.senti_threshold, self.risk_threshold)
-            # # print(f"Use senti threshold: {self.use_senti_threshold}, Use risk threshold: {self.use_risk_threshold}, Use dynamic infusion: {self.use_dynamic_infusion}")
-            # pos_senti_thr, neg_senti_thr, senti_inf_strength = self._get_threshold_and_strength(
-            #     sentiment_per_stock, self.senti_threshold, self.use_senti_threshold, self.use_dynamic_infusion)
-            # # print(f"STE Module - Env Step - Positive sentiment threshold:{pos_senti_thr}, Negative sentiment threshold: {neg_senti_thr}, Infusion strength: {senti_inf_strength}")
-            # # Get thresholds and infusion strengths for risk
-            # pos_risk_thr, neg_risk_thr, risk_inf_strength = self._get_threshold_and_strength(
-            #     risk_per_stock, self.risk_threshold, self.use_risk_threshold, self.use_dynamic_infusion)
-            # # print(f"STE Module - Env Step - Positive risk threshold: {pos_risk_thr}, Negative risk threshold: {neg_risk_thr}, Infusion strength: {risk_inf_strength}")
-            # # Initialize factors as ones (no effect baseline)
-            # Senti_factor = np.ones(self.action_dim, dtype=np.float32)
-            # Risk_factor = np.ones(self.action_dim, dtype=np.float32)
-
-            # logging.info(f"STE Module - Debug - Senti_factor type: {type(Senti_factor)}, shape: {getattr(Senti_factor, 'shape', 'no shape')}")
-            # logging.info(f"STE Module - Debug - risk_factor type: {type(Risk_factor)}, shape: {getattr(Risk_factor, 'shape', 'no shape')}")
-            # logging.info(f"STE Module - Debug - final_actions type: {type(final_actions)}, shape: {getattr(final_actions, 'shape', 'no shape')}")
-
-            # # Apply sentiment infusion factor (vectorized for efficiency)
-            # if self.use_senti_factor and len(self.senti_feature_index) > 0:
-            #     # Masks for positive/negative sentiment exceeding thresholds
-            #     mask_pos = sentiment_per_stock > pos_senti_thr
-            #     mask_neg = sentiment_per_stock < neg_senti_thr
-
-            #     # Enhance if aligned (pos senti & buy, neg & sell), penalize if opposed
-            #     Senti_factor[np.where((mask_pos & (final_actions > 0)) | (mask_neg & (final_actions < 0)))] = 1 + senti_inf_strength
-            #     Senti_factor[np.where((mask_pos & (final_actions < 0)) | (mask_neg & (final_actions > 0)))] = 1 - senti_inf_strength
-
-            #     # Debug log sentiment factors
-            #     logging.debug(f"STE Module - Env Step - Sentiment factor: {Senti_factor}")
-
-            # # Apply risk infusion factor (vectorized)
-            # if self.use_risk_factor and len(self.risk_feature_index) > 0:
-            #     # Masks for positive/negative risk exceeding thresholds
-            #     mask_pos = risk_per_stock > pos_risk_thr
-            #     mask_neg = risk_per_stock < neg_risk_thr
-
-            #     # Penalize if aligned (high risk & buy, low & sell), enhance if opposed
-            #     Risk_factor[np.where((mask_pos & (final_actions > 0)) | (mask_neg & (final_actions < 0)))] = 1 - risk_inf_strength
-            #     Risk_factor[np.where((mask_pos & (final_actions < 0)) | (mask_neg & (final_actions > 0)))] = 1 + risk_inf_strength
-
-            #     # Debug log risk factors
-            #     logging.debug(f"STE Module - Env Step - Risk factor: {Risk_factor}")
-
-            # # Debug log if both factors enabled
-            # if self.use_senti_factor and self.use_risk_factor:
-            #     logging.debug(f"STE Module - Env Step - Raw return: {0.0}, Risk_factor: {Risk_factor}, Sentiment_factor: {Senti_factor}")
 
             # Execute trades with actions generated by _interpret_actions_strategy()
             self._execute_trades(final_actions)
             # Calculate raw portfolio return after trade execution
             raw_return = self._get_portfolio_return()
             logging.info(f"STE Module - Env Step - After trade execution - Cash: {self.cash}, Positions: {self.position}, Total Asset: {self.total_asset}")
-
-            # # Apply factor modulations to the raw return
-            # # Weight factors by absolute actions to make them trade-dependent
-            # action_weights = np.abs(final_actions) / (np.sum(np.abs(final_actions)) + 1e-8)
-            # # Compute weighted average factors
-            # weighted_senti_factor = np.sum(Senti_factor * action_weights)
-            # weighted_risk_factor = np.sum(Risk_factor * action_weights)
-
-            # # Modulate raw return by factors
-            # modulated_return = raw_return * weighted_senti_factor * weighted_risk_factor
-            # # Calculate final reward using strategy function
-            # reward = self._calculate_strategy_reward(modulated_return, actions, final_actions, signals)
 
             # Core improvement: Reward calculation (sent senti/risk factor to _calculate_strategy_reward() function)
             reward = self._calculate_strategy_reward(
@@ -1497,15 +1391,6 @@ class StockTradingEnv(gym.Env):
                 'Cost': float(self.cost),
                 'Raw Return': float(raw_return),
                 'Reward': float(reward),
-                # Log ablation switches
-                'Use Senti Factor': bool(self.use_senti_factor),
-                'Use Risk Factor': bool(self.use_risk_factor),
-                'Use Senti Features': bool(self.use_senti_features),
-                'Use Risk Features': bool(self.use_risk_features),
-                # 'Use Senti Threshold': bool(self.use_senti_threshold),
-                # 'Use Risk Threshold': bool(self.use_risk_threshold),
-                # 'Use Dynamic Infusion': bool(self.use_dynamic_infusion),
-                'Use Dynamic Ind Threshold': bool(self.use_dynamic_ind_threshold),
                 # Log signals and actions for analysis
                 'Signals': signals, # For debugging
                 'Raw Actions': actions.tolist(), # Convert to list for JSON serialization in info
@@ -1513,9 +1398,28 @@ class StockTradingEnv(gym.Env):
                 # Core improvement: Add Senti/Risk factor for behaviour analysis after training
                 'Sentiment Per Stock': sentiment_per_stock.tolist(),
                 'Risk Per Stock': risk_per_stock.tolist(),
+                # Log ablation switches
+                'Use Senti Factor': bool(self.use_senti_factor),
+                'Use Risk Factor': bool(self.use_risk_factor),
+                'Use Senti Features': bool(self.use_senti_features),
+                'Use Dynamic Ind Threshold': bool(self.use_dynamic_ind_threshold),
             }
+            # Save Date index for visualization
+            if (hasattr(self, 'trading_dates') and self.trading_dates is not None and
+                0 <= self.current_step - 1 < len(self.trading_dates)):
+                try:
+                    current_date = self.trading_dates[self.current_step - 1]
+                    info['Date'] = current_date.strftime('%Y-%m-%d')
+                except (IndexError, TypeError, ValueError, AttributeError) as e:
+                    logging.warning(f"STE Module - Error formatting date at step {self.current_step - 1}: {e}")
+                    info['Date'] = None
+            else:
+                info['Date'] = None
+                if not hasattr(self, '_date_warning_logged'):
+                    logging.warning("STE Module - trading_dates not available or mismatched, Date info will be None.")
+                    self._date_warning_logged = True
             logging.info(f"STE Module - Env Step - Info: Total Asset={info['Total Asset']:.2f}, Reward={info['Reward']:.6f}")
-            # Return Gym-compatible tuple
+            # Return Gym-compatible tuples
             return self._get_states(), reward, done, truncated, info
 
         except Exception as e:
@@ -1644,21 +1548,6 @@ class StockTradingEnv(gym.Env):
             
             # Compute current value allocation
             current_allocation = self.position * current_prices # Shape: (action_dim,)
-            
-            # Core improvement: Remove weight normalizaiton
-            # # Normalize actions to weights (sum abs(weights) = 1, handles long/short)
-            # weights = actions / (np.sum(np.abs(actions)) + 1e-8)
-            
-            # min_trade_amount = getattr(self.config, 'min_trade_amount', 0.01) # Default to 1% of total asset
-            # # Scale weights so that the smallest non-zero weight corresponds to min_trade_amount
-            # non_zero_weights = weights[weights != 0]
-            # if len(non_zero_weights) > 0:
-            #     min_weight = np.min(np.abs(non_zero_weights))
-            #     # Scale all weights so that min_weight corresponds to min_trade_amount / total_asset
-            #     scale_factor = (min_trade_amount / (self.total_asset + 1e-8)) / (min_weight + 1e-8)
-            #     weights_scaled = weights * scale_factor
-            # else:
-            #     weights_scaled = weights
                 
             # Core improvement: Calculate target allocation directly based on total asset
             # action[i] : percentage of target allocation
@@ -1929,57 +1818,3 @@ class StockTradingEnv(gym.Env):
 
 
 # %%
-# from finbert_trader.config_trading import ConfigTrading
-
-
-# %%
-# %load_ext autoreload
-# %autoreload 2
-
-# %%
-# class MockConfig:
-#     symbols = ['GOOGL', 'AAPL']
-#     window_size = 10
-#     features_all_flatten = [f'features_{i}_{symbol}' for symbol in symbols for i in range(11)]
-#     features_price_flatten = [f'Adj_Close_{symbol}' for symbol in symbols]
-#     features_ind_flatten = [f'ind_{i}_{symbol}' for symbol in symbols for i in range(8)]
-#     features_senti_flatten = [f'sentiment_score_{symbol}' for symbol in symbols]
-#     features_risk_flatten = [f'risk_score_{symbol}' for symbol in symbols]
-#     price_feature_index = [0, 11]
-#     ind_feature_index = list(range(1,9)) + list(range(12,20))
-#     senti_feature_index = [9, 20]
-#     risk_feature_index = [10, 21]
-#     state_dim = 10 * 22 + 3
-#     action_dim = 2
-#     model = 'PPO'
-#     infusion_strength = 0.001
-#     cvar_factor = 0.05
-#     commission_rate = 0.005
-
-
-# %%
-# mock_config = MockConfig()
-
-# # %%
-# mock_rl_data = [{'start_date': '2015-01-01', 'states': np.random.rand(50, 22), 'targets': np.random.rand(50, 2)} for _ in range(3)]
-# mock_rl_data
-
-# # %%
-# env = StockTradingEnv(mock_config, mock_rl_data, env_type='test')
-
-# # %%
-# obs, info = env.reset()
-
-# # %%
-# actions = np.random.rand(env.action_dim) - 0.5
-
-# # %%
-# next_obs, reward, done, truncated, info = env.step(actions)
-
-# # %%
-# env.render()
-
-# # %%
-# env.close()
-
-

@@ -97,9 +97,12 @@ class TradingBacktest:
             Nasdaq-100 ETF price series
         """
         try:
-            # Fetch Nasdaq-100 ETF (QQQ) data by yfinance
+            # Default get QQQ benchmark
             ticker = "QQQ"
-            nasdaq_data = yf.download(ticker, start=self.config.start, end=self.config.end)
+            start = getattr(self.config, 'test_start_date', self.config.start)
+            end = getattr(self.config, 'test_end_date', self.config.end)
+            # Fetch Nasdaq-100 ETF (QQQ) data by yfinance
+            nasdaq_data = yf.download(ticker, start=start, end=end)
             
             if nasdaq_data.empty:
                 logging.warning("TB Module - Failed to fetch Nasdaq-100 data, using fallback")
@@ -194,57 +197,47 @@ class TradingBacktest:
                 if record_trades:
                     trade_record = {
                         'step': step_count,
-                        'action': action.copy(),  # Copy to avoid reference changes
+                        'date': info.get('Date', None), # Try to fetch Date from info
+                        'action': info.get('Final Actions', []),  # Copy to avoid reference changes
+                        'position': info.get('Position', []),
+                        'cash': info.get('Cash', 0.0),
+                        'total_asset': info.get('Total Asset', 0.0),
                         'reward': reward,
-                        'total_asset': info.get('Total Asset', 0),
-                        'cash': info.get('Cash', 0),
-                        'position': info.get('Position', np.zeros(len(self.config.symbols))).copy(),
-                        'cost': info.get('Cost', 0),
-                        'sentiment_factor': info.get('Sentiment Factor', np.ones(len(self.config.symbols))).copy(),
-                        'risk_factor': info.get('Risk Factor', np.ones(len(self.config.symbols))).copy(),
-                        'done': done,
-                        'truncated': truncated
                     }
                     self.trade_history.append(trade_record)
-                    self.asset_history.append(info.get('Total Asset', 0))
-                    self.position_history.append(info.get('Position', np.zeros(len(self.config.symbols))).copy())
-                    self.action_history.append(action.copy())
-
-                # Render if requested (e.g., console output)
-                if render:
-                    test_env.render()
+                    self.asset_history.append(info.get('Total Asset', 0.0))
+                    self.position_history.append( info.get('Position', []))
+                    self.action_history.append(info.get('Total Asset', 0.0))
 
                 # Update state and counter
                 state = next_state
                 step_count += 1
 
-                # Periodic progress logging for long runs
-                if step_count % 100 == 0:
-                    logging.info(f"TB Module - Backtest progress: {step_count} steps completed")
-
-            # Log completion
-            logging.info(f"TB Module - Backtest completed with {step_count} steps")
-
             # Calculate benchmark returns
-            benchmark_returns = None
-            if use_benchmark and hasattr(test_env, 'df') and len(test_env.df) > 0:
-                try:
-                    # Get Date from test environment
-                    start_date = test_env.df['date'].min()
-                    end_date = test_env.df['date'].max()
-                    
-                    # Fetch Nasdaq-100 Benchmark data
-                    benchmark_prices = self._get_nasdaq100_benchmark(start_date, end_date)
-                    if benchmark_prices is not None:
-                        benchmark_returns = self._calculate_benchmark_returns(benchmark_prices)
-                        logging.info(f"TB Module - Benchmark data fetched, {len(benchmark_returns)} returns")
-                    else:
-                        logging.warning("TB Module - Failed to fetch benchmark data")
-                except Exception as e:
-                    logging.warning(f"TB Module - Error processing benchmark  {e}")
+            benchmark_returns_for_metrics = None # Pass to  _compute_metrics()
+            benchmark_prices_with_date = None    # For visualization based on Date index
+            if use_benchmark and hasattr(test_env, 'trading_df') and len(test_env.trading_df) > 0:
+                 try:
+                     # Fetch Nasdaq-100 Benchmark data
+                     benchmark_prices_with_date = self._get_nasdaq100_benchmark() 
+                     if benchmark_prices_with_date is not None:
+                        # Get Date range of test environment
+                        test_start_date = test_env.trading_df.index[0]
+                        test_end_date = test_env.trading_df.index[-1]
+                        # Align Nasdaq benchmark Date range with test environment
+                        benchmark_prices_with_date = benchmark_prices_with_date.loc[test_start_date: test_end_date]
+                     if benchmark_prices_with_date is not None and not benchmark_prices_with_date.empty:
+                         # Calculate benchmark returns
+                         benchmark_returns_for_metrics = self._calculate_benchmark_returns(benchmark_prices_with_date)
+                         logging.info(f"TB Module - Benchmark data fetched, {len(benchmark_returns_for_metrics)} returns calculated")
+                     else:
+                         logging.warning("TB Module - Failed to fetch or process benchmark data for metrics")
+                 except Exception as e:
+                     logging.warning(f"TB Module - Error processing benchmark for metrics: {e}")
 
             # Compute and store metrics
-            metrics = self._compute_metrics(benchmark_returns)
+            metrics = self._compute_metrics(benchmark_returns_for_metrics)
+            logging.info("TB Module - Backtest completed")
             self.metrics = metrics
 
             # Compile results dict
@@ -255,11 +248,13 @@ class TradingBacktest:
                 'position_history': self.position_history if record_trades else [],
                 'action_history': self.action_history if record_trades else [],
                 'total_steps': step_count,
-                'episode_length': len(test_env.asset_memory) if hasattr(test_env, 'asset_memory') else 0
+                'episode_length': len(test_env.asset_memory) if hasattr(test_env, 'asset_memory') else 0,
+                # Benchmark prices with Date index
+                'benchmark_prices_with_date': benchmark_prices_with_date,
+                # Benchmark returns
+                'benchmark_returns': benchmark_returns_for_metrics
             }
-
             return results
-
         except Exception as e:
             # Log and re-raise for upstream handling
             logging.error(f"TB Module - Error during backtest: {e}")

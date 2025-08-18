@@ -40,138 +40,181 @@ class VisualizeBacktest:
         os.makedirs(self.plot_exper_dir, exist_ok=True)
 
         logging.info(f"VB Module - Initialized VisualizeBacktest with plot cache: {self.plot_exper_dir}")
-    
-    def generate_asset_curve_comparison(self, pipeline_results: Dict[str, Any], 
-                                      benchmark_data: Optional[Union[List[float], pd.Series]] = None,
-                                      benchmark_name: str = 'Nasdaq-100',
-                                      show_performance_metrics: bool = True) -> str:
+
+    def generate_asset_curve_comparison(self, pipeline_results: Dict[str, Any],
+                                        benchmark_data: Optional[Union[List[float], pd.Series]] = None,
+                                        benchmark_name: str = 'Nasdaq-100',
+                                        show_performance_metrics: bool = False) -> str:
         """
         Generate a comparison plot of asset curves with performance metrics.
-        
+        This function plots the cumulative return curves for multiple backtest results.
+        It attempts to align them on a date axis, prioritizing the benchmark's dates if provided
+        as a pandas Series with a DatetimeIndex.
+
         Parameters
         ----------
         pipeline_results : dict
-            Dictionary containing results for all algorithms
+            Dictionary containing results for all algorithms/modes.
+            Expected structure: {'mode_name': {'asset_history': [...], 'trade_history': [...], ...}}
         benchmark_data : list or pd.Series, optional
-            Benchmark data for comparison
+            Benchmark data for comparison. If pd.Series with DatetimeIndex, it will be used
+            for date-aligned plotting. If list/ndarray, it's assumed to align with the first strategy.
         benchmark_name : str, optional
-            Name of the benchmark for legend display
+            Name of the benchmark for display in the legend (default is 'Nasdaq-100').
         show_performance_metrics : bool, optional
-            Whether to include performance metrics in legend
-            
+            Whether to add performance metrics to the legend labels (default is True).
+
         Returns
         -------
         str
-            Path to saved plot file
+            File path to the saved plot.
         """
         try:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            
-            # Create a DataFrame to store asset curves
-            asset_curve_df = pd.DataFrame()
-            
-            # Extract asset history and dates for each algorithm
-            strategy_dates = {}
-            
-            for mode_name, results in pipeline_results.items():
-                if 'backtest_results' in results and 'asset_history' in results['backtest_results']:
-                    asset_history = results['backtest_results']['asset_history']
-                    # Get Date information from environmeng
-                    if hasattr(results['backtest_results'], 'dates') and results['backtest_results'].dates:
-                        dates = results['backtest_results'].dates
-                    else:
-                        dates = range(len(asset_history))
-                    
-                    asset_curve = pd.Series(asset_history, index=dates, name=mode_name)
-                    asset_curve_df = pd.concat([asset_curve_df, asset_curve], axis=1)
-                    strategy_dates[mode_name] = dates
-                elif 'asset_history' in results:
-                    asset_history = results['asset_history']
-                    dates = range(len(asset_history))
-                    asset_curve = pd.Series(asset_history, index=dates, name=mode_name)
-                    asset_curve_df = pd.concat([asset_curve_df, asset_curve], axis=1)
-                    strategy_dates[mode_name] = dates
-            
-            # Add benchmark if provided
+            # Set plotting style
+            plt.style.use('seaborn-v0_8-darkgrid')
+            fig, ax = plt.subplots(figsize=(25, 12))
+
+            # --- Process Benchmark Data ---
+            benchmark_df = None
             if benchmark_data is not None:
-                if isinstance(benchmark_data, (list, np.ndarray)):
-                    benchmark_series = pd.Series(benchmark_data, name=benchmark_name)
+                if isinstance(benchmark_data, pd.Series) and isinstance(benchmark_data.index, pd.DatetimeIndex):
+                    # Assume benchmark_data is a price series with DatetimeIndex
+                    benchmark_prices = benchmark_data
+                    benchmark_initial_price = benchmark_prices.iloc[0] if len(benchmark_prices) > 0 else np.nan
+                    if not np.isnan(benchmark_initial_price) and benchmark_initial_price > 0:
+                        # Calculate cumulative return for benchmark (normalized to start at 1)
+                        benchmark_cumulative = (benchmark_prices / benchmark_initial_price)
+                        benchmark_df = pd.DataFrame({'Benchmark': benchmark_cumulative})
+                        benchmark_df.index = benchmark_prices.index # Ensure DatetimeIndex is preserved
+                        logging.debug(f"VB Module - Benchmark data processed with {len(benchmark_df)} points and date index.")
+                    else:
+                        logging.warning("VB Module - Benchmark initial price is invalid (zero/negative/NaN), skipping benchmark plot.")
+                elif isinstance(benchmark_data, (list, np.ndarray)):
+                    # If list/ndarray, cannot align by date easily without explicit date info
+                    logging.info("VB Module - Benchmark data is list/ndarray. Date alignment might be approximate.")
+                    # We will attempt to align later using strategy dates or a default index
                 else:
-                    benchmark_series = benchmark_data.rename(benchmark_name)
-                
-                # Align benchmark length with strategy data if needed
-                if len(asset_curve_df) > 0:
-                    min_length = min(len(asset_curve_df), len(benchmark_series))
-                    benchmark_series = benchmark_series.iloc[:min_length]
-                    asset_curve_df = asset_curve_df.iloc[:min_length]
-                
-                asset_curve_df = pd.concat([asset_curve_df, benchmark_series], axis=1)
-            
-            # Normalize all curves to start from 1.0
-            if len(asset_curve_df) > 0:
-                for column in asset_curve_df.columns:
-                    if len(asset_curve_df[column].dropna()) > 0:
-                        initial_value = asset_curve_df[column].dropna().iloc[0]
-                        if initial_value != 0:
-                            asset_curve_df[column] = asset_curve_df[column] / initial_value
-            
-            # Plot the asset curves
-            plt.figure(figsize=(15, 8))
-            sns.set_style("whitegrid")
-            palette = sns.color_palette("husl", len(asset_curve_df.columns))
-            
-            # Prepare legend labels with performance metrics
-            legend_labels = []
-            
-            for i, column in enumerate(asset_curve_df.columns):
-                label = column
-                
-                # Add metrics to labels
-                if show_performance_metrics and column != benchmark_name:
-                    # Get strategy information ratio from pipeline_results
-                    if column in pipeline_results:
-                        results = pipeline_results[column]
-                        if 'backtest_results' in results:
-                            metrics = results['backtest_results'].get('metrics', {})
-                        else:
-                            metrics = results.get('metrics', {})
-                        
-                        ir = metrics.get('information_ratio', 0)
-                        if abs(ir) > 0.001:  # Threshold to filter information ratio
-                            label += f" (IR={ir:.4f})"
-                
-                legend_labels.append(label)
-            
-            # Plot asset curve
-            for i, column in enumerate(asset_curve_df.columns):
-                plt.plot(asset_curve_df.index, asset_curve_df[column], 
-                        label=legend_labels[i], linewidth=2, color=palette[i])
-            
-            # Set title and label
-            plt.title("Cumulative Returns with Performance Metrics", fontsize=16, fontweight='bold')
-            plt.xlabel("Trading Days", fontsize=12)
-            plt.ylabel("Cumulative Return (Normalized to 1.0)", fontsize=12)
-            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-            plt.grid(True, alpha=0.3)
+                    logging.warning(f"VB Module - Unsupported benchmark_data type: {type(benchmark_data)}. Skipping benchmark.")
+
+            # --- Collect Strategy Data ---
+            strategy_dfs = {}
+            strategy_dates_dict = {} # Store dates for potential fallback alignment
+            for idx, (mode_name, results) in enumerate(pipeline_results.items()):
+                asset_history = results.get('asset_history', [])
+                # Get initial cash from self.config or use a default
+                initial_cash = getattr(self.config, 'initial_cash', 1e6)
+
+                if len(asset_history) == 0:
+                    logging.warning(f"VB Module - No asset history for {mode_name}, skipping in plot")
+                    continue
+
+                # Convert absolute asset value to cumulative return (normalized by initial cash)
+                strategy_cumulative = np.array(asset_history) / initial_cash
+
+                # --- Attempt to get strategy dates ---
+                strategy_dates = None
+                # Try to get dates from trade_history if available and populated with 'date' key
+                trade_history = results.get('trade_history', [])
+                if trade_history and all(isinstance(record, dict) and 'date' in record and record['date'] for record in trade_history):
+                    try:
+                        # Assumes 'date' in trade_history is a string like 'YYYY-MM-DD'
+                        strategy_dates = pd.to_datetime([record['date'] for record in trade_history])
+                        logging.debug(f"VB Module - Extracted {len(strategy_dates)} dates for strategy {mode_name}.")
+                    except (ValueError, TypeError) as e:
+                        logging.warning(f"VB Module - Error parsing strategy dates for {mode_name}: {e}. Using integer index.")
+                        strategy_dates = None # Reset on error
+
+                # Create DataFrame for the strategy
+                if strategy_dates is not None and len(strategy_dates) == len(strategy_cumulative):
+                    strategy_df = pd.DataFrame({mode_name: strategy_cumulative}, index=strategy_dates)
+                    strategy_dates_dict[mode_name] = strategy_dates # Store for potential use
+                else:
+                    # Fallback to integer index if dates are missing or mismatched
+                    strategy_df = pd.DataFrame({mode_name: strategy_cumulative})
+                    logging.info(f"VB Module - Using integer index for strategy {mode_name} curve (len={len(strategy_cumulative)}).")
+                    # Store integer index as well for fallback alignment
+                    strategy_dates_dict[mode_name] = pd.RangeIndex(start=0, stop=len(strategy_cumulative))
+
+                strategy_dfs[mode_name] = strategy_df
+
+            # --- Determine Common Index for Plotting ---
+            plot_index = None
+            # Priority 1: Use benchmark's DatetimeIndex if available
+            if benchmark_df is not None and not benchmark_df.empty:
+                plot_index = benchmark_df.index
+                logging.debug("VB Module - Using benchmark's DatetimeIndex for main plot X-axis.")
+            # Priority 2: Use the first strategy's DatetimeIndex if available
+            elif strategy_dfs:
+                first_mode_name = next(iter(strategy_dfs))
+                first_strategy_df = strategy_dfs[first_mode_name]
+                # Check if the first strategy's index is datetime-like
+                if isinstance(first_strategy_df.index, (pd.DatetimeIndex, pd.RangeIndex)):
+                    plot_index = first_strategy_df.index
+                    logging.debug(f"VB Module - Using first strategy's ({first_mode_name}) index for main plot X-axis.")
+                # If not, we might need to create a default one later
+
+            # If no suitable index found, create a default one based on max length
+            if plot_index is None:
+                max_len = max((len(df) for df in strategy_dfs.values()), default=0)
+                if benchmark_df is not None:
+                    max_len = max(max_len, len(benchmark_df))
+                if max_len > 0:
+                    plot_index = pd.RangeIndex(start=0, stop=max_len)
+                    logging.info(f"VB Module - No common date index found. Using default integer index (0 to {max_len-1}).")
+                else:
+                    error_msg = "VB Module - No valid data length found to determine plot index."
+                    logging.error(error_msg)
+                    raise ValueError(error_msg)
+
+            # --- Reindex and Plot Data ---
+            # Reindex benchmark data to the common plot index
+            if benchmark_df is not None and not benchmark_df.empty:
+                # Use 'pad' or 'nearest' for forward-filling or matching if indices don't align perfectly
+                # 'pad' is good if plot_index covers a wider range than benchmark
+                benchmark_df_plot = benchmark_df.reindex(plot_index, method='pad')
+                ax.plot(benchmark_df_plot.index, benchmark_df_plot['Benchmark'],
+                        label=benchmark_name, color='black', linewidth=2, linestyle='--')
+
+            # Use a consistent color palette
+            colors = sns.color_palette("husl", len(strategy_dfs))
+            # Reindex strategy data and plot
+            for idx, (mode_name, strategy_df) in enumerate(strategy_dfs.items()):
+                # Reindex strategy data to the common plot index
+                strategy_df_plot = strategy_df.reindex(plot_index, method='pad')
+                ax.plot(strategy_df_plot.index, strategy_df_plot[mode_name],
+                        label=mode_name, color=colors[idx % len(colors)], linewidth=2)
+
+            # --- Formatting ---
+            ax.set_title('Asset Curve Comparison (Cumulative Return)', fontsize=16)
+            # Dynamically set xlabel based on index type
+            if isinstance(plot_index, pd.DatetimeIndex):
+                ax.set_xlabel('Date', fontsize=12)
+                # Improve date formatting on x-axis if needed
+                fig.autofmt_xdate() # Rotates and aligns the tick labels
+            else:
+                ax.set_xlabel('Time Step', fontsize=12)
+            ax.set_ylabel('Cumulative Return (Normalized to Initial Cash)', fontsize=12)
+            ax.legend(loc='upper left')
+            ax.grid(True, linestyle='--', alpha=0.6)
+            # plt.xticks(rotation=45) # Handled by fig.autofmt_xdate if dates
             plt.tight_layout()
-            
-            # Add benchmark line
-            if benchmark_name in asset_curve_df.columns:
-                plt.axhline(y=1.0, color='black', linestyle='--', alpha=0.5)
-            
-            # Generate filename and save
-            plot_filename = f"cumulative_returns_with_metrics_{timestamp}.png"
+
+            # --- Save Plot ---
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            plot_filename = f"asset_curve_comparison_{timestamp}.png"
+            # Use self.config.plot_exper_dir or self.plot_exper_dir (depending on your __init__)
             plot_path = os.path.join(self.plot_exper_dir, plot_filename)
+            os.makedirs(self.plot_exper_dir, exist_ok=True)
             plt.savefig(plot_path, dpi=300, bbox_inches='tight')
             plt.close()
-            
-            logging.info(f"VB Module - Cumulative returns with metrics plot saved to: {plot_path}")
+            logging.info(f"VB Module - Asset curve comparison plot saved to {plot_path}")
             return plot_path
-            
+
         except Exception as e:
             logging.error(f"VB Module - Error generating asset curve comparison: {e}")
+            # Ensure plot is closed even if an error occurs
             plt.close()
-            raise
+            raise # Re-raise the exception
     
     def generate_experiment_comparison_plot(self, experiment_records: List[Union[str, Dict]]) -> str:
         """
@@ -504,6 +547,7 @@ class VisualizeBacktest:
             
             # Calculate relative performance for each algorithm
             relative_performance_data = {}
+            strategy_dates = {}
             
             for mode_name, results in pipeline_results.items():
                 asset_history = None
@@ -514,7 +558,7 @@ class VisualizeBacktest:
                 
                 if asset_history is not None and len(asset_history) > 1:
                     # Calculate strategy returns
-                    strategy_returns = np.diff(asset_history) / asset_history[:-1]
+                    strategy_returns = np.array(asset_history[1:]) / np.array(asset_history[:-1]) - 1
                     
                     # Align lengths
                     min_length = min(len(strategy_returns), len(benchmark_returns))
@@ -523,26 +567,43 @@ class VisualizeBacktest:
                     
                     # Calculate excess returns (strategy - benchmark)
                     excess_returns = aligned_strategy_returns - aligned_benchmark_returns
-                    
                     # Calculate cumulative excess returns
                     cumulative_excess = np.cumsum(excess_returns)
-                    
                     relative_performance_data[mode_name] = cumulative_excess
+
+                    # Try fetching dates from results
+                    trade_history = results.get('trade_history', [])
+                    if trade_history and all('date' in record and record['date'] for record in trade_history):
+                        try:
+                            # Convert dates to datetime 
+                            dates_list = [pd.to_datetime(record['date']) for record in trade_history]
+                            # Save date with same range of cumulative_excess 
+                            strategy_dates[mode_name] = dates_list[:len(cumulative_excess)]
+                        except Exception as e:
+                            logging.warning(f"VB Module - Error parsing dates for {mode_name}: {e}")
+                            strategy_dates[mode_name] = range(len(cumulative_excess))
             if not relative_performance_data:
                 logging.warning("VB Module - No valid strategy data for relative performance calculation")
                 return ""
             
             # Plot relative performance
-            plt.figure(figsize=(15, 8))
+            plt.figure(figsize=(25, 12))
             sns.set_style("whitegrid")
             palette = sns.color_palette("Set2", len(relative_performance_data))
             
             for i, (strategy_name, cumulative_excess) in enumerate(relative_performance_data.items()):
-                plt.plot(range(len(cumulative_excess)), cumulative_excess, 
-                        label=f"{strategy_name} vs Benchmark", linewidth=2, color=palette[i])
+                # Set X_axis
+                x_axis = strategy_dates.get(strategy_name, range(len(cumulative_excess)))
+                plt.plot(x_axis, cumulative_excess,
+                     label=f"{strategy_name} vs Benchmark", linewidth=2, color=palette[i])
             
             plt.title("Relative Performance vs Benchmark (Cumulative Excess Returns)", fontsize=16, fontweight='bold')
-            plt.xlabel("Trading Days", fontsize=12)
+            # Set x_axis automatically
+            if isinstance(x_axis[0], (datetime, pd.Timestamp)):
+                plt.xlabel("Date", fontsize=12)
+                fig.autofmt_xdate()  # Automatically set xdate
+            else:
+                plt.xlabel("Trading Days", fontsize=12)
             plt.ylabel("Cumulative Excess Return", fontsize=12)
             plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
             plt.grid(True, alpha=0.3)
@@ -584,10 +645,12 @@ class VisualizeBacktest:
         """
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            
-            # Calculate drawdowns for all strategies
             drawdown_data = {}
-            
+            # Create a DataFrame to store asset curves
+            asset_curve_df = pd.DataFrame()
+            strategy_dates = {}  
+
+            # Extract asset history and dates for each algorithm
             for mode_name, results in pipeline_results.items():
                 asset_history = None
                 if 'backtest_results' in results and 'asset_history' in results['backtest_results']:
@@ -595,11 +658,21 @@ class VisualizeBacktest:
                 elif 'asset_history' in results:
                     asset_history = results['asset_history']
                 
-                if asset_history is not None and len(asset_history) > 1:
+                if asset_history is not None:
                     assets = np.array(asset_history)
                     rolling_max = np.maximum.accumulate(assets)
                     drawdown = (assets - rolling_max) / (rolling_max + 1e-8) * 100  # Percentage
-                    drawdown_data[mode_name] = drawdown
+                    asset_curve_df[mode_name] = drawdown
+
+                    # Try fetching dates from results
+                    trade_history = results.get('trade_history', [])
+                    if trade_history and all('date' in record and record['date'] for record in trade_history):
+                        try:
+                            dates_list = [pd.to_datetime(record['date']) for record in trade_history]
+                            strategy_dates[mode_name] = dates_list
+                        except Exception as e:
+                            logging.warning(f"VB Module - Error parsing dates for {mode_name}: {e}")
+                            strategy_dates[mode_name] = range(len(drawdown))
 
             # Add benchmark drawdown if provided
             if benchmark_data is not None:
@@ -618,32 +691,36 @@ class VisualizeBacktest:
                 return ""
             
             # Plot drawdowns
-            plt.figure(figsize=(15, 8))
+            plt.figure(figsize=(25, 12))
             sns.set_style("whitegrid")
-            palette = sns.color_palette("Set1", len(drawdown_data))
+            colors = plt.cm.Set1(np.linspace(0, 1, len(drawdown_data)))
 
-            for i, (name, drawdown) in enumerate(drawdown_data.items()):
-                plt.plot(range(len(drawdown)), drawdown, 
-                        label=name, linewidth=2, color=palette[i])
-                plt.fill_between(range(len(drawdown)), drawdown, 0, alpha=0.3, color=palette[i])
+            for i, (strategy_name, drawdown_series) in enumerate(drawdown_data.items()):
+                # Set X_axis
+                x_axis = strategy_dates.get(strategy_name, range(len(drawdown_series)))
+                plt.plot(x_axis, drawdown_series,
+                        label=strategy_name, linewidth=2, color=colors[i])
             
             plt.title("Drawdown Comparison", fontsize=16, fontweight='bold')
-            plt.xlabel("Trading Days", fontsize=12)
+            # Set x_axis automatically
+            if isinstance(x_axis[0], (datetime, pd.Timestamp)):
+                plt.xlabel("Date", fontsize=12)
+                fig.autofmt_xdate()  # Automatically set xdate
+            else:
+                plt.xlabel("Trading Days", fontsize=12)
             plt.ylabel("Drawdown (%)", fontsize=12)
-            plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            plt.legend(loc='upper right')
             plt.grid(True, alpha=0.3)
             plt.axhline(y=0, color='black', linestyle='-', alpha=0.5)
             plt.tight_layout()
-            
+
             # Generate filename and save
             plot_filename = f"drawdown_comparison_{timestamp}.png"
             plot_path = os.path.join(self.plot_exper_dir, plot_filename)
             plt.savefig(plot_path, dpi=300, bbox_inches='tight')
             plt.close()
-            
             logging.info(f"VB Module - Drawdown comparison plot saved to: {plot_path}")
             return plot_path
-            
         except Exception as e:
             logging.error(f"VB Module - Error generating drawdown comparison plot: {e}")
             plt.close()
@@ -717,7 +794,9 @@ def generate_all_visualizations_with_benchmark(pipeline_results: Dict[str, Any],
         
         # Generate all visualizations
         asset_curve_plot = visualizer.generate_asset_curve_comparison(
-            pipeline_results, benchmark_data, benchmark_name, show_performance_metrics=True)
+            pipeline_results,
+            benchmark_data=benchmark_data,
+            benchmark_name=benchmark_name)
         
         heatmap_plot = visualizer.generate_performance_heatmap(pipeline_results)
         

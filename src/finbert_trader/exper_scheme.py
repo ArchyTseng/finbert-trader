@@ -726,11 +726,15 @@ class ExperimentScheme:
             raise
 
     def _execute_experiment_with_visualization(self, experiment_id: str, setup_config: Dict[str, Any], 
-                                     trading_config: Dict[str, Any], model_params: Dict[str, Any] = None,
-                                     description: str = "", notes: str = "") -> Dict[str, Any]:
+                                    trading_config: Dict[str, Any], model_params: Dict[str, Any] = None,
+                                    description: str = "", notes: str = "") -> Dict[str, Any]:
         """
         Execute experiment with immediate visualization after completion.
         
+        This function orchestrates the experiment execution and then generates visualizations.
+        It correctly structures the data for the visualization module and extracts benchmark
+        data for comparison plots.
+
         Parameters
         ----------
         experiment_id : str
@@ -749,38 +753,75 @@ class ExperimentScheme:
         Returns
         -------
         dict
-            Experiment results with visualization paths
+            Experiment results including execution results and paths to generated visualizations.
+            The structure is:
+            {
+                'mode_name_1': mode_results_dict, # From _execute_experiment
+                'mode_name_2': mode_results_dict,
+                ...
+                'experiment_id': ...,
+                'setup_config': ...,
+                'immediate_visualizations': {
+                    'asset_curve_comparison': 'path/to/plot.png',
+                    'performance_heatmap': 'path/to/plot.png',
+                    ...
+                }
+            }
         """
         try:
             logging.info(f"ES Module - Executing experiment with visualization: {experiment_id}")
             
-            # Execute experiment
-            results = self._execute_experiment(experiment_id, setup_config, trading_config, 
+            # --- Execute the core experiment ---
+            exper_results = self._execute_experiment(experiment_id, setup_config, trading_config, 
                                             model_params, description, notes)
             
-            # Visualize in time with benchmark support
+            # --- Prepare data for visualization ---
+            # Restructure pipeline_results for visualization functions
+            # Expected format: {mode_name: backtest_results_dict}
+            pipeline_results_for_viz = {}
+            
+            # Extract benchmark data (from the first available mode's backtest results)
+            benchmark_prices_series_for_viz = None
+            benchmark_returns_array_for_viz = None
+
+            # Iterate through exper_results to find mode-specific results
+            # Exclude metadata keys that are not mode names
+            reserved_keys = ['experiment_id', 'setup_config', 'trading_config', 'model_params', 'description', 'notes', 'immediate_visualizations']
+            
+            for key, value in exper_results.items():
+                if key in reserved_keys:
+                    continue # Skip metadata
+                
+                mode_name = key
+                mode_results = value # This is the dict returned by _process_mode
+                
+                # Extract backtest_results which contains the data visualization needs
+                backtest_data = mode_results.get('backtest_results', {})
+                
+                # Structure data for visualization: {mode_name: backtest_data}
+                # Visualization functions expect to find 'asset_history', 'metrics', etc. inside backtest_data
+                pipeline_results_for_viz[mode_name] = backtest_data 
+
+                # Extract benchmark data from the first valid mode's backtest_data
+                # Assumes all modes cover the same date range for benchmark comparison
+                if benchmark_prices_series_for_viz is None:
+                    benchmark_prices_series_for_viz = backtest_data.get('benchmark_prices_with_date', None)
+                if benchmark_returns_array_for_viz is None:
+                    benchmark_returns_array_for_viz = backtest_data.get('benchmark_returns', None)
+
+            # --- Generate Visualizations ---
             visualization_results = {}
             try:
-                # Initial benchmark data collection
-                benchmark_data = None
-                benchmark_returns = None
-                
-                # Get first mode benchmark results, assume all modes have same date range
-                first_mode = next(iter(results.keys()))
-                if first_mode not in ['experiment_id', 'setup_config', 'trading_config', 'model_params', 'description']:
-                    mode_result = results[first_mode]
-                    benchmark_data = mode_result.get('benchmark_data')
-                    benchmark_returns = mode_result.get('benchmark_returns')
-                
-                # Generate enhanced visualizations with benchmark
+                # --- Enhanced visualizations with benchmark ---
                 from .visualize.visualize_backtest import generate_all_visualizations_with_benchmark
                 
+                # Pass the correctly structured data and extracted benchmark info
                 enhanced_visualizations = generate_all_visualizations_with_benchmark(
-                    pipeline_results=results,
-                    config_trading=self.config,  # Use experiment configuration
-                    benchmark_data=benchmark_data,
-                    benchmark_returns=benchmark_returns,
-                    benchmark_name='Nasdaq-100'
+                    pipeline_results=pipeline_results_for_viz, # Correctly structured data
+                    config_trading=self.config,                # Pass the config for directories etc.
+                    benchmark_data=benchmark_prices_series_for_viz, # Benchmark prices with date index
+                    benchmark_returns=benchmark_returns_array_for_viz, # Benchmark returns array
+                    benchmark_name='QQQ' # Specify the benchmark name
                 )
                 
                 visualization_results.update(enhanced_visualizations)
@@ -789,47 +830,69 @@ class ExperimentScheme:
                 for viz_name, viz_path in enhanced_visualizations.items():
                     if viz_path:
                         logging.info(f"  {viz_name}: {viz_path}")
-                
+                    
             except Exception as viz_error:
-                logging.warning(f"ES Module - Could not generate enhanced visualizations: {viz_error}")
+                logging.warning(f"ES Module - Could not generate enhanced visualizations: {viz_error}", exc_info=True)
                 
-                # Fallback to basic visualizations
+                # --- Fallback to basic visualizations ---
                 try:
                     from .visualize.visualize_backtest import generate_all_visualizations
-                    basic_visualizations = generate_all_visualizations(results, self.config)
+                    # Use the same correctly structured data
+                    basic_visualizations = generate_all_visualizations(
+                        pipeline_results=pipeline_results_for_viz, # Correctly structured data
+                        config_trading=self.config              # Pass the config
+                    )
                     visualization_results.update(basic_visualizations)
                     logging.info("ES Module - Generated basic visualizations as fallback")
                 except Exception as basic_viz_error:
-                    logging.warning(f"ES Module - Could not generate basic visualizations: {basic_viz_error}")
+                    logging.warning(f"ES Module - Could not generate basic visualizations: {basic_viz_error}", exc_info=True)
             
-            # Extend visualization to results
-            results['immediate_visualizations'] = visualization_results
+            # --- Attach visualization paths to the main results ---
+            exper_results['immediate_visualizations'] = visualization_results
             
-            return results
+            return exper_results
             
         except Exception as e:
-            logging.error(f"ES Module - Error executing experiment with visualization {experiment_id}: {e}")
+            logging.error(f"ES Module - Error executing experiment with visualization {experiment_id}: {e}", exc_info=True)
             raise
-
     
     def _process_mode(self, mode_name: str, mode_data: Dict[str, Any], 
                  config_trading: ConfigTrading) -> Dict[str, Any]:
         """
-        Process a single experiment mode.
+        Process a single experiment mode, including training, backtesting, and result preparation.
         
+        This function orchestrates the full pipeline for one experiment mode:
+        1. Creates train/valid/test environments.
+        2. Initializes and trains a TradingAgent.
+        3. Performs backtesting using TradingBacktest, which now includes fetching
+        benchmark data aligned by date.
+        4. Prepares results, including benchmark data for visualization.
+        5. Generates reports and saves artifacts.
+
         Parameters
         ----------
         mode_name : str
-            Name of the experiment mode
+            Name of the experiment mode (e.g., 'PPO_FinBERT').
         mode_data : dict
-            Data for this mode
+            Dictionary containing 'train', 'valid', and 'test' data splits.
         config_trading : ConfigTrading
-            Trading configuration
-            
+            Configuration object holding trading parameters.
+
         Returns
         -------
         dict
-            Results for this mode
+            A dictionary containing results for this mode, including:
+            - model_path (str): Path to the saved trained model.
+            - results_path (str): Path to the saved backtest results.
+            - metrics (dict): Computed performance metrics.
+            - detailed_report (dict): A comprehensive report of the backtest.
+            - backtest_results (dict): Raw backtest results from TradingBacktest.
+            This now includes 'benchmark_prices_with_date' and 'benchmark_returns'.
+            
+        Raises
+        ------
+        Exception
+            If any step in the process fails, an error is logged and re-raised.
         """
         try:
             logging.info(f"ES Module - Processing mode {mode_name}")
@@ -869,29 +932,29 @@ class ExperimentScheme:
             # Backtesting with benchmark support
             logging.info(f"ES Module - Mode {mode_name} - Starting backtesting with benchmark")
             backtester = TradingBacktest(config_trading)
+            # Generate backtest results, including benchmark data
             backtest_results = backtester.run_backtest(agent, test_env, record_trades=True, use_benchmark=True)
             
-            # Fetch benchmark data for visualization
-            benchmark_data = None
-            benchmark_returns = None
-            if hasattr(test_env, 'df') and len(test_env.df) > 0:
-                try:
-                    start_date = test_env.df['date'].min()
-                    end_date = test_env.df['date'].max()
-                    benchmark_data = backtester._get_nasdaq100_benchmark(start_date, end_date)
-                    logging.info(f"ES Module - Mode {mode_name} - Fetched benchmark data for visualization")
-                    if benchmark_data is not None:
-                        benchmark_returns = backtester._calculate_benchmark_returns(benchmark_data)
-                        logging.info(f"ES Module - Mode {mode_name} - Calculated benchmark returns")
-                except Exception as e:
-                    logging.warning(f"ES Module - Could not fetch benchmark data: {e}")
+            # Fetch benchmark data from results for visualization
+            benchmark_prices_with_date = backtest_results.get('benchmark_prices_with_date', None)
+            benchmark_returns = backtest_results.get('benchmark_returns', None)
+            
+            # Log for debugging
+            logging.info(f"ES Module - Mode {mode_name} - Benchmark data handling completed.")
+            if benchmark_prices_with_date is not None:
+                logging.debug(f"  - Benchmark prices series length: {len(benchmark_prices_with_date)}")
+            if benchmark_returns is not None:
+                logging.debug(f"  - Benchmark returns array length: {len(benchmark_returns)}")
             
             # Generate detailed report
             detailed_report = backtester.generate_detailed_report(backtest_results)
 
             # Generate trading history analysis
             symbols_list = getattr(config_trading, 'symbols', None)
-            initial_value = backtest_results.get('asset_history', [1.0])[0] if backtest_results.get('asset_history') else 1.0
+            # Get initial asset value
+            initial_value_list = backtest_results.get('asset_history')
+            initial_value = initial_value_list[0] if initial_value_list else config_trading.initial_cash
+            
             trading_analy_dict = analyze_trade_history(
                 backtest_results.get('trade_history', []), 
                 initial_asset_value=initial_value,
@@ -911,8 +974,6 @@ class ExperimentScheme:
                 'metrics': backtest_results['metrics'],
                 'detailed_report': detailed_report,
                 'backtest_results': backtest_results,
-                'benchmark_data': benchmark_data,  # Add benchmark data
-                'benchmark_returns': benchmark_returns  # Add benchmark_returns
             }
             
             # Log key metrics

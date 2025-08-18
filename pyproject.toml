@@ -39,6 +39,7 @@ websockets = ">=13.0,<16"
 transformers = ">=4.53.2,<5"
 ta-lib = ">=0.5.1,<0.6"
 datasets = ">=3.6.0,<4"
+pandas-market-calendars = ">=5.1.1,<6"
 # yfinance = "0.2.65"
 # curl-cffi = ">=0.7"
 
