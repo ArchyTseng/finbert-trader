@@ -36,7 +36,8 @@ from gymnasium.spaces import Box
 import numpy as np
 import pandas as pd
 import logging
-import pandas_market_calendars
+from datetime import datetime
+from typing import Dict, List, Tuple, Optional, Any
 
 # %%
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -110,7 +111,11 @@ class StockTradingEnv(gym.Env):
         # Inherit trading configuration for pipeline consistency
         self.config = config_trading    
         self.env_type = env_type    # Set environment type for data selection (train/valid/test)
-        self.data = rl_data.copy()  # Copy data to prevent side-effects on original rl_data
+        self.raw_data = rl_data.copy()  # Copy data to prevent side-effects on original rl_data
+        # Ensure test dates are datetime objects
+        self.test_start_date = pd.to_datetime(getattr(self.config, 'test_start_date', None))
+        self.test_end_date = pd.to_datetime(getattr(self.config, 'test_end_date', None))
+        self.if_test = (self.env_type == 'test')  # Switch for training mode (test sequential, train/valid randomly)
         self.filter_ind = getattr(self.config, 'filter_ind', [])    # Get filterd indicators for identifying signals
         self.indicators = getattr(self.config, 'indicators', [])    # Get indicators for identifying signals
 
@@ -154,7 +159,7 @@ class StockTradingEnv(gym.Env):
         self.hold_threshold = getattr(self.config, 'hold_threshold', 0.1)  # Hold threshold for holding actions
 
         logging.info(f"STE Module - Env Init - Config symbols: {self.symbols}, window_size: {self.window_size}, features_all_flatten len: {len(self.features_all_flatten)}, state_dim: {self.state_dim}, action_dim: {self.action_dim}")
-        logging.info(f"STE Module - Env Init - rl_data len: {len(self.data)}, first episode states shape: {self.data[0]['states'].shape if self.data else 'Empty'}")
+        logging.info(f"STE Module - Env Init - rl_data len: {len(self.raw_data)}, first episode states shape: {self.raw_data[0]['states'].shape if self.raw_data else 'Empty'}")
 
         # Gym Space Definitions for RL compatibility
         self.observation_space = Box(low=-np.inf, high=np.inf,
@@ -343,17 +348,76 @@ class StockTradingEnv(gym.Env):
             self.I_s_thr[ind] = defaults[ind]
             logging.info(f"STE Module - Set default threshold for {ind}: {defaults[ind]}")
 
+    def _generate_trading_dates(self, start_date: pd.Timestamp, num_trading_days: int) -> Optional[List[pd.Timestamp]]:
+        """
+        Generates a list of precise trading dates based on a start date and number of trading days.
+        Uses pandas_market_calendars for accuracy, with a fallback to pd.bdate_range.
+
+        Parameters
+        ----------
+        start_date : pd.Timestamp
+            The starting date for the trading period.
+        num_trading_days : int
+            The total number of trading days to generate.
+
+        Returns
+        -------
+        list of pd.Timestamp, or None
+            A list of trading dates, or None if generation fails or inputs are invalid.
+        """
+        if not isinstance(start_date, pd.Timestamp):
+            logging.error(f"STE Module - _generate_trading_dates - Invalid start_date type: {type(start_date)}")
+            return None
+        if num_trading_days <= 0:
+            logging.warning(f"STE Module - _generate_trading_dates - Invalid num_trading_days: {num_trading_days}")
+            return []
+
+        try:
+            # Introduce pandas_market_calendars
+            import pandas_market_calendars as mcal
+            # Initialize exchange calendar (assuming US stocks, e.g., NASDAQ or NYSE)
+            exchange_calendar = mcal.get_calendar('NASDAQ') 
+            # Estimate an end date to get enough schedule entries
+            # Prepare at least num_trading_days business days
+            estimated_end_date = pd.bdate_range(start=start_date, periods=2 * num_trading_days)[-1]
+            # Get the trading schedule
+            schedule = exchange_calendar.schedule(start_date=start_date, end_date=estimated_end_date)
+            # Take the first num_trading_days valid trading days
+            actual_trading_days_index = schedule.index[:num_trading_days]
+            # Convert to list of Pandas datetime objects
+            trading_dates = actual_trading_days_index.tolist()
+            
+            logging.debug(f"STE Module - _generate_trading_dates - Generated {len(trading_dates)} EXACT trading dates "
+                          f"from {start_date} using calendar.")
+            if trading_dates:
+                logging.debug(f"STE Module - _generate_trading_dates - Date range: {trading_dates[0]} to {trading_dates[-1]}")
+            return trading_dates
+
+        except ImportError:
+            logging.warning("STE Module - _generate_trading_dates - 'pandas-market-calendars' not installed. "
+                            "Falling back to pd.bdate_range for trading dates.")
+            # Fallback to simple business day range
+            trading_dates = pd.bdate_range(start=start_date, periods=num_trading_days).tolist()
+            return trading_dates
+            
+        except Exception as e:
+            logging.error(f"STE Module - _generate_trading_dates - Error generating trading dates: {e}", exc_info=True)
+            return None # Gracefully handle date generation errors
+
     def reset(self, seed=None, options=None):
         """
-        Reset the environment to an initial state by randomly selecting an episode.
-        This method selects a random episode from the data, initializes trading states,
-        resets agent variables (cash, position, etc.), and prepares the initial observation.
+        Reset the environment to an initial state.
+        In training/validation mode, this method selects a random episode from the data.
+        In testing mode, it prepares the environment to iterate through the entire
+        predefined test period sequentially, which must be covered by the episode data.
+
         Parameters
         ----------
         seed : int, optional
             Seed for the random number generator (for reproducibility). Default is None.
         options : dict, optional
             Additional options for reset (Gym compatibility, often unused). Default is None.
+
         Returns
         -------
         tuple
@@ -361,9 +425,12 @@ class StockTradingEnv(gym.Env):
                 Initial observation state (flattened historical features + agent states).
             - info : dict
                 Dictionary with reset information (e.g., episode index, initial cash/position).
+
         Notes
         -----
-        - Random episode selection promotes diverse training and prevents overfitting to sequences.
+        - Training/Validation mode uses random episode selection for diverse training.
+        - Testing mode uses the full test data range for sequential evaluation.
+          It requires the episode data to cover the entire test_start_date to test_end_date.
         - Current step starts at window_size to include historical context in the state.
         - Agent states are initialized with absolute values (using initial_cash) for clarity.
         - Info dict aids in monitoring and debugging, compatible with Stable Baselines3.
@@ -371,87 +438,185 @@ class StockTradingEnv(gym.Env):
         # Call superclass reset for Gym compatibility and seed handling
         super().reset(seed=seed)
         try:
-            # Randomly select an episode with sufficient length
-            valid_episodes = []
-            for idx, episode_data in enumerate(self.data):
-                if len(episode_data['states']) > self.window_size:
-                    valid_episodes.append(idx)
-            
-            if not valid_episodes:
-                raise ValueError("No episodes with sufficient length found")
+            if not self.if_test:    # Cover 'train' and 'valid'
+                # *** Training/Validation Mode Logic ***
+                # Randomly select an episode with sufficient length
+                valid_episodes = []
+                for idx, episode_data in enumerate(self.raw_data):
+                    if len(episode_data['states']) > self.window_size:
+                        valid_episodes.append(idx)
                 
-            self.episode_idx = np.random.choice(valid_episodes)
-            # Extract data for the selected episode
-            episode_data = self.data[self.episode_idx]
-            self.trading_df = episode_data['states']  # [T, D]: Time x Features array
-            self.targets = episode_data['targets']    # [T, N]: Time x Symbols price targets
+                if not valid_episodes:
+                    raise ValueError("No episodes with sufficient length found")
+                
+                # Randomly select an episode indexx from valid episodes
+                self.episode_idx = np.random.choice(valid_episodes)
+                episode_data = self.raw_data[self.episode_idx]
+                # Extract trading data (states) and targets (next-day prices) for the episode
+                # Ensure data is C-contiguous for efficient access
+                self.trading_df = np.ascontiguousarray(episode_data['states'], dtype=np.float32)
+                self.targets = np.ascontiguousarray(episode_data['targets'], dtype=np.float32) if 'targets' in episode_data else None
+                # Log shapes for verification
+                logging.info(f"STE Module - Env Reset - Selected episode {self.episode_idx} with shapes - "
+                        f"states: {self.trading_df.shape}, targets: {self.targets.shape}")
+                
+                # Count available trading decisions
+                available_trading_decisions = len(self.trading_df) - self.window_size
+                prediction_days = len(self.targets) if self.targets is not None else 0
+                logging.info(f"STE Module - Env Reset - Available trading decisions: {available_trading_decisions}")
+                logging.info(f"STE Module - Env Reset - Prediction days: {prediction_days}")
 
-            # Generate and save trading date
-            self.trading_dates = None # Initialize
-            try:
-                # Fetch start_date from episode_data 
-                start_date_raw = episode_data.get('start_date')
-                if start_date_raw is not None:
-                    # Conver start_date to pandas Timestamp 
-                    start_date = pd.to_datetime(start_date_raw)
+                # Varify minimum required decisions
+                min_required_decisions = 10  # At least 10 desicions
+                if available_trading_decisions < min_required_decisions:
+                    raise ValueError(f"Episode too short for trading: {available_trading_decisions} < {min_required_decisions}")
 
-                    # Calculate episode length
-                    num_trading_days = len(self.trading_df)
-                    
-                    # Generate trading date range
-                    if num_trading_days > 0:
-                        # Ensure alread import pandas_market_calenders
-                        # Initialize Nasdaq calender instance
-                        exchange_calendar = pandas_market_calendars.get_calendar('NASDAQ')
+                # Set terminal step and current step
+                self.terminal_step = self.window_size + available_trading_decisions - 1
+                self.current_step = self.window_size
+            
+                logging.info(f"STE Module - Env Reset - Trading steps available: {available_trading_decisions}")
+                logging.info(f"STE Module - Env Reset - Terminal step: {self.terminal_step}")
 
-                        # Generate a trading date range
-                        estimated_end_date = pd.bdate_range(start=start_date, periods=2 * num_trading_days)[-1]
+                # Generate EXACT trading dates for current episode
+                self.trading_dates = None # Initialize
+                try:
+                    # Fetch start_date from the selected episode data
+                    start_date_raw = episode_data.get('start_date', None)
+                    if start_date_raw is not None:
+                        start_date = pd.to_datetime(start_date_raw)
+                        logging.debug(f"STE Module - Env Reset (Train/Valid) - Episode {self.episode_idx} start date: {start_date}")
 
-                        # Get estimated trading schedule
-                        schedule = exchange_calendar.schedule(start_date=start_date, end_date=estimated_end_date)
+                        # Calculate number of trading days in the episode
+                        num_trading_days = len(self.trading_df)
+                        logging.debug(f"STE Module - Env Reset (Train/Valid) - Episode length (trading_df rows): {num_trading_days}")
 
-                        # Get actual trading schedule
-                        actual_trading_days_index = schedule.index[: num_trading_days]
-
-                        # Convert to Pandas datetime
-                        self.trading_dates = actual_trading_days_index.tolist()
-                        logging.debug(f"STE Module - Env Reset - Generated EXACT trading dates from start_date using NASDAQ calendar, length: {len(self.trading_dates)}")
-                        if self.trading_dates:
-                            logging.debug(f"STE Module - Env Reset - Trading dates range: {self.trading_dates[0]} to {self.trading_dates[-1]}")
+                        if num_trading_days > 0:
+                            self.trading_dates = self._generate_trading_dates(start_date, num_trading_days)
+                            if self.trading_dates is None:
+                                logging.warning("STE Module - Env Reset (Train/Valid) - Failed to generate trading dates using helper function.")
+                        else:
+                            logging.warning(f"STE Module - Env Reset (Train/Valid) - trading_df length is zero, cannot generate dates.")
                     else:
-                        logging.warning(f"STE Module - Env Reset - trading_df length is zero, cannot generate dates.")
-                else:
-                    logging.warning("STE Module - Env Reset - 'start_date' not found in episode_data.")
-            except ImportError:
-                logging.error("STE Module - Env Reset - 'pandas-market-calendars' not installed. Please install it for precise trading dates: pip install pandas-market-calendars")
-                self.trading_dates = pd.bdate_range(start=start_date, periods=num_trading_days).tolist() if 'start_date' in locals() and num_trading_days else None
-            except Exception as e:
-                logging.error(f"STE Module - Env Reset - Error generating EXACT trading dates: {e}", exc_info=True)
+                        logging.warning("STE Module - Env Reset (Train/Valid) - 'start_date' not found in episode data.")
+                except Exception as e:
+                    logging.error(f"STE Module - Env Reset (Train/Valid) - Error generating EXACT trading dates: {e}", exc_info=True)
+                    self.trading_dates = None # Gracefully handle date generation errors
+            else:
+                # *** Testing Mode Logic ***
+                logging.info(f"STE Module - Env Reset (Test Mode) - Preparing for full test period: "
+                            f"{self.config.test_start_date} to {self.config.test_end_date}")
+                
+                # Check date configuration
+                if self.test_start_date is None or self.test_end_date is None:
+                    logging.error("STE Module - Env Reset (Test Mode) - test_start_date or test_end_date not found in config.")
+                    raise ValueError("Test start and end dates must be provided in config for test mode.")
+                
+                # Verify test episode
+                test_episode_data = None
+                test_episode_idx = -1
+                found_episode_start_date = None
+                found_episode_end_date = None
+
+                # Traverse episode to get target period
+                logging.info(f"STE Module - Env Reset (Test Mode) - Attempting to find episode with start_date exactly matching test_start_date: {self.test_start_date}")
+                for idx, episode_data in enumerate(self.raw_data):
+                    episode_start_raw = episode_data.get('start_date')
+                    if episode_start_raw is not None:
+                        episode_start_date = pd.to_datetime(episode_start_raw)
+                        # Match start_date
+                        if episode_start_date == self.test_start_date:
+                            test_episode_data = episode_data
+                            test_episode_idx = idx
+                            found_episode_start_date = episode_start_date
+                            logging.info(f"STE Module - Env Reset (Test Mode) - Found matching test episode at index {idx} with start date {episode_start_date}")
+                            # Verify episode coverage
+                            episode_length = len(test_episode_data['states'])
+                            if episode_length > self.window_size:
+                                generated_dates_for_length_check = self._generate_trading_dates(found_episode_start_date, episode_length)
+                                if generated_dates_for_length_check:
+                                    found_episode_end_date = generated_dates_for_length_check[-1]
+                            logging.info(f"STE Module - Env Reset (Test Mode) - Found EXACT MATCH test episode at index {idx} with start date {episode_start_date}. "
+                                        f"Estimated end date: {found_episode_end_date if found_episode_end_date else 'N/A'}")
+                            break
+                         
+                if test_episode_data is None:
+                    logging.info(f"STE Module - Env Reset (Test Mode) - No exact match found. Searching for episode that covers test period ({self.test_start_date} to {self.test_end_date}).")
+                for idx, episode_data in enumerate(self.raw_data):
+                    episode_start_raw = episode_data.get('start_date')
+                    if episode_start_raw is not None:
+                        episode_start_date = pd.to_datetime(episode_start_raw)
+                        # Check episode start date
+                        if episode_start_date <= self.test_start_date:
+                            episode_length = len(episode_data['states'])
+                            if episode_length > self.window_size:
+                                # Generate episode end date
+                                generated_dates_for_check = self._generate_trading_dates(episode_start_date, episode_length)
+                                if generated_dates_for_check:
+                                    episode_end_date = generated_dates_for_check[-1]
+                                    # Safe padding several days 
+                                    if episode_end_date >= (self.test_end_date - pd.Timedelta(days=5)): # Default 5 days
+                                        test_episode_data = episode_data
+                                        test_episode_idx = idx
+                                        found_episode_start_date = episode_start_date
+                                        found_episode_end_date = episode_end_date
+                                        logging.info(f"STE Module - Env Reset (Test Mode) - Found CONTAINING test episode at index {idx}. "
+                                                    f"Start: {episode_start_date}, Estimated End: {episode_end_date}. "
+                                                    f"This episode covers the configured test period.")
+                                        break 
+                # Log for debugging
+                if test_episode_data is None:
+                    error_msg = (f"STE Module - Env Reset (Test Mode) - "
+                                f"CRITICAL: No suitable episode found in self.data for the test period "
+                                f"{self.test_start_date} to {self.test_end_date}. "
+                                f"An episode is required that either: "
+                                f"1) Starts exactly on {self.test_start_date}, or "
+                                f"2) Starts on or before {self.test_start_date} and has sufficient data to cover the period "
+                                f"(allowing for a small buffer). "
+                                f"Please check your data preparation pipeline (e.g., feature_engineer.py) "
+                                f"to ensure it creates such an episode for the 'test' split.")
+                    logging.error(error_msg)
+                    raise ValueError(error_msg)
+                    
+                # Set test data
+                self.episode_idx = test_episode_idx
+                self.trading_df = np.ascontiguousarray(test_episode_data['states'], dtype=np.float32)
+                self.targets = np.ascontiguousarray(test_episode_data.get('targets'), dtype=np.float32) if test_episode_data.get('targets') is not None else None
+
+                # Use _generate_trading_dates to generate EXACT episode end_date
                 self.trading_dates = None
-            
-            logging.info(f"STE Module - Env Reset - Selected episode {self.episode_idx} with shapes - "
-                    f"states: {self.trading_df.shape}, targets: {self.targets.shape}")
-            
-            # Count available trading decisions
-            available_trading_decisions = len(self.trading_df) - self.window_size
-            prediction_days = len(self.targets) if self.targets is not None else 0
-            
-            logging.info(f"STE Module - Env Reset - Available trading decisions: {available_trading_decisions}")
-            logging.info(f"STE Module - Env Reset - Prediction days: {prediction_days}")
+                try:
+                    num_trading_days = len(self.trading_df)
+                    if found_episode_start_date is not None and num_trading_days > 0:
+                        self.trading_dates = self._generate_trading_dates(found_episode_start_date, num_trading_days)
+                        if self.trading_dates is None:
+                            logging.warning("STE Module - Env Reset (Test Mode) - Failed to generate trading dates for test episode.")
+                    else:
+                        logging.warning("STE Module - Env Reset (Test Mode) - Could not generate trading dates: missing start date or zero length.")
+                except Exception as e:
+                    logging.error(f"STE Module - Env Reset (Test Mode) - Error generating trading dates for test episode: {e}", exc_info=True)
+                    self.trading_dates = None
 
-            # Varify minimum required decisions
-            min_required_decisions = 10  # At least 10 desicions
-            if available_trading_decisions < min_required_decisions:
-                raise ValueError(f"Episode too short for trading: {available_trading_decisions} < {min_required_decisions}")
+                # Set terminal_step and current_step
+                available_test_decisions = len(self.trading_df) - self.window_size
 
-            # Set terminal step 
-            self.terminal_step = self.window_size + available_trading_decisions - 1
-            # Start current step after window to include history (ensure it's valid)
-            self.current_step = self.window_size
-        
-            logging.info(f"STE Module - Env Reset - Trading steps available: {available_trading_decisions}")
-            logging.info(f"STE Module - Env Reset - Terminal step: {self.terminal_step}")
-            
+                if available_test_decisions < 1:
+                    error_msg = (f"STE Module - Env Reset (Test Mode) - "
+                                 f"Test episode data too short for window size {self.window_size}. "
+                                 f"Available decisions: {available_test_decisions}")
+                    logging.error(error_msg)
+                    raise ValueError(error_msg)
+
+                # Terminal step is the index of the last data point that can be used for a decision
+                self.terminal_step = len(self.trading_df) - 1 # 0-based index
+                # Current step starts after the initial window to have history
+                self.current_step = self.window_size
+
+                logging.info(f"STE Module - Env Reset (Test Mode) - Configured for sequential processing of test episode {self.episode_idx}: "
+                             f"window_size={self.window_size}, terminal_step={self.terminal_step}, "
+                             f"available_decisions={available_test_decisions}")
+
+            # Common Initialization for both Train/Valid and Test
             # Initial cash, dtype as float
             self.initial_cash = float(getattr(self.config, 'initial_cash', 1e6))
             # Reset agent state to initial values using absolute cash value
@@ -464,6 +629,9 @@ class StockTradingEnv(gym.Env):
             # Set initial last prices from current step for slippage calculations
             self.last_prices = self._get_current_prices()  # Fetches prices at current_step
             self.last_actions = None
+
+            available_trading_decisions = max(0, len(self.trading_df) - self.window_size)
+            prediction_days = len(self.targets) if self.targets is not None else 0
 
             # Calculate each indicator statistic information per symbol
             # to generate dynamic threshold from current episode if enabled
@@ -492,14 +660,31 @@ class StockTradingEnv(gym.Env):
                     'Use Dynamic Ind Threshold': self.use_dynamic_ind_threshold # Log switch state
                     }
             # Log reset details for debugging and verification
-            logging.info(f"STE Module - Env Reset - Episode idx: {self.episode_idx}, trading_df shape: {self.trading_df.shape}, targets shape: {self.targets.shape}, terminal_step: {self.terminal_step}")
+            if not self.if_test:
+                logging.info(f"STE Module - Env Reset (Train/Valid) - Episode idx: {self.episode_idx}, trading_df shape: {self.trading_df.shape}, "
+                             f"targets shape: {self.targets.shape if self.targets is not None else 'None'}, terminal_step: {self.terminal_step}")
+            else:
+                 logging.info(f"STE Module - Env Reset (Test Mode) - Using test episode {self.episode_idx}, trading_df shape: {self.trading_df.shape}, "
+                              f"terminal_step: {self.terminal_step}")
+
             logging.info(f"STE Module - Env Reset - Reset information: {info}")
+
             # Return initial state and info
-            return self._get_states(), info
+            try:
+                initial_state = self._get_states()
+                logging.info(f"STE Module - Env Reset - Initial state shape: {initial_state.shape}")
+                return initial_state, info
+            except Exception as e:
+                logging.error(f"STE Module - Env Reset - Error getting initial state: {e}")
+                # Return a dummy state on error
+                dummy_state = np.zeros(self.state_dim, dtype=np.float32)
+                return dummy_state, info
         except Exception as e:
-            # Log error and raise specific ValueError for caller handling
-            logging.error(f"STE Module - Env reset error: {e}")
-            raise ValueError("Error in environment reset")
+            logging.error(f"STE Module - Env Reset - Unexpected error during reset: {e}", exc_info=True)
+            # Return a dummy state and empty info on critical error
+            dummy_state = np.zeros(self.state_dim, dtype=np.float32)
+            dummy_info = {'Error': str(e)}
+            return dummy_state, dummy_info
     
     def _identify_trading_signals(self, current_row):
         """
@@ -1264,11 +1449,82 @@ class StockTradingEnv(gym.Env):
             logging.error(f"STE Module - Error in _calculate_strategy_reward: {e}", exc_info=True)
             # Return a neutral reward as a robust fallback
             return 0.0
+        
+    def _get_senti_risk_features(self, current_row: np.ndarray, feature_type: str) -> np.ndarray:
+        """
+        Extracts sentiment or risk features for the current step from the current data row.
+
+        This method retrieves the specific feature values needed for reward shaping or
+        action interpretation based on the configured indices, regardless of whether
+        these features are included in the state observation.
+
+        Parameters
+        ----------
+        current_row : np.ndarray
+            The flattened feature array for the current timestep (shape: (D,)).
+        feature_type : str
+            Type of feature to extract. Must be either 'sentiment' or 'risk'.
+
+        Returns
+        -------
+        np.ndarray
+            Array of feature values for each symbol (shape: (action_dim,)).
+            Returns an array of zeros if the feature type is disabled or indices are missing.
+        """
+        if feature_type == 'sentiment' and self.use_senti_factor:
+            if hasattr(self, 'senti_feature_index') and self.senti_feature_index:
+                # Safely extract features, handling potential index errors or shape mismatches
+                try:
+                    # Ensure current_row is long enough
+                    if len(current_row) > max(self.senti_feature_index):
+                        senti_features = current_row[self.senti_feature_index]
+                        # Ensure output shape is (action_dim,)
+                        if len(senti_features) == self.action_dim:
+                            return senti_features.astype(np.float32)
+                        else:
+                            logging.warning(f"STE Module - _get_senti_risk_features (senti) - "
+                                            f"Mismatch in extracted feature length. Expected {self.action_dim}, got {len(senti_features)}. "
+                                            f"Returning zeros.")
+                    else:
+                        logging.warning(f"STE Module - _get_senti_risk_features (senti) - "
+                                        f"current_row length ({len(current_row)}) is not sufficient for senti_feature_index. "
+                                        f"Returning zeros.")
+                except (IndexError, TypeError) as e:
+                    logging.error(f"STE Module - _get_senti_risk_features (senti) - Error extracting features: {e}")
+            else:
+                logging.debug("STE Module - _get_senti_risk_features (senti) - senti_feature_index is empty or not set.")
+                
+        elif feature_type == 'risk' and self.use_risk_factor:
+            if hasattr(self, 'risk_feature_index') and self.risk_feature_index:
+                try:
+                    if len(current_row) > max(self.risk_feature_index):
+                        risk_features = current_row[self.risk_feature_index]
+                        if len(risk_features) == self.action_dim:
+                            return risk_features.astype(np.float32)
+                        else:
+                            logging.warning(f"STE Module - _get_senti_risk_features (risk) - "
+                                            f"Mismatch in extracted feature length. Expected {self.action_dim}, got {len(risk_features)}. "
+                                            f"Returning zeros.")
+                    else:
+                        logging.warning(f"STE Module - _get_senti_risk_features (risk) - "
+                                        f"current_row length ({len(current_row)}) is not sufficient for risk_feature_index. "
+                                        f"Returning zeros.")
+                except (IndexError, TypeError) as e:
+                    logging.error(f"STE Module - _get_senti_risk_features (risk) - Error extracting features: {e}")
+            else:
+                logging.debug("STE Module - _get_senti_risk_features (risk) - risk_feature_index is empty or not set.")
+        else:
+            # If feature_type is invalid, or the corresponding factor switch is off
+            logging.debug(f"STE Module - _get_senti_risk_features - Request for '{feature_type}' features skipped "
+                        f"(factor switch: senti={self.use_senti_factor}, risk={self.use_risk_factor}).")
+
+        # Return zeros if any condition above is not met
+        return np.zeros(self.action_dim, dtype=np.float32)
 
     def step(self, actions):
         """
         Execute a trading step: process actions, perform trades, compute reward, and advance the environment.
-        
+
         This method processes clipped actions, identifies trading signals, interprets actions,
         executes trades, calculates rewards (with senti/risk factors passed for internal reward shaping),
         updates states, and checks for termination. It integrates CVaR shaping for risk awareness.
@@ -1282,23 +1538,25 @@ class StockTradingEnv(gym.Env):
         -------
         tuple
             - state : ndarray
-                Next observation state.
+                Next observation state (flattened historical features + agent states).
             - reward : float
-                Computed reward.
+                Reward for the action taken, shaped by portfolio return, risk (CVaR), etc.
             - done : bool
-                True if episode terminated.
+                Whether the episode has terminated (reached terminal_step).
             - truncated : bool
-                Always False (no truncation in this env).
+                Whether the episode was truncated (always False in this env).
             - info : dict
-                Dictionary with step details (e.g., assets, actions, signals, senti/risk factors).
+                Dictionary with step information (e.g., cash, position, total asset, date).
 
         Notes
         -----
-        - Actions are clipped to [-1, 1].
-        - Trades are executed based on interpreted actions.
-        - Reward is calculated using the strategy function, which can now internally use senti/risk factors.
-        - CVaR shaping uses historical raw returns.
-        - Vectorized operations ensure efficiency.
+        - Actions are clipped to [-1, 1] for bounded decisions.
+        - Trading signals are identified but action interpretation is simplified.
+        - Trades are executed based on interpreted actions and current prices.
+        - Reward is shaped by return, CVaR, cash/turnover penalties, and senti/risk factors.
+        - State advances to the next timestep.
+        - Done is determined by reaching self.terminal_step (valid for train/valid/test).
+        - Info dict includes Date, which relies on self.trading_dates set correctly in reset().
         - Senti/Risk factors are passed to the reward function for appropriate shaping.
         """
         logging.debug(f"STE Module - Env Step - Input actions: {actions}")
@@ -1309,6 +1567,7 @@ class StockTradingEnv(gym.Env):
             logging.info(f"STE Module - Env Step - Input actions shape: {actions.shape}")
             
             # Check if reaching terminal step
+            # This condition is correct for both train/valid (random episode) and test (full period) modes
             if self.current_step >= self.terminal_step:
                 done = True
                 truncated = False
@@ -1351,23 +1610,39 @@ class StockTradingEnv(gym.Env):
                 sentiment_per_stock, risk_per_stock
             )
 
-            # CVaR shaping for risk-aware rewards (using raw returns for consistency)
-            self.returns_history.append(float(raw_return))  # Ensure dtype
-            if len(self.returns_history) >= getattr(self.config, 'cvar_min_history', 10) and getattr(self.config, 'cvar_factor', 0.05) > 0:
-                # Fetch CVaR params from config
-                cvar_alpha = getattr(self.config, 'cvar_alpha', 0.05)
-                # Convert history to array for percentile/mean
-                returns_array = np.array(self.returns_history, dtype=np.float32)
-                if len(returns_array) > 0: # Extra safety check
+            # Core improvement: CVaR shaping for risk awareness 
+            # Calculate CVaR (Conditional Value at Risk) adjustment based on recent returns
+            # This helps penalize strategies with high tail risk, promoting risk-aware learning.
+            try:
+                # Fetch CVaR alpha threshold from config (e.g., 0.05 for 5%)
+                cvar_alpha = float(getattr(self.config, 'cvar_alpha', 0.05))
+                # Ensure alpha is within valid range (0, 0.5)
+                cvar_alpha = np.clip(cvar_alpha, 0.001, 0.499)
+                # Fetch recent returns history from asset memory
+                returns_history = self.returns_history
+                # Check if sufficient history is available for robust CVaR calculation
+                min_cvar_history = 5 # Minimum history points required
+                if len(returns_history) >= min_cvar_history:
+                    # Convert list to NumPy array for efficient computation
+                    returns_array = np.array(returns_history, dtype=np.float32)
+                    # Calculate Value at Risk (VaR) at alpha level using percentile
                     var = np.percentile(returns_array, 100 * cvar_alpha)
+                    # Calculate CVaR as the mean of returns below VaR (tail loss)
                     # Add epsilon to prevent empty array access
                     below_var_returns = returns_array[returns_array <= var]
                     if len(below_var_returns) > 0:
                         cvar = below_var_returns.mean()
-                        # Core improvement: Ensure CVaR implemented to final reward
+                        # Apply CVaR adjustment to reward (subtract because cvar is negative for losses)
+                        # Scale factor for cvar impact is fetched from config
                         cvar_adjustment = float(self.config.cvar_factor * cvar)
                         reward += cvar_adjustment
                         logging.debug(f"STE Module - Step - CVaR adjustment applied: {cvar_adjustment:.6f}")
+                    else:
+                        logging.debug("STE Module - Step - No returns below VaR, CVaR adjustment skipped.")
+                else:
+                    logging.debug(f"STE Module - Step - Insufficient return history for CVaR ({len(returns_history)} < {min_cvar_history}), skipped.")
+            except Exception as e:
+                logging.error(f"STE Module - Step - Error calculating CVaR adjustment: {e}", exc_info=True)
 
             # Track total asset history
             self.asset_memory.append(float(self.total_asset))   # Ensure dtype
@@ -1402,31 +1677,61 @@ class StockTradingEnv(gym.Env):
                 'Use Senti Factor': bool(self.use_senti_factor),
                 'Use Risk Factor': bool(self.use_risk_factor),
                 'Use Senti Features': bool(self.use_senti_features),
+                'Use Risk Features': bool(self.use_risk_features),
                 'Use Dynamic Ind Threshold': bool(self.use_dynamic_ind_threshold),
             }
             # Save Date index for visualization
-            if (hasattr(self, 'trading_dates') and self.trading_dates is not None and
-                0 <= self.current_step - 1 < len(self.trading_dates)):
-                try:
-                    current_date = self.trading_dates[self.current_step - 1]
-                    info['Date'] = current_date.strftime('%Y-%m-%d')
-                except (IndexError, TypeError, ValueError, AttributeError) as e:
-                    logging.warning(f"STE Module - Error formatting date at step {self.current_step - 1}: {e}")
-                    info['Date'] = None
-            else:
+            # This relies on self.trading_dates being correctly populated by reset() for both train/valid/test.
+            # In test mode, reset() now ensures self.trading_dates covers the full test period.
+            info['Date'] = None # Initialize Date as None
+            try:
+                # The date corresponds to the decision made at the *previous* step (current_step - 1)
+                # because that's when the action was taken based on the data.
+                # asset_memory[0] -> initial asset (before any decision, no date)
+                # asset_memory[1] -> asset after decision at current_step=window_size -> date is trading_dates[0]
+                # ...
+                # asset_memory[t] -> asset after decision at current_step=window_size+t-1 -> date is trading_dates[t-1]
+                # So, for the decision made at current_step-1, the date index is (current_step - 1) - window_size
+                # which is current_step - window_size - 1.
+                # BUT self.trading_dates is generated to correspond directly to decision points.
+                # In reset(): self.trading_dates = self.trading_df.index[window_size : terminal_step]
+                # So, trading_dates[0] corresponds to the decision made at step window_size (index 0 in trading_dates)
+                # So, for current_step, the decision point index in trading_dates is current_step - window_size.
+                # The date for the decision made at current_step-1 is therefore trading_dates[(current_step-1) - window_size]
+                # Simplified: date_index_for_previous_decision = (self.current_step - 1) - self.window_size
+                date_index_for_current_decision = self.current_step - self.window_size
+
+                if (hasattr(self, 'trading_dates') and self.trading_dates is not None and
+                    0 <= date_index_for_current_decision < len(self.trading_dates)):
+                    current_date = self.trading_dates[date_index_for_current_decision]
+                    # Ensure it's a datetime object before formatting
+                    if isinstance(current_date, (pd.Timestamp, datetime)):
+                        info['Date'] = current_date.strftime('%Y-%m-%d')
+                    else:
+                        # If it's already a string or other format, try to parse and format
+                        info['Date'] = pd.to_datetime(current_date).strftime('%Y-%m-%d')
+                    logging.debug(f"STE Module - Env Step - Set Date info to: {info['Date']} for step {self.current_step}")
+                else:
+                    if not hasattr(self, 'trading_dates') or self.trading_dates is None:
+                        logging.debug("STE Module - Env Step - 'trading_dates' is not available or is None. Date info will be None.")
+                    elif not (0 <= date_index_for_current_decision < len(self.trading_dates)):
+                        logging.debug(f"STE Module - Env Step - Date index {date_index_for_current_decision} is out of bounds "
+                                    f"[0, {len(self.trading_dates)-1}] for trading_dates (len={len(self.trading_dates)}). Date info will be None.")
+
+            except (IndexError, TypeError, ValueError, AttributeError) as e:
+                logging.warning(f"STE Module - Env Step - Error formatting date at internal index {self.current_step - self.window_size}: {e}")
                 info['Date'] = None
-                if not hasattr(self, '_date_warning_logged'):
-                    logging.warning("STE Module - trading_dates not available or mismatched, Date info will be None.")
-                    self._date_warning_logged = True
+
             logging.info(f"STE Module - Env Step - Info: Total Asset={info['Total Asset']:.2f}, Reward={info['Reward']:.6f}")
-            # Return Gym-compatible tuples
+
+            # Return Gym-compatible tuple
             return self._get_states(), reward, done, truncated, info
 
         except Exception as e:
-            logging.error(f"STE Module - Env step error: {e}", exc_info=True) # Add exc_info for stack trace
+            logging.error(f"STE Module - Env step error: {e}", exc_info=True)  # Add exc_info for stack trace
             # Return a valid state, zero reward, done=True to terminate episode on error
             dummy_state = np.zeros(self.state_dim, dtype=np.float32)
-            return dummy_state, 0.0, True, False, {'error': str(e)}
+            return dummy_state, 0.0, True, False, {'Error': str(e)}
     
     def _get_states(self):
         """
@@ -1769,7 +2074,7 @@ class StockTradingEnv(gym.Env):
                 f"STE Module - _get_portfolio_return - Previous asset: {previous_asset:.4f}, "
                 f"Current asset: {self.total_asset:.4f}, Calculated Return: {return_value:.6f}"
             )
-            return return_value
+            return np.float32(return_value)
         except Exception as e:
             logging.error(f"STE Module - _get_portfolio_return - Unexpected error: {e}", exc_info=True)
             # Return a neutral return as a robust fallback in case of any calculation error

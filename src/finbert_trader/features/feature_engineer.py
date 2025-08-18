@@ -630,20 +630,27 @@ class FeatureEngineer:
         States shaped as (window_size, features_dim_per_symbol) via horizontal concat of per-symbol features; handles NaN filling and index setting.
         Updates feature categories for trading env inheritance; yields list of dicts for downstream splitting and environment use.
 
+        For 'test' data_type, this function now creates a SINGLE, long episode covering the entire (dynamically updated) test period
+        to enable sequential backtesting. The episode's 'start_date' is set to the first date of the (filtered) fused_df, which
+        should match the dynamically updated self.config.test_start_date.
+
         Parameters
         ----------
         fused_df : pd.DataFrame
-            Fused DataFrame with features, indexed by Date if not already.
+            Fused DataFrame with features, indexed by Date. This df should already be filtered
+            according to the (potentially dynamically updated) start/end dates for the given data_type.
         symbols : list of str, optional
             List of symbols to process; defaults to self.config.symbols.
+        data_type : str, optional
+            Type of data being prepared ('train', 'valid', 'test'). Affects episode generation logic. Default is 'train'.
 
         Returns
         -------
         list of dict
             Each dict contains:
-            - 'start_date': pd.Timestamp - Start date of the window.
-            - 'states': np.ndarray - 2D array (window_size, n_symbols * features_dim_per_symbol) of concatenated features.
-            - 'targets': np.ndarray - 2D array (prediction_days, n_symbols) of future Adj_Close values.
+            - 'start_date': pd.Timestamp - Start date of the window/episode.
+            - 'states': np.ndarray - 2D array (window_size/episode_length, n_symbols * features_dim_per_symbol) of concatenated features.
+            - 'targets': np.ndarray - 2D array (prediction_days, n_symbols) of future Adj_Close values (or full sequence for long episode).
 
         Notes
         -----
@@ -653,6 +660,7 @@ class FeatureEngineer:
         - Concatenates per-symbol windows along axis=1 for unified 2D states.
         - Targets extracted as matrix for multi-symbol prediction.
         - Logs prepared RL data count; assumes symbols ordered for consistent concat.
+        - For 'test' mode, generates one long episode starting from the first available date in fused_df.
         """
         logging.debug(f"FE Module - prepare_rl_data - Debug info:")
         logging.debug(f"  fused_df shape: {fused_df.shape}")
@@ -673,12 +681,10 @@ class FeatureEngineer:
         if 'Date' in fused_df.columns:
             fused_df = fused_df.set_index('Date')  # Set Date as index to exclude from features
         logging.info(f"FE Module - prepare_rl_data - Feature Columns: {fused_df.columns.tolist()}")  # Log feature columns for debugging
-
-        logging.info(f"FE Module - prepare_rl_data - Columns before update features_categories: {fused_df.columns.tolist()}")
         # Ensure fused_df columns order follows Adj_Close_symbol1, indicators_symbol1, senti/risk_score_symbol1, Adj_Close_symbol2, ......
         fused_df = fused_df[[col for symbol in symbols for col in fused_df.columns if symbol in col]]
         logging.info(f"FE Module - prepare_rl_data - Columns after reorder: {fused_df.columns.tolist()}")
-        
+        # Feature and threshold updates (logic remains the same)
         if self.config._features_initialized:
             logging.info(f"FE Module - prepare_rl_data - Skipping features/threshold update "
                         f"data_type={data_type} because they are loaded from cache.")
@@ -695,77 +701,128 @@ class FeatureEngineer:
 
         rl_data = []  # Initialize list to store RL data dicts
         dates = fused_df.index  # Extract dates for start_date assignment
+        data_length = len(fused_df)
 
-        min_required_steps = 30    # Set min step for each episode
-        min_window_size = max(self.W_f * self.window_size + self.W_e, self.window_size + min_required_steps) # More winsow for explore
-        logging.info(f"FE Module - prepare_rl_data - Data length: {len(fused_df)}")
-        logging.info(f"FE Module - prepare_rl_data - Window size: {self.window_size}")
-        logging.info(f"FE Module - prepare_rl_data - Configured episode length: {self.W_f * self.window_size + self.W_e}")
-        logging.info(f"FE Module - prepare_rl_data - Final min episode length: {min_window_size}")
+        if data_type == 'test':
+            logging.info(f"FE Module - prepare_rl_data - Test mode detected. Preparing single long episode.")
 
-        if len(fused_df) < min_window_size:
-            # valid/test data with small length，implement dynamic episode length
-            actual_window_size = self.window_size if len(fused_df) - self.window_size > min_required_steps else len(fused_df) // 2
-            logging.warning(f"FE Module - prepare_rl_data - Insufficient data, adjusting episode length: {min_window_size} -> {actual_window_size}")
-        else:
-            actual_window_size = min_window_size if len(fused_df) - min_window_size > min_required_steps else self.window_size
-        
-        # Get prediction days from config (default to 3 days)
-        prediction_days = self.prediction_days
-        logging.info(f"FE Module - prepare_rl_data - Prediction days: {prediction_days}")
-        max_trading_steps = len(fused_df) - actual_window_size - prediction_days + 1
-        
-        if max_trading_steps <= 0:
-            logging.error(f"FE Module - prepare_rl_data - No valid episodes can be created")
-            return []
-        
-        # Limit episodes to prevent excessive memory usage
-        num_episodes = min(max_trading_steps, 200)
-        for i in range(num_episodes):    # in case too much step
-            try:
-                # # Boundary check for current episode
-                if i + actual_window_size + prediction_days > len(fused_df):
-                    logging.debug(f"FE Module - prepare_rl_data - Skipping episode {i} due to boundary issues")
-                    break
+            # Check data length
+            if data_length <= self.window_size + self.prediction_days:
+                logging.error(f"FE Module - prepare_rl_data - Test data too short. Length: {data_length}, "
+                            f"Required: window_size({self.window_size}) + prediction_days({self.prediction_days}) + 1")
+                return []
 
-                # Sliding window loop: Generate windows leaving room for prediction_days
-                window_parts = []  # List to collect per-symbol window arrays for concat
-                for symbol in symbols:
-                    symbol_cols = self.config.features_all[symbol]  # Get all features for this symbol from config
-                    symbol_window = fused_df.iloc[i:i+actual_window_size][symbol_cols].values  # Extract (window_size, features_dim_per_symbol) array
-                    window_parts.append(symbol_window)  # Append for later concat
+            # Prepare long episode with full data for test mode
+            actual_window_size = data_length - self.prediction_days 
+            logging.info(f"FE Module - prepare_rl_data (Test) - Using full data length for window. "
+                        f"Data length: {data_length}, Actual window size: {actual_window_size}, Prediction days: {self.prediction_days}")
 
-                # Concatenate all symbol windows along axis=1 to form 2D states (window_size, n_symbols * features_dim_per_symbol)
-                states = np.concatenate(window_parts, axis=1)  # (actual_window_size, total_features)
+            # Only one episode
+            i = 0
+            # Generate states
+            window_parts = []
+            for symbol in symbols:
+                symbol_cols = self.config.features_all[symbol]
+                symbol_window = fused_df.iloc[i:i+actual_window_size][symbol_cols].values 
+                window_parts.append(symbol_window)
 
-                # Validate states shape
-                if states.shape[0] != actual_window_size:
-                    logging.warning(f"FE Module - Episode {i} has inconsistent shape: {states.shape} vs {actual_window_size}")
-                    continue
-                
-                # Targets - Generate target for each episode
-                target_cols = [f"Adj_Close_{symbol}" for symbol in symbols]
-                # Construct targets: future prediction_days' adjusted close prices
-                episode_end = i + actual_window_size
-                targets = fused_df.iloc[episode_end:episode_end + prediction_days][target_cols].values  # shape: (prediction_days, n_symbols)
+            states = np.concatenate(window_parts, axis=1) # Shape: (actual_window_size, total_features)
 
-                # Validate targets shape
-                if targets.shape[0] != prediction_days:
-                    logging.warning(f"FE Module - Episode {i} has insufficient targets: {targets.shape[0]} vs {prediction_days}")
-                    continue
-
-                rl_data.append({
-                    'start_date': dates[i] if i < len(dates) else None,
-                    'states': states,   # shape: (actual_window_size, total_features)
-                    'targets': targets  # shape: (prediction_days, n_symbols)
-                })
+            # Generate targets
+            target_cols = [f"Adj_Close_{symbol}" for symbol in symbols]
+            episode_end = i + actual_window_size
+            # Set targets range
+            targets = fused_df.iloc[episode_end:episode_end + self.prediction_days][target_cols].values # Shape: (prediction_days, n_symbols)
             
-            except Exception as e:
-                logging.error(f"FE Module - prepare_rl_data - Error processing episode {i}: {e}")
+            # Check targets length
+            if targets.shape[0] != self.prediction_days:
+                logging.warning(f"FE Module - prepare_rl_data (Test) - Targets shape mismatch. Expected {self.prediction_days}, got {targets.shape[0]}. "
+                                f"Using available targets.")
+                # Fallback
+                if targets.shape[0] == 0:
+                    targets = np.empty((0, len(symbols))) 
+            # Set fused_df index[0] as start_date
+            episode_start_date = dates[i] if len(dates) > i else None
+            logging.info(f"FE Module - prepare_rl_data (Test) - Long episode start_date set to: {episode_start_date} "
+                        f"(should match dynamically updated self.config.test_start_date)")
 
-        logging.info(f"FE Module - prepare_rl_data - Prepared {len(rl_data)} RL episodes")
-        if rl_data:
-            logging.info(f"FE Module - prepare_rl_data - Sample episode shapes - states: {rl_data[0]['states'].shape}, targets: {rl_data[0]['targets'].shape}")
+            rl_data.append({
+                'start_date': episode_start_date,
+                'states': states,   # shape: (actual_window_size, total_features)
+                'targets': targets  # shape: (prediction_days, n_symbols)
+            })
+            logging.info(f"FE Module - prepare_rl_data (Test) - Prepared 1 long RL episode. "
+                        f"States shape: {states.shape}, Targets shape: {targets.shape}")
+
+        else:
+            logging.info(f"FE Module - prepare_rl_data - Train/Valid mode detected. Preparing multiple episodes.")
+            min_required_steps = 30    # Set min step for each episode
+            min_window_size = max(self.W_f * self.window_size + self.W_e, self.window_size + min_required_steps) # More winsow for explore
+            logging.info(f"FE Module - prepare_rl_data (Train/valid) - Data length: {len(fused_df)}")
+            logging.info(f"FE Module - prepare_rl_data (Train/valid) - Configured episode length: {self.W_f * self.window_size + self.W_e}")
+            logging.info(f"FE Module - prepare_rl_data (Train/valid) - Final min episode length: {min_window_size}")
+
+            if data_length < min_window_size:
+                actual_window_size = self.window_size if data_length - self.window_size > min_required_steps else data_length // 2
+                logging.warning(f"FE Module - prepare_rl_data (Train/Valid) - Insufficient data, adjusting episode length: {min_window_size} -> {actual_window_size}")
+            else:
+                actual_window_size = min_window_size if data_length - min_window_size > min_required_steps else self.window_size
+            
+            prediction_days = self.prediction_days
+            logging.info(f"FE Module - prepare_rl_data (Train/Valid) - Prediction days: {prediction_days}")
+            max_trading_steps = data_length - actual_window_size - prediction_days + 1
+            
+            if max_trading_steps <= 0:
+                logging.error(f"FE Module - prepare_rl_data - No valid episodes can be created")
+                return []
+            
+            # Limit episodes to prevent excessive memory usage
+            num_episodes = min(max_trading_steps, 200)
+            for i in range(num_episodes):    # in case too much step
+                try:
+                    # # Boundary check for current episode
+                    if i + actual_window_size + prediction_days > len(fused_df):
+                        logging.debug(f"FE Module - prepare_rl_data - Skipping episode {i} due to boundary issues")
+                        break
+
+                    # Sliding window loop: Generate windows leaving room for prediction_days
+                    window_parts = []  # List to collect per-symbol window arrays for concat
+                    for symbol in symbols:
+                        symbol_cols = self.config.features_all[symbol]  # Get all features for this symbol from config
+                        symbol_window = fused_df.iloc[i:i+actual_window_size][symbol_cols].values  # Extract (window_size, features_dim_per_symbol) array
+                        window_parts.append(symbol_window)  # Append for later concat
+
+                    # Concatenate all symbol windows along axis=1 to form 2D states (window_size, n_symbols * features_dim_per_symbol)
+                    states = np.concatenate(window_parts, axis=1)  # (actual_window_size, total_features)
+
+                    # Validate states shape
+                    if states.shape[0] != actual_window_size:
+                        logging.warning(f"FE Module - Episode {i} has inconsistent shape: {states.shape} vs {actual_window_size}")
+                        continue
+                    
+                    # Targets - Generate target for each episode
+                    target_cols = [f"Adj_Close_{symbol}" for symbol in symbols]
+                    # Construct targets: future prediction_days' adjusted close prices
+                    episode_end = i + actual_window_size
+                    targets = fused_df.iloc[episode_end:episode_end + prediction_days][target_cols].values  # shape: (prediction_days, n_symbols)
+
+                    # Validate targets shape
+                    if targets.shape[0] != prediction_days:
+                        logging.warning(f"FE Module - Episode {i} has insufficient targets: {targets.shape[0]} vs {prediction_days}")
+                        continue
+
+                    rl_data.append({
+                        'start_date': dates[i] if i < len(dates) else None,
+                        'states': states,   # shape: (actual_window_size, total_features)
+                        'targets': targets  # shape: (prediction_days, n_symbols)
+                    })
+                
+                except Exception as e:
+                    logging.error(f"FE Module - prepare_rl_data (Train/Valid) - Error processing episode {i}: {e}")
+
+            logging.info(f"FE Module - prepare_rl_data (Train/Valid) - Prepared {len(rl_data)} RL episodes")
+            if rl_data and len(rl_data) > 0:
+                logging.info(f"FE Module - prepare_rl_data (Train/Valid) - Sample episode shapes - states: {rl_data[0]['states'].shape}, targets: {rl_data[0]['targets'].shape}")
 
         return rl_data  # Return list of RL data dicts
 
@@ -1141,6 +1198,49 @@ class FeatureEngineer:
         except Exception as e:
             logging.warning(f"FE Module - load_exper_data_dict_npz - Load exper_data_dict failed: {e}")
         return exper_data_dict
+    
+    def _update_start_end_date(self, data, data_type='train'):
+        """
+        Dynamically updates the start and end dates for a given data split within the self.config object.
+        This ensures that downstream modules use the actual date range of the data, not the initially configured calendar dates.
+
+        Parameters
+        ----------
+        data : pd.DataFrame
+            The DataFrame representing the data split (train/valid/test), expected to have a DatetimeIndex.
+        data_type : str, optional
+            The type of data split ('train', 'valid', 'test'). Default is 'train'.
+
+        Logs
+        ----
+        - Info: When dates are successfully updated.
+        - Warning: If an error occurs during the update process.
+        """
+        try:
+            if data.empty:
+                 logging.warning(f"FE Module - _update_start_end_date - Data for {data_type} is empty. Skipping date update.")
+                 return
+
+            actual_start_date = data['Date'].iloc[0]
+            actual_end_date = data['Date'].iloc[-1]
+            
+            logging.info(f"FE Module - _update_start_end_date - Begin to update {data_type} start / end date")
+            
+            if data_type == 'train':
+                self.config.train_start_date = actual_start_date
+                self.config.train_end_date = actual_end_date
+            elif data_type == 'valid':
+                self.config.valid_start_date = actual_start_date
+                self.config.valid_end_date = actual_end_date
+            elif data_type == 'test':
+                self.config.test_start_date = actual_start_date
+                self.config.test_end_date = actual_end_date
+                logging.info(f"FE Module - _update_start_end_date - Test start time renew: {self.config.test_start_date}, end time renew: {self.config.test_end_date}")
+            
+            logging.info(f"FE Module - _update_start_end_date - Successfully updated {data_type} start ({actual_start_date}) / end ({actual_end_date}) date")
+        except Exception as e:
+            logging.warning(f"FE Module - _update_start_end_date - Failed to update {data_type} start / end date: {e}", exc_info=True) # Add exc_info for debugging
+
 
     def _update_senti_risk_threshold(self, fused_df, data_type=None):
         """
@@ -1406,7 +1506,11 @@ class FeatureEngineer:
                 if train_df.empty or valid_df.empty or test_df.empty:
                     raise ValueError(f"Empty split for mode {mode}")    
                 logging.info(f"FE Module - generate_experiment_data - Split for mode {mode}: train {len(train_df)}, valid {len(valid_df)}, test {len(test_df)}")
-
+                # Update data date range immediatly
+                self._update_start_end_date(data=train_df, data_type='train')
+                self._update_start_end_date(data=valid_df, data_type='valid')
+                self._update_start_end_date(data=test_df, data_type='test')
+                
                 # Smooth features before normalization
                 logging.info(f"FE Module - generate_experiment_data - Applying feature smoothing with window size {self.smooth_window}")
                 train_df = self.smooth_features(train_df)

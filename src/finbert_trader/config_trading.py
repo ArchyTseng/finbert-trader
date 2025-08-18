@@ -151,9 +151,6 @@ class ConfigTrading:
                              'use_risk_factor',
                              'use_senti_features',
                              'use_risk_features',
-                            #  'use_senti_threshold',
-                            #  'use_risk_threshold',
-                            #  'use_dynamic_infusion',  
                              'use_dynamic_ind_threshold']
             for param in shared_params:
                 if hasattr(upstream_config, param):  # Check if param exists in upstream
