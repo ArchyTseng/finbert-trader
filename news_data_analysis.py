@@ -63,13 +63,15 @@ custom_setup_config = {
     'valid_end_date': '2021-12-31',
     'test_start_date': '2022-01-01',
     'test_end_date': '2023-12-31',
-    'use_symbol_name': False,
+    'force_process_news': True,
+    'use_symbol_name': True,
     'timeperiods': 30,
 }
 
 # Initial config_setup for experiment
 config_setup = ConfigSetup(custom_setup_config)
-symbols_list = config_setup.nasdaq_100_tickers_july_17_2023
+# symbols_list = config_setup.nasdaq_100_tickers_july_17_2023   # If need to select target symbols from a big group, use this line.
+symbols_list = ['AAPL', 'GILD'] # Use to expose news frequency comparison
 print("Configuration initialized successfully!")
 print(f"Symbols: {symbols_list}")
 print(f"Time period: {config_setup.start} to {config_setup.end}")
@@ -102,8 +104,8 @@ selected_symbols, coverage_stats, plot_paths = select_stocks_by_news_coverage(
     config=config_setup,
     symbols_list=config_setup.symbols,
     top_n=None,  # Select top_n symbols with highest news coverage
-    min_news_count=5000,  # minimum news data if top_n is None
-    min_coverage_days=2500, # minimum news coverage period if top_n is None
+    min_news_count=500,  # minimum news data if top_n is None
+    min_coverage_days=100, # minimum news coverage period if top_n is None
     news_df=news_df,  
 )
 

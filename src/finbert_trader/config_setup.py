@@ -329,7 +329,7 @@ class ConfigSetup:
                 final_filename = f"{prefix}_{self.min_count}news_{self.min_days}days_{path_suffix}"
             else:
                 final_filename = f"{prefix}_{path_suffix}"
-            path = os.path.join(self.CONFIG_CACHE_DIR, final_filename)
+            path = os.path.join(self.FUSED_DATA_DIR, final_filename)
             with open(path, 'w') as f:
                 json.dump(data, f, indent=4)
             logging.debug(f"CS Module - save_selected_symbols_cache - [ConfigSetup] Saved selected symbols to {path}")

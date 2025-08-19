@@ -130,15 +130,15 @@ print(f"Time period: {config_setup.start} to {config_setup.end}")
 
 # %%
 """
-Step 2: Run Quick Experiment 1 - Basic Parameter Validation
-Test basic pipeline functionality with minimal parameters
+Step 2: Run Quick Experiment 1 - Basic Benchmark
+No indicator signal strategy, No sent/risk factor, Basic Benchmark
 """
 
 # Initial experiment_scheme
 experiment_scheme = ExperimentScheme(config_setup)
 
-print("Running Quick Experiment 1: Basic Parameter Validation")
-print("This will test basic pipeline functionality...")
+print("Running Quick Experiment 1: Basic Benchmark")
+print("This will test basic pipeline performance...")
 print(f"Experiment symbols: {experiment_scheme.symbols}")
 print(f"Filter indicators: {experiment_scheme.filter_ind}")
 
@@ -166,13 +166,13 @@ if 'PPO' in quick_exper_1_results:
 
 # %%
 """
-Step 3: Run Quick Experiment 2 - Reward Function Optimization
-Test enhanced reward signals and learning efficiency
+Step 3: Run Quick Experiment 2 - Indicator Benchmark
+Use indicator signal strategy. No senti/risk factor. Indicator Benchmark
 """
 
 print("\n" + "="*50)
-print("Running Quick Experiment 2: Reward Function Optimization")
-print("This will test enhanced reward function parameters...")
+print("Running Quick Experiment 2: Indicator Benchmark")
+print("This will test indicator signal strategy performance...")
 
 # Run quick experiment 2
 quick_exper_2_results = experiment_scheme.quick_exper_2()
@@ -196,16 +196,47 @@ if 'PPO' in quick_exper_1_results and 'PPO' in quick_exper_2_results:
 
 # %%
 """
-Step 4: Run Quick Experiment 3 - RL Hyperparameter Tuning
-Test optimized RL algorithm parameters
+Step 4: Run Quick Experiment 3 - Sentiment Benchmark
+No indicator signal strategy. Use senti/rik factor. Sentiment Benchmark
 """
 
 print("\n" + "="*50)
-print("Running Quick Experiment 3: RL Hyperparameter Tuning")
-print("This will test optimized PPO parameters...")
+print("Running Quick Experiment 2: Sentiment Benchmark")
+print("This will test sentiment/risk factor performance...")
+
+# Run quick experiment 2
+quick_exper_3_results = experiment_scheme.quick_exper_2()
+
+print("Quick Experiment 3 completed!")
+
+# Compare two experiment results
+if 'PPO' in quick_exper_1_results and 'PPO' in quick_exper_2_results and 'PPO' in quick_exper_3_results :
+    metrics_1 = quick_exper_1_results['PPO'].get('metrics', {})
+    metrics_2 = quick_exper_2_results['PPO'].get('metrics', {})
+    metrics_3 = quick_exper_3_results['PPO'].get('metrics', {})
+    
+    print("\nComparison between Quick Experiment 1 and 2:")
+    print(f"  CAGR: {metrics_1.get('cagr', 0)*100:.2f}% -> {metrics_2.get('cagr', 0)*100:.2f}%")
+    print(f"  Sharpe Ratio: {metrics_1.get('sharpe_ratio', 0):.4f} -> {metrics_2.get('sharpe_ratio', 0):.4f}")
+    print(f"  Max Drawdown: {metrics_1.get('max_drawdown', 0)*100:.2f}% -> {metrics_2.get('max_drawdown', 0)*100:.2f}%")
+    
+    # Benchmark comparison
+    if 'benchmark_cagr' in metrics_1 and 'benchmark_cagr' in metrics_2:
+        print(f"  Benchmark CAGR: {metrics_1.get('benchmark_cagr', 0)*100:.2f}% -> {metrics_2.get('benchmark_cagr', 0)*100:.2f}%")
+        print(f"  Information Ratio: {metrics_1.get('information_ratio', 0):.4f} -> {metrics_2.get('information_ratio', 0):.4f}")
+
+# %%
+"""
+Step 4: Run Quick Experiment 4 - Full multi-factor Experiment
+Use indicator signal. Use senti/risk factor. Full multi-factor Experiment
+"""
+
+print("\n" + "="*50)
+print("Running Quick Experiment 3: Full multi-factor Experiment")
+print("This will test multi-factor performance...")
 
 # Run Experiment 3
-quick_exper_3_results = experiment_scheme.quick_exper_3()
+quick_exper_4_results = experiment_scheme.quick_exper_4()
 
 print("Quick Experiment 3 completed!")
 
@@ -214,7 +245,8 @@ print("\nComparison of all three quick experiments:")
 experiments = [
     ('Quick Exp 1', quick_exper_1_results),
     ('Quick Exp 2', quick_exper_2_results),
-    ('Quick Exp 3', quick_exper_3_results)
+    ('Quick Exp 3', quick_exper_3_results),
+    ('Quick Exp 4', quick_exper_4_results)
 ]
 
 for exp_name, exp_results in experiments:
@@ -329,7 +361,8 @@ best_metrics = None
 experiments = [
     ('Quick Experiment 1', quick_exper_1_results),
     ('Quick Experiment 2', quick_exper_2_results),
-    ('Quick Experiment 3', quick_exper_3_results)
+    ('Quick Experiment 3', quick_exper_3_results),
+    ('Quick Experiment 4', quick_exper_4_results),
 ]
 
 for exp_name, exp_results in experiments:

@@ -615,7 +615,6 @@ class ExperimentScheme:
             'infusion_strength': 0.05,
             'commission_rate': 0.0005,
             'cvar_factor': 0.1,  # Enhanced CVaR weighting
-            'risk_aversion': 0.1
         }
         
         model_params = {
@@ -678,7 +677,7 @@ class ExperimentScheme:
             'test_end_date': self.config.test_end_date,
             # Config exper_mode, extendable in ConfigSetup
             'exper_mode': {
-                'rl_algorithm': ['PPO', 'CPPO']  # Focus on top performers
+                'rl_algorithm': ['PPO', 'CPPO', 'A2C']  # Focus on top performers
             },
             # Config states window size for downstream pipeline
             'window_size': 50,  # Smaller window for faster processing
@@ -730,7 +729,6 @@ class ExperimentScheme:
             'infusion_strength': 0.1,   # Maximum sentiment/risk influence
             'commission_rate': 0.0001,  # Realistic low costs
             'cvar_factor': 0.15,        # Strong risk management
-            'risk_aversion': 0.15,
             'slippage_rate': 0.0005     # Realistic slippage
         }
         
@@ -1179,6 +1177,7 @@ class ExperimentScheme:
             'quick_exper_1': self.quick_exper_1,
             'quick_exper_2': self.quick_exper_2,
             'quick_exper_3': self.quick_exper_3,
+            'quick_exper_4': self.quick_exper_4,
             'full_exper_1': self.full_exper_1,
             'full_exper_2': self.full_exper_2,
             'full_exper_3': self.full_exper_3
@@ -1251,7 +1250,7 @@ def run_quick_experiment_sequence(config: ConfigSetup, symbols: List[str] = None
     """
     scheme = ExperimentScheme(config)
     return scheme.run_experiment_sequence(
-        ['quick_exper_1', 'quick_exper_2', 'quick_exper_3'], 
+        ['quick_exper_1', 'quick_exper_2', 'quick_exper_3', 'quick_exper_4'], 
         symbols
     )
 
