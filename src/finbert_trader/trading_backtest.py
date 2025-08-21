@@ -215,51 +215,46 @@ class TradingBacktest:
                 state = next_state
                 step_count += 1
 
-            # *************************************************************************
-            # ************** 核心修改区域：数据对齐与结果构建 ***************************
-            # *************************************************************************
-
-            # --- 1. 从 test_env 获取完整的、对齐的资产和日期信息 ---
+            # Data alignment and build results
+            # Get entire data with asset and date information from test_env
             logging.info("TB Module - Backtest loop finished. Starting data alignment and result compilation.")
 
-            # a. 获取环境记录的完整资产历史和交易日期
+            # Get asset memory and trading dates
             full_asset_memory = getattr(test_env, 'asset_memory', [])
             full_trading_dates = getattr(test_env, 'trading_dates', [])
             
             logging.info(f"TB Module - Collected full asset memory length: {len(full_asset_memory)}")
             logging.info(f"TB Module - Collected full trading dates length: {len(full_trading_dates)}")
 
-            # --- 2. 精确计算实际执行的交易步数 ---
-            # 实际执行的交易步数 = 环境执行 step 的次数
-            # 这等于 len(asset_memory) - 1，因为 asset_memory[0] 是在 reset 时记录的初始资金
+            # Calculate EXACT trading steps
+            # Actually trading step = Environment executed steps = len(asset_memory) - 1 (asset_memory[0] records initial asset)
             actual_executed_steps = len(full_asset_memory) - 1 if len(full_asset_memory) > 0 else 0
             logging.info(f"TB Module - Determined actual executed trading steps: {actual_executed_steps}")
 
-            # --- 3. 基于实际执行步数，严格对齐日期和资产 ---
-            # a. 获取策略资产值 (不包括初始资金)
+            # Align asset and dates based on actually executed steps
+            # Get strategy asset (without initial asset)
             strategy_asset_values_raw = full_asset_memory[1:] if len(full_asset_memory) > 1 else []
             logging.debug(f"TB Module - Raw strategy asset values count (after initial): {len(strategy_asset_values_raw)}")
 
-            # b. 获取与实际执行步数对应的日期
-            #    确保我们只取前 actual_executed_steps 个日期
+            # Get dates of executed steps
+            # Get actual_executed_steps dates
             if full_trading_dates and len(full_trading_dates) >= actual_executed_steps:
                 aligned_trading_dates_final = full_trading_dates[:actual_executed_steps]
                 logging.debug(f"TB Module - Truncated trading dates to match executed steps. New count: {len(aligned_trading_dates_final)}")
             elif full_trading_dates:
-                # 防御性检查：如果预生成的日期少于实际执行的步数（理论上不应发生）
+                # If trading dates less than executed steps
                 logging.warning(f"TB Module - Pre-generated dates ({len(full_trading_dates)}) < executed steps ({actual_executed_steps}). "
                                 f"Using all available dates ({len(full_trading_dates)}). Adjusting asset count.")
                 aligned_trading_dates_final = full_trading_dates
-                # 调整资产列表的长度以匹配日期数量
+                # Adjust length of asset list to align with dates length
                 strategy_asset_values_raw = strategy_asset_values_raw[:len(aligned_trading_dates_final)]
-                actual_executed_steps = len(aligned_trading_dates_final) # 同步更新步数
+                actual_executed_steps = len(aligned_trading_dates_final) # Update steps
             else:
-                # 没有日期信息
+                # If no dates information
                 aligned_trading_dates_final = []
                 logging.warning("TB Module - No trading dates available from env.")
 
-            # c. 最终对齐检查
-            #    在此步骤后，aligned_trading_dates_final 和 strategy_asset_values_raw 的长度都应等于 actual_executed_steps
+            # Final chekt
             final_asset_count = len(strategy_asset_values_raw)
             final_date_count = len(aligned_trading_dates_final)
             
@@ -268,30 +263,29 @@ class TradingBacktest:
                                 f"Assets ({final_asset_count}) vs Dates ({final_date_count}). "
                                 f"Using minimum length to force strict alignment.")
                 min_final_length = min(final_asset_count, final_date_count)
-                # 强制截取到相同长度，确保严格对齐
+                # Force clipping to same length
                 final_aligned_assets = strategy_asset_values_raw[:min_final_length]
                 final_aligned_dates = aligned_trading_dates_final[:min_final_length]
             else:
-                # 长度已经匹配
+                # If same length
                 final_aligned_assets = strategy_asset_values_raw
                 final_aligned_dates = aligned_trading_dates_final
 
             logging.info(f"TB Module - Final aligned data - Assets: {len(final_aligned_assets)}, Dates: {len(final_aligned_dates)}")
 
-            # --- 4. 创建带有日期索引的策略资产 Series ---
-            # 这为后续的可视化和分析提供了极大的便利，因为日期已经对齐
+            # Create strategy asset Series with date index
             if (final_aligned_dates and final_aligned_assets and 
                 len(final_aligned_dates) == len(final_aligned_assets)):
                 try:
-                    # 创建 Pandas Series，索引为日期，确保长度严格匹配
+                    # Create Pandas Series with date index, ensuring length match
                     strategy_assets_series = pd.Series(
                         final_aligned_assets, 
                         index=final_aligned_dates, 
-                        dtype=np.float32 # 与管道数据类型一致
+                        dtype=np.float32
                     )
-                    # 确保索引是 DatetimeIndex (如果 final_aligned_dates 已经是 Timestamp 列表，这步通常不需要)
+                    # Ensure index is DatetimeIndex
                     # strategy_assets_series.index = pd.to_datetime(strategy_assets_series.index) 
-                    strategy_assets_series.sort_index(inplace=True) # 确保日期排序
+                    strategy_assets_series.sort_index(inplace=True) # Ensure sorted
                     logging.info(f"TB Module - Successfully created strategy asset series with date index. "
                                 f"Length: {len(strategy_assets_series)}, "
                                 f"Date range: {strategy_assets_series.index.min()} to {strategy_assets_series.index.max()}")
@@ -302,33 +296,27 @@ class TradingBacktest:
                 logging.warning("TB Module - Could not create strategy asset series due to missing or mismatched final data.")
                 strategy_assets_series = pd.Series(dtype=np.float32) # 返回空的 Series
 
-            # *************************************************************************
-            # ************** 结束核心修改区域 ***************************************
-            # *************************************************************************
-
             # Calculate benchmark returns for metrics
             benchmark_returns_for_metrics = None  # Pass to _compute_metrics()
             benchmark_prices_with_date = None  # For visualization based on Date index
 
-            # --- 5. 获取并处理基准数据 ---
+            # Get benchmark data
             if use_benchmark:
                 try:
                     # Fetch Nasdaq-100 Benchmark data
-                    # _get_nasdaq100_benchmark 现在应该能正确获取指定日期范围的数据
                     benchmark_prices_with_date = self._get_nasdaq100_benchmark()
                     if benchmark_prices_with_date is not None and not benchmark_prices_with_date.empty:
-                        # 确保基准数据索引是日期类型并已排序
+                        # Ensure benchmark data with date index
                         benchmark_prices_with_date.index = pd.to_datetime(benchmark_prices_with_date.index)
                         benchmark_prices_with_date.sort_index(inplace=True)
 
-                        # --- 6. 与策略资产日期范围进行精确对齐 ---
+                        # Align strategy asset dates range with benchmark
                         if not strategy_assets_series.empty:
-                            # 获取策略资产的日期范围
+                            # Get strategy asset dates range
                             strategy_start_date = strategy_assets_series.index.min()
                             strategy_end_date = strategy_assets_series.index.max()
 
-                            # 使用策略日期范围裁剪基准数据
-                            # 这确保了两者覆盖相同的日期
+                            # Use strategy asset dates range to clip benchmark
                             benchmark_prices_with_date = benchmark_prices_with_date[
                                 (benchmark_prices_with_date.index >= strategy_start_date) &
                                 (benchmark_prices_with_date.index <= strategy_end_date)
@@ -343,7 +331,7 @@ class TradingBacktest:
                             else:
                                 logging.warning("TB Module - Benchmark data is empty after alignment with strategy dates.")
                         else:
-                            # 如果没有策略资产数据，无法对齐，按原逻辑处理
+                            # Fallback if no strategy data
                             benchmark_returns_for_metrics = self._calculate_benchmark_returns(benchmark_prices_with_date)
                             logging.info(f"TB Module - Benchmark data fetched (no strategy alignment), "
                                         f"{len(benchmark_returns_for_metrics)} returns calculated.")
@@ -357,50 +345,49 @@ class TradingBacktest:
             logging.info("TB Module - Backtest completed")
             self.metrics = metrics
 
-            # --- 7. 编译最终的 results 字典 ---
-            # 确保包含所有必要的、对齐好的数据
+            # Update results dict
+
             results = {
                 'metrics': metrics,
                 'trade_history': self.trade_history if record_trades else [],
-                'asset_history': self.asset_history if record_trades else [], # 保留原始记录列表
+                'asset_history': self.asset_history if record_trades else [], # Keep original asset history
                 'position_history': self.position_history if record_trades else [],
                 'action_history': self.action_history if record_trades else [],
                 'total_steps': step_count,
-                # --- 更新 episode_length 为实际的交易决策次数 ---
-                # test_env.asset_memory 包含初始资金 + 每次决策后的资产
-                # 所以交易决策次数是 len(asset_memory) - 1
-                'episode_length': actual_executed_steps, # 使用我们计算的实际步数
-                # --- 新增 key: 对齐的策略资产 Series ---
-                'strategy_assets_with_date': strategy_assets_series, # 新增
-                # --- 更新基准数据 ---
-                'benchmark_prices_with_date': benchmark_prices_with_date, # 更新为可能已对齐的
-                # --- 更新基准回报 ---
-                'benchmark_returns': benchmark_returns_for_metrics # 更新为基于对齐数据计算的
+                # Update episode_length actually trading times
+                # test_env.asset_memory includes initial asset and the asset after trading
+                # Total trading times = len(asset_memory) - 1
+                'episode_length': actual_executed_steps, 
+                # Key update: Pandas Series aligned strategy assets with date index
+                'strategy_assets_with_date': strategy_assets_series, 
+                # Update benchmarkd 
+                'benchmark_prices_with_date': benchmark_prices_with_date, 
+                # Update benchmark returns
+                'benchmark_returns': benchmark_returns_for_metrics 
             }
             
-            # --- 8. 调试打印 ---
-            print(f"TB Module - run_backtest - Final results keys: {list(results.keys())}")
-            print(f"TB Module - run_backtest - strategy_assets_with_date exists: {'strategy_assets_with_date' in results}")
+            # Debug
+            logging.debug(f"TB Module - run_backtest - Final results keys: {list(results.keys())}")
+            logging.debug(f"TB Module - run_backtest - strategy_assets_with_date exists: {'strategy_assets_with_date' in results}")
             if 'strategy_assets_with_date' in results:
                 series_obj = results['strategy_assets_with_date']
                 if isinstance(series_obj, pd.Series):
-                    print(f"  - 'strategy_assets_with_date' is a pandas Series")
-                    print(f"  - Series is empty: {series_obj.empty}")
+                    logging.debug(f"  - 'strategy_assets_with_date' is a pandas Series")
+                    logging.debug(f"  - Series is empty: {series_obj.empty}")
                     if not series_obj.empty:
-                        print(f"  - Series length: {len(series_obj)}")
-                        print(f"  - Series index type: {type(series_obj.index)}")
-                        print(f"  - Series index length: {len(series_obj.index)}")
-                        print(f"  - Sample index values: {series_obj.index[:3] if len(series_obj.index) >= 3 else series_obj.index}")
-                        print(f"  - Sample series values: {series_obj.iloc[:3].tolist() if len(series_obj) >= 3 else series_obj.tolist()}")
+                        logging.debug(f"  - Series length: {len(series_obj)}")
+                        logging.debug(f"  - Series index type: {type(series_obj.index)}")
+                        logging.debug(f"  - Series index length: {len(series_obj.index)}")
+                        logging.debug(f"  - Sample index values: {series_obj.index[:3] if len(series_obj.index) >= 3 else series_obj.index}")
+                        logging.debug(f"  - Sample series values: {series_obj.iloc[:3].tolist() if len(series_obj) >= 3 else series_obj.tolist()}")
                     else:
-                        print(f"  - Series is EMPTY")
+                        logging.debug(f"  - Series is EMPTY")
                 else:
-                    print(f"  - 'strategy_assets_with_date' is NOT a pandas Series, type is: {type(series_obj)}")
+                    logging.debug(f"  - 'strategy_assets_with_date' is NOT a pandas Series, type is: {type(series_obj)}")
             else:
-                print("  - 'strategy_assets_with_date' key is MISSING from results dictionary")
+                logging.debug("  - 'strategy_assets_with_date' key is MISSING from results dictionary")
 
-            print(f"TB Module - run_backtest - All keys in results dictionary: {list(results.keys())}")
-            # --- 结束添加 ---
+            logging.debug(f"TB Module - run_backtest - All keys in results dictionary: {list(results.keys())}")
 
             return results
 

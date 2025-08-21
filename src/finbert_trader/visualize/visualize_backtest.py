@@ -86,24 +86,23 @@ class VisualizeBacktest:
                 plt.close()
                 return ""
 
-            # --- 策略：为第一个找到的有效模式绘制图表 ---
-            # 你可以修改此逻辑以绘制所有模式或特定模式
+            # Plot for first mode
             target_mode_name = None
             target_backtest_data = None
             strategy_assets_series = None
-            benchmark_prices_series_from_data = None # 从 backtest_data 中获取的基准
+            benchmark_prices_series_from_data = None # Get benchmark from backtest_data
 
             for mode_name, backtest_data in pipeline_results.items():
                 # backtest_data is the dict returned by TradingBacktest.run_backtest()
-                # 例如 {'metrics': ..., 'strategy_assets_with_date': pd.Series, ...}
+                # e.g. {'metrics': ..., 'strategy_assets_with_date': pd.Series, ...}
                 target_mode_name = mode_name
                 target_backtest_data = backtest_data
                 strategy_assets_series = backtest_data.get('strategy_assets_with_date')
                 
                 if strategy_assets_series is not None and not strategy_assets_series.empty:
-                    # 找到第一个有效的策略数据，就跳出循环
+                    # If get the data from first strategy
                     logging.debug(f"VB Module - generate_asset_curve_comparison - Found valid strategy data for mode {mode_name}.")
-                    # 同时尝试获取该模式的基准数据
+                    # Try to get benchmark
                     benchmark_prices_series_from_data = backtest_data.get('benchmark_prices_with_date')
                     break
                 else:
@@ -112,14 +111,13 @@ class VisualizeBacktest:
                     target_backtest_data = None
                     strategy_assets_series = None
 
-            # 检查是否成功提取到了策略数据
+            # Veryfy
             if strategy_assets_series is None or strategy_assets_series.empty:
                 logging.error("VB Module - generate_asset_curve_comparison - Critical: Pre-aligned 'strategy_assets_with_date' (pandas Series) is missing or empty for all modes. Cannot plot accurately.")
                 plt.close()
                 return ""
-            # --- 关键修改 1 结束 ---
 
-            # --- 关键修改 2: 处理策略资产数据 ---
+            # Get strategy asset data
             # Ensure strategy asset series index dtype and sorted
             strategy_assets_series.index = pd.to_datetime(strategy_assets_series.index)
             strategy_assets_series.sort_index(inplace=True)
@@ -131,23 +129,20 @@ class VisualizeBacktest:
             else:
                 logging.warning("VB Module - generate_asset_curve_comparison - Initial strategy asset is non-positive. Plotting raw asset values.")
                 strategy_cumulative = strategy_assets_series
-            # --- 关键修改 2 结束 ---
-
-            # --- 关键修改 3: 处理基准数据 ---
-            # 优先使用从 backtest_data 中获取的基准价格数据
+            
+            # Handle benchmark data
+            # Get benchmark data from backtest_data
             final_benchmark_series = None
             if benchmark_prices_series_from_data is not None and not benchmark_prices_series_from_data.empty:
                 logging.debug(f"VB Module - generate_asset_curve_comparison - Using benchmark data from backtest results for mode {target_mode_name}.")
                 final_benchmark_series = benchmark_prices_series_from_data
-            # 如果 backtest_data 中没有，且传入了 benchmark_data 参数，则使用它
+            # Get from benchmark_data insted
             elif benchmark_data is not None:
                 logging.info("VB Module - generate_asset_curve_comparison - Using provided benchmark_data as fallback.")
                 if isinstance(benchmark_data, pd.Series):
                     final_benchmark_series = benchmark_data
                 elif isinstance(benchmark_data, (list, np.ndarray)):
-                    # 如果只提供了价格列表，需要为其创建日期索引
-                    # 最好的方式是它与策略日期对齐，但这在 fallback 中难以保证
-                    # 简单处理：如果长度匹配，使用策略的日期索引
+                    # Use strategy date index for alignment if same length
                     if len(benchmark_data) == len(strategy_cumulative):
                         final_benchmark_series = pd.Series(benchmark_data, index=strategy_cumulative.index)
                         logging.warning("VB Module - generate_asset_curve_comparison - Created benchmark Series using strategy dates (lengths matched). "
@@ -155,8 +150,7 @@ class VisualizeBacktest:
                     else:
                         logging.warning("VB Module - generate_asset_curve_comparison - benchmark_data list length mismatch with strategy. "
                                         "Plotting without benchmark or using integer index might be inaccurate.")
-                        # 可以创建一个同长度的 Series，但用整数索引，但这不理想
-                        # 这里我们选择不绘制基准，因为对齐不准确
+                        # If not same length, ignore
                         final_benchmark_series = None 
                 # Ensure index dtype and sorted if we created/finalized a series
                 if final_benchmark_series is not None:
@@ -168,21 +162,19 @@ class VisualizeBacktest:
             plot_strategy_cum = strategy_cumulative
             plot_benchmark_cum = None
 
-            # 如果最终获取到了基准数据 Series
+            # Align with benchmark Series
             if final_benchmark_series is not None and not final_benchmark_series.empty:
                 # Ensure index dtype and sorted
                 final_benchmark_series.index = pd.to_datetime(final_benchmark_series.index)
                 final_benchmark_series.sort_index(inplace=True)
 
-                # --- 与策略数据进行精确对齐 ---
-                # 使用 Pandas 的 join 或 concat 来确保两者在相同的日期点上绘图
-                # inner join 会取交集日期，确保两者都有数据
+                # Implemet Pandas concat and inner join to ensure alignment effective
                 combined_df = pd.concat([strategy_cumulative, final_benchmark_series], axis=1, join='inner', keys=['strategy', 'benchmark'])
                 if not combined_df.empty:
                     plot_strategy_cum = combined_df['strategy']
                     aligned_benchmark_prices = combined_df['benchmark']
                     
-                    # 计算基准的累积收益 (归一化)
+                    # Calculate benchmark cumulative price and normalize
                     initial_benchmark_price = aligned_benchmark_prices.iloc[0] if len(aligned_benchmark_prices) > 0 else 1.0
                     if initial_benchmark_price > 0:
                         plot_benchmark_cum = (aligned_benchmark_prices / initial_benchmark_price)
@@ -190,33 +182,32 @@ class VisualizeBacktest:
                         logging.warning("VB Module - generate_asset_curve_comparison - Initial benchmark price is non-positive. Plotting raw benchmark values.")
                         plot_benchmark_cum = aligned_benchmark_prices
 
-                    # --- 绘制基准曲线 ---
+                    # Plot benchmark curve
                     plt.plot(plot_benchmark_cum.index, plot_benchmark_cum.values, label=benchmark_name, linewidth=2)
                     logging.info(f"VB Module - generate_asset_curve_comparison - Plotted aligned benchmark curve: {benchmark_name}")
                 else:
                     logging.warning("VB Module - generate_asset_curve_comparison - No overlapping dates found between strategy and benchmark after alignment. Benchmark not plotted.")
             else:
                 logging.info("VB Module - generate_asset_curve_comparison - No valid benchmark data available for plotting.")
-            # --- 关键修改 3 结束 ---
 
-            # --- 绘制策略曲线 ---
+            # Plot strategy curve
             plt.plot(plot_strategy_cum.index, plot_strategy_cum.values, label=f'{target_mode_name} Strategy', linewidth=2)
             logging.info(f"VB Module - generate_asset_curve_comparison - Plotted aligned strategy curve for mode {target_mode_name}.")
 
-            # --- 配置图表 ---
+            # Plot configuration
             plt.title("Asset Curve Comparison", fontsize=16, fontweight='bold')
             
-            # --- 智能设置 X 轴 ---
-            x_axis = strategy_cumulative.index # 或 aligned_strategy_cum.index，如果用了对齐
+            # Automatically set x axis
+            x_axis = strategy_cumulative.index # Also could use aligned_strategy_cum.index after alignment
             if len(x_axis) > 0 and isinstance(x_axis[0], (pd.Timestamp, datetime)):
                 plt.xlabel("Date", fontsize=12)
-                # 自动格式化日期，防止重叠
+                # Automatically set date as x axis
                 plt.gca().xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d'))
-                # 可以设置更智能的定位器，例如每隔 N 个点或每隔几个月
-                # plt.gca().xaxis.set_major_locator(plt.matplotlib.dates.MonthLocator(interval=2))
+                # Set check point per month
+                plt.gca().xaxis.set_major_locator(plt.matplotlib.dates.MonthLocator(interval=1))
                 plt.setp(plt.gca().xaxis.get_majorticklabels(), rotation=45, ha='right')
             else:
-                # 如果索引不是日期（例如 fallback 到了整数索引）
+                # Fallback to integer index if not date index
                 plt.xlabel("Trading Days", fontsize=12)
 
             plt.ylabel("Cumulative Return (Initial Value = 1.0)", fontsize=12) # 或 "Normalized Portfolio Value"
@@ -224,7 +215,7 @@ class VisualizeBacktest:
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
 
-            # --- 保存图表 ---
+            # Save plot
             plot_filename = f"asset_curve_comparison_{timestamp}.png"
             plot_path = os.path.join(self.plot_exper_dir, plot_filename)
             os.makedirs(self.plot_exper_dir, exist_ok=True)
@@ -580,8 +571,8 @@ class VisualizeBacktest:
             plt.figure(figsize=(25, 12))
             sns.set_style("whitegrid")
 
-            # --- 关键修改 1: 正确从嵌套的 pipeline_results 中提取数据 ---
-            # 策略：为第一个找到的有效模式绘制图表
+            # Get data from nested pipeline_results
+            # Plot first mode
             target_mode_name = None
             target_backtest_data = None
             strategy_assets_series = None
@@ -595,7 +586,7 @@ class VisualizeBacktest:
 
                 if strategy_assets_series is not None and not strategy_assets_series.empty:
                     logging.debug(f"VB Module - generate_benchmark_relative_performance - Found valid strategy data for mode {mode_name}.")
-                    # 同时尝试获取该模式的基准回报率数组
+                    # Get benchmark returns
                     benchmark_returns_array_from_data = backtest_data.get('benchmark_returns')
                     break
                 else:
@@ -604,23 +595,22 @@ class VisualizeBacktest:
                     target_backtest_data = None
                     strategy_assets_series = None
 
-            # 检查是否成功提取到了策略数据
+            # Verify data
             if strategy_assets_series is None or strategy_assets_series.empty:
                 logging.error("VB Module - generate_benchmark_relative_performance - Critical: Pre-aligned 'strategy_assets_with_date' (pandas Series) is missing or empty. Cannot plot accurately.")
                 plt.close()
                 return ""
 
-            # --- 关键修改 2: 计算策略回报率 ---
+            # Calculate strategy assets retuns
             # Ensure index dtype and sorted
             strategy_assets_series.index = pd.to_datetime(strategy_assets_series.index)
             strategy_assets_series.sort_index(inplace=True)
 
             # Calculate strategy returns based on the aligned Series
             strategy_returns_series = strategy_assets_series.pct_change().fillna(0)
-            # --- 关键修改 2 结束 ---
 
-            # --- 关键修改 3: 获取并处理基准回报率 ---
-            # 优先使用从 backtest_data 中获取的基准回报率数组
+            # Get data and calculate benchmark returns
+            # Get benchmark returns from backtest_data
             final_benchmark_returns_array = None
             if benchmark_returns_array_from_data is not None and len(benchmark_returns_array_from_data) > 0:
                 logging.debug(f"VB Module - generate_benchmark_relative_performance - Using benchmark returns array from backtest results for mode {target_mode_name}.")
@@ -633,34 +623,32 @@ class VisualizeBacktest:
                 plt.close()
                 return ""
 
-            # --- 关键修改 4: 对齐策略和基准回报率 ---
-            # 策略回报率是一个 Series (有日期索引)
-            # 基准回报率是一个 numpy array (假设与策略日期对齐)
-            # 我们需要确保它们在相同的日期点上对齐
+            # Align strategy returns with benchmark returns
+            # Strategy returns: Pandas Series (with date index)
+            # Benchmark returns: Numpy array (assume aligned with date)
+            # Ensure they aligned by dates
             min_len = min(len(strategy_returns_series), len(final_benchmark_returns_array))
             aligned_strategy_returns = strategy_returns_series.iloc[:min_len]
             aligned_benchmark_returns = final_benchmark_returns_array[:min_len]
 
-            # 创建基准回报率的 Series，以确保索引一致
+            # Create benchmark Series
             bench_returns_series = pd.Series(aligned_benchmark_returns, index=aligned_strategy_returns.index)
 
-            # --- 关键修改 5: 计算累计超额回报 ---
-            # 计算超额回报 (策略 - 基准)
+            # Calculate excess returns(Strategy - Benchmark)
             excess_returns_series = aligned_strategy_returns - bench_returns_series
-            # 计算累计超额回报 (从0开始累加)
+            # Cumulatively sum from 0
             cumulative_excess_series = excess_returns_series.cumsum()
-            # --- 关键修改 5 结束 ---
 
-            # --- 绘图 ---
+            # Plot
             plt.plot(cumulative_excess_series.index, cumulative_excess_series.values, 
                     label=f"{target_mode_name} vs {benchmark_name}", linewidth=2, color='purple')
             plt.axhline(y=0, color='black', linestyle='--', linewidth=1, alpha=0.7)
             logging.info(f"VB Module - generate_benchmark_relative_performance - Plotted relative performance (cumulative excess returns).")
 
-            # --- 配置图表 ---
+            # Plot configuration
             plt.title("Relative Performance vs Benchmark (Cumulative Excess Returns)", fontsize=16, fontweight='bold')
             
-            # --- 智能设置 X 轴 ---
+            # Automatically set x axis
             x_axis = cumulative_excess_series.index
             if len(x_axis) > 0 and isinstance(x_axis[0], (pd.Timestamp, datetime)):
                 plt.xlabel("Date", fontsize=12)
@@ -674,7 +662,7 @@ class VisualizeBacktest:
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
 
-            # --- 保存图表 ---
+            # Save plot
             plot_filename = f"relative_performance_{timestamp}.png"
             plot_path = os.path.join(self.plot_exper_dir, plot_filename)
             os.makedirs(self.plot_exper_dir, exist_ok=True)
@@ -724,8 +712,8 @@ class VisualizeBacktest:
             plt.figure(figsize=(25, 12))
             sns.set_style("whitegrid")
 
-            # --- 关键修改 1: 正确从嵌套的 pipeline_results 中提取数据 ---
-            # 策略：为第一个找到的有效模式绘制图表
+            # Get data from nested pipeline_results
+            # Plot first mode
             target_mode_name = None
             target_backtest_data = None
             strategy_assets_series = None
@@ -739,7 +727,7 @@ class VisualizeBacktest:
 
                 if strategy_assets_series is not None and not strategy_assets_series.empty:
                     logging.debug(f"VB Module - generate_drawdown_comparison - Found valid strategy data for mode {mode_name}.")
-                    # 同时尝试获取该模式的基准价格数据
+                    # Get benchmark returns
                     benchmark_prices_series_from_data = backtest_data.get('benchmark_prices_with_date')
                     break
                 else:
@@ -748,13 +736,13 @@ class VisualizeBacktest:
                     target_backtest_data = None
                     strategy_assets_series = None
 
-            # 检查是否成功提取到了策略数据
+            # Verify data
             if strategy_assets_series is None or strategy_assets_series.empty:
                 logging.error("VB Module - generate_drawdown_comparison - Critical: Pre-aligned 'strategy_assets_with_date' (pandas Series) is missing or empty. Cannot plot accurately.")
                 plt.close()
                 return ""
 
-            # --- 关键修改 2: 计算策略回撤 ---
+            # Calculate strategy drawdown
             # Ensure index dtype and sorted
             strategy_assets_series.index = pd.to_datetime(strategy_assets_series.index)
             strategy_assets_series.sort_index(inplace=True)
@@ -767,10 +755,9 @@ class VisualizeBacktest:
             strategy_drawdown = (assets - rolling_max) / drawdown_denominator * 100 # Percentage
             # Create a Series for drawdown with the same index as the asset series
             strategy_drawdown_series = pd.Series(strategy_drawdown, index=strategy_assets_series.index)
-            # --- 关键修改 2 结束 ---
 
-            # --- 关键修改 3: 处理基准数据 ---
-            # 优先使用从 backtest_data 中获取的基准价格数据
+            # Handle benchmark data
+            # Get benchmark data from backtest_data
             final_benchmark_series = None
             if benchmark_prices_series_from_data is not None and not benchmark_prices_series_from_data.empty:
                 logging.debug(f"VB Module - generate_drawdown_comparison - Using benchmark data from backtest results for mode {target_mode_name}.")
@@ -780,9 +767,7 @@ class VisualizeBacktest:
                 if isinstance(benchmark_data, pd.Series):
                     final_benchmark_series = benchmark_data
                 elif isinstance(benchmark_data, (list, np.ndarray)):
-                    # 如果只提供了价格列表，需要为其创建日期索引
-                    # 最好的方式是它与策略日期对齐，但这在 fallback 中难以保证
-                    # 简单处理：如果长度匹配，使用策略的日期索引
+                    # Use strategy date index for alignment if same length
                     if len(benchmark_data) == len(strategy_drawdown_series):
                         final_benchmark_series = pd.Series(benchmark_data, index=strategy_drawdown_series.index)
                         logging.warning("VB Module - generate_drawdown_comparison - Created benchmark Series using strategy dates (lengths matched). "
@@ -798,14 +783,14 @@ class VisualizeBacktest:
             else:
                 logging.info("VB Module - generate_drawdown_comparison - No benchmark data available or provided.")
 
-            # 如果最终获取到了基准数据 Series
+            # Align strategy data with benchmark data
             if final_benchmark_series is not None and not final_benchmark_series.empty:
                 # Ensure index dtype and sorted
                 final_benchmark_series.index = pd.to_datetime(final_benchmark_series.index)
                 final_benchmark_series.sort_index(inplace=True)
 
-                # --- 与策略数据进行精确对齐 ---
-                # 使用 Pandas 的 join 或 concat 来确保两者在相同的日期点上绘图
+                # Align strategy data with benchmark data
+                # Implement Pandas concat and inner join to ensure aligned by dates
                 combined_df = pd.concat([strategy_drawdown_series, final_benchmark_series], axis=1, join='inner', keys=['strategy', 'benchmark'])
                 if not combined_df.empty:
                     aligned_strategy_drawdown = combined_df['strategy']
@@ -818,27 +803,26 @@ class VisualizeBacktest:
                     benchmark_drawdown = (benchmark_assets - benchmark_rolling_max) / benchmark_drawdown_denominator * 100
                     benchmark_drawdown_series = pd.Series(benchmark_drawdown, index=aligned_benchmark_prices.index)
 
-                    # --- 绘制基准回撤曲线 ---
+                    # Plot benchmark drawdown
                     plt.plot(benchmark_drawdown_series.index, benchmark_drawdown_series.values, label=benchmark_name, linewidth=2)
                     logging.info(f"VB Module - generate_drawdown_comparison - Plotted benchmark drawdown curve: {benchmark_name}")
                 else:
                     logging.warning("VB Module - generate_drawdown_comparison - No overlapping dates found between strategy and benchmark after alignment. Benchmark not plotted.")
             else:
                 logging.info("VB Module - generate_drawdown_comparison - No valid benchmark data available for plotting.")
-            # --- 关键修改 3 结束 ---
 
-            # --- 绘制策略回撤曲线 ---
+            # Plot strategy drawdown
             plt.plot(strategy_drawdown_series.index, strategy_drawdown_series.values, label=f'{target_mode_name} Strategy', linewidth=2)
             logging.info(f"VB Module - generate_drawdown_comparison - Plotted strategy drawdown curve for mode {target_mode_name}.")
 
-            # --- 配置图表 ---
+            # Plot configuration
             plt.title("Drawdown Comparison", fontsize=16, fontweight='bold')
             
-            # --- 智能设置 X 轴 ---
+            # Automatically set x axis
             x_axis = strategy_drawdown_series.index
             if len(x_axis) > 0 and isinstance(x_axis[0], (pd.Timestamp, datetime)):
                 plt.xlabel("Date", fontsize=12)
-                # 自动格式化日期，防止重叠
+                # Automatically set dates as x axis
                 plt.gca().xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d'))
                 plt.setp(plt.gca().xaxis.get_majorticklabels(), rotation=45, ha='right')
             else:
