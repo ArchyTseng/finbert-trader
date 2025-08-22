@@ -79,8 +79,8 @@ class VisualizeBacktest:
             plt.figure(figsize=(25, 12))
             sns.set_style("whitegrid")
 
-            # --- 关键修改 1: 正确从嵌套的 pipeline_results 中提取数据 ---
-            # pipeline_results 的结构是 {mode_name: backtest_data_dict}
+            # Get data from pipeline_results
+            # pipeline_results structure: {mode_name: backtest_data_dict}
             if not pipeline_results:
                 logging.warning("VB Module - generate_asset_curve_comparison - pipeline_results is empty. Nothing to plot.")
                 plt.close()
@@ -958,10 +958,10 @@ class VisualizeBacktest:
             strategy_assets_series.sort_index(inplace=True)
 
             # --- Prepare Data for Plotting ---
-            # 1. Normalized Strategy
+            # Normalized Strategy
             normalized_strategy_series = self._calculate_normalized_series(strategy_assets_series)
 
-            # 2. Benchmark Data Handling & Normalization
+            # Benchmark Data Handling & Normalization
             final_benchmark_series = None
             if benchmark_prices_series_from_data is not None and not benchmark_prices_series_from_data.empty:
                 final_benchmark_series = benchmark_prices_series_from_data
@@ -985,7 +985,7 @@ class VisualizeBacktest:
                 plot_normalized_strategy = normalized_strategy_series
                 logging.info("VB Module - plot_full_comparison_visualization - No benchmark data for normalization.")
 
-            # 3. Relative Performance (Excess Returns)
+            # Relative Performance (Excess Returns)
             strategy_returns_series = plot_normalized_strategy.pct_change().fillna(0) # Use aligned normalized series index
             final_benchmark_returns_array = None
             relative_performance_series = pd.Series(dtype='float64')
@@ -1003,7 +1003,7 @@ class VisualizeBacktest:
             else:
                 logging.info("VB Module - plot_full_comparison_visualization - Insufficient data for relative performance calculation.")
 
-            # 4. Drawdown Calculation (Aligned)
+            # Drawdown Calculation (Aligned)
             strategy_drawdown_series = pd.Series(dtype='float64')
             benchmark_drawdown_series = pd.Series(dtype='float64')
             if normalized_benchmark_series is not None and not normalized_benchmark_series.empty:
@@ -1022,13 +1022,13 @@ class VisualizeBacktest:
                 strategy_drawdown_series = self._calculate_drawdown_series(strategy_assets_series)
 
 
-            # 5. Daily Returns for Histogram (Aligned)
+            # Daily Returns for Histogram (Aligned)
             strategy_daily_returns_for_hist = strategy_returns_series.values * 100 # Convert to %
             benchmark_daily_returns_for_hist = np.array([])
             if final_benchmark_returns_array is not None:
                 benchmark_daily_returns_for_hist = final_benchmark_returns_array * 100 # Convert to %
 
-            # --- Plotting ---
+            # Plot configuration
             sns.set_style("whitegrid")
             fig, axes = plt.subplots(2, 2, figsize=(25, 12))
 

@@ -1464,7 +1464,7 @@ class ExperimentScheme:
         results = {}
 
         try:
-            # 1. Run all quick experiments
+            # Run all quick experiments
             all_quick_results = self.run_experiment_sequence(
                 ['quick_exper_1', 'quick_exper_2', 'quick_exper_3', 'quick_exper_4'],
                 symbols
@@ -1472,40 +1472,32 @@ class ExperimentScheme:
             results['experiment_results'] = all_quick_results
             logging.info("ES Module - All quick experiments completed.")
 
-            # 2. Generate the single comprehensive visualization report
+            # Generate the single comprehensive visualization report
             visualizations = {}
             
-            # --- 关键修改：正确收集 experiment log files (.json) ---
+            # Get data from experiment log files (.json)
             experiment_files = []
             if os.path.exists(self.experiment_cache_dir):
-                # 只收集 .json 文件，避免 .pkl 文件干扰
+                # Only from .json files
                 for file in os.listdir(self.experiment_cache_dir):
                     if file.startswith('experiment_log_') and file.endswith('.json'):
                         experiment_files.append(os.path.join(self.experiment_cache_dir, file))
             
-            # --- 日志记录收集到的文件 ---
             logging.info(f"ES Module - Collected {len(experiment_files)} experiment log files for visualization.")
 
             if experiment_files:
                 logging.info(f"ES Module - Found {len(experiment_files)} experiment records for visualization.")
                 
-                # --- 关键修改：只调用新的、唯一的综合报告生成函数 ---
                 try:
-                    # 1. 导入新的可视化函数
                     from .visualize.visualize_experiment import generate_comprehensive_experiment_report
-
-                    # 2. 调用新的函数生成唯一的综合报告
-                    #    generate_comprehensive_experiment_report 是一个模块级别的函数，
-                    #    它需要 config 和 experiment_files 作为参数
                     comprehensive_report_path = generate_comprehensive_experiment_report(self.config, experiment_files)
                     
-                    # 3. 记录生成的报告路径
+                    # Record report
                     visualizations['comprehensive_report'] = comprehensive_report_path
                     logging.info(f"ES Module - Comprehensive experiment report generated: {comprehensive_report_path}")
 
                 except Exception as e:
                     logging.error(f"ES Module - Failed to generate comprehensive experiment report: {e}", exc_info=True)
-                    # 可以选择将错误信息也存入 visualizations 字典
                     # visualizations['comprehensive_report_error'] = str(e)
                     
             else:
@@ -1520,8 +1512,6 @@ class ExperimentScheme:
         logging.info("ES Module - Run and visualize quick experiment sequence completed.")
         return results
 
-
-    # --- 替换 exper_scheme.py 中的 generate_experiment_visualizations_from_cache 方法 ---
     def generate_experiment_visualizations_from_cache(self) -> Dict[str, str]:
         """
         Generate the comprehensive visualization report based on existing experiment logs in the cache.
@@ -1541,29 +1531,22 @@ class ExperimentScheme:
         visualizations = {}
 
         try:
-            # --- 关键修改：正确收集 experiment log files (.json) ---
+            # Get data from experiment log files (.json)
             experiment_files = []
             if os.path.exists(self.experiment_cache_dir):
-                # 只收集 .json 文件，避免 .pkl 文件干扰
                 for file in os.listdir(self.experiment_cache_dir):
                     if file.startswith('experiment_log_') and file.endswith('.json'):
                         experiment_files.append(os.path.join(self.experiment_cache_dir, file))
 
-            # --- 日志记录收集到的文件 ---
             logging.info(f"ES Module - Collected {len(experiment_files)} experiment log files from cache for visualization.")
 
             if experiment_files:
                 logging.info(f"ES Module - Found {len(experiment_files)} experiment records for visualization.")
                 
-                # --- 关键修改：只调用新的、唯一的综合报告生成函数 ---
                 try:
-                    # 1. 导入新的可视化函数
                     from .visualize.visualize_experiment import generate_comprehensive_experiment_report
-
-                    # 2. 调用新的函数生成唯一的综合报告
                     comprehensive_report_path = generate_comprehensive_experiment_report(self.config, experiment_files)
                     
-                    # 3. 记录生成的报告路径
                     visualizations['comprehensive_report'] = comprehensive_report_path
                     logging.info(f"ES Module - Comprehensive experiment report generated from cache: {comprehensive_report_path}")
 

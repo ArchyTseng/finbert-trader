@@ -120,7 +120,7 @@ class VisualizeExperiment:
                     record_data = record
 
                 exp_id = record_data.get('experiment_id', 'Unknown')
-                # --- Key Fix: Read from 'results' instead of 'pipeline_results' ---
+                # Read from 'results' instead of 'pipeline_results'
                 results_section = record_data.get('results', {})
                 metrics_summary = self._extract_metrics_from_results(results_section)
 
@@ -195,8 +195,7 @@ class VisualizeExperiment:
     def _plot_asset_curves_comparison(self, experiment_records: List[Union[str, Dict]], ax):
         """Plot asset curves comparison by leveraging visualize_backtest.py."""
         try:
-            # --- 关键：使用 visualize_backtest.py 的功能 ---
-            # 遍历每个实验，加载其 .pkl 文件中的 backtest_results
+            # Try use visualize_backtest.py class function
             pipeline_results_for_viz = {}
 
             for record in experiment_records:
@@ -207,29 +206,28 @@ class VisualizeExperiment:
                     record_data = record
 
                 exp_id = record_data.get('experiment_id', 'Unknown')
-                # 从 .json 日志中获取 results_path
+                # Get  results_path from .json files
                 results_path = record_data.get('results', {}).get('PPO', {}).get('results_path')  # 假设 PPO 是主要模式
 
                 if results_path and os.path.exists(results_path):
-                    # 加载 .pkl 文件中的 backtest_results
+                    # Load backtest_results from .pkl files
                     with open(results_path, 'rb') as f:
-                        backtest_data = pickle.load(f)  # 假设 backtest_data 包含 'strategy_assets_with_date' 等
+                        backtest_data = pickle.load(f) 
 
-                    # 将数据添加到临时的 pipeline_results 字典中
+                    # Add to pipeline_results 
                     pipeline_results_for_viz[exp_id] = backtest_data
 
-            # --- 关键：调用 visualize_backtest.py 的方法 ---
+            # Try use visualize_backtest.py class function
             vb = VisualizeBacktest(self.config)
-            # 为了简化，我们假设 benchmark_data 可以从第一个实验中提取
             benchmark_data = None
             if pipeline_results_for_viz:
                 first_exp_data = next(iter(pipeline_results_for_viz.values()))
                 benchmark_data = first_exp_data.get('benchmark_prices_with_date', None)
 
-            # 生成资产曲线比较图并保存路径
+            # Generate asset curve comparison and save
             plot_path = vb.generate_asset_curve_comparison(pipeline_results_for_viz, benchmark_data=benchmark_data)
 
-            # 在当前轴上显示占位符或文件名
+            # Set axis
             ax.text(0.5, 0.5, f'Asset Curves Plot\nGenerated at: {os.path.basename(plot_path)}', ha='center', va='center', transform=ax.transAxes)
             ax.set_title('Normalized Asset Curves Comparison')
             logging.info(f"VE Module - Asset curves comparison plot generated: {plot_path}")
@@ -242,8 +240,8 @@ class VisualizeExperiment:
     def _plot_cumulative_excess_return_vs_benchmark(self, experiment_records: List[Union[str, Dict]], ax):
         """Plot cumulative excess return vs benchmark by leveraging visualize_backtest.py."""
         try:
-            # --- 关键：使用 visualize_backtest.py 的功能 ---
-            # 构建 pipeline_results_for_viz 和提取 benchmark_returns
+            # Try use visualize_backtest.py class function
+            # Build pipeline_results_for_viz dict and fetch benchmark_returns
             pipeline_results_for_viz = {}
             benchmark_returns_array = None
 
@@ -261,11 +259,10 @@ class VisualizeExperiment:
                     with open(results_path, 'rb') as f:
                         backtest_data = pickle.load(f)
                     pipeline_results_for_viz[exp_id] = backtest_data
-                    # 如果还没有 benchmark_returns，就从这个实验中获取
                     if benchmark_returns_array is None:
                         benchmark_returns_array = backtest_data.get('benchmark_returns', None)
 
-            # --- 关键：调用 visualize_backtest.py 的方法 ---
+            # Try use visualize_backtest.py class function
             vb = VisualizeBacktest(self.config)
             plot_path = vb.generate_benchmark_relative_performance(pipeline_results_for_viz, benchmark_returns=benchmark_returns_array)
 
@@ -293,11 +290,11 @@ class VisualizeExperiment:
                     record_data = record
 
                 exp_id = record_data.get('experiment_id', 'Unknown')
-                # 提取两个参数值
+                # Get target parameters
                 reward_scaling = self._get_nested_value(record_data, 'config_params.trading_config.reward_scaling')
                 cash_penalty = self._get_nested_value(record_data, 'config_params.trading_config.cash_penalty_proportion')
                 
-                # 提取 Sharpe Ratio
+                # Get Sharpe Ratio
                 metrics_summary = self._extract_metrics_from_results(record_data.get('results', {}))
                 sharpe_ratios = [metrics.get('sharpe_ratio', np.nan) for metrics in metrics_summary.values()]
                 valid_sharpes = [s for s in sharpe_ratios if not np.isnan(s)]
@@ -309,7 +306,7 @@ class VisualizeExperiment:
                     labels.append(exp_id)
 
             if param_values and metric_values:
-                # 创建散点图
+                # Plot scatter
                 scatter = ax.scatter([p[0] for p in param_values], [p[1] for p in param_values], c=metric_values, cmap='viridis', alpha=0.7)
                 ax.set_xlabel('Reward Scaling')
                 ax.set_ylabel('Cash Penalty Proportion')
@@ -317,7 +314,7 @@ class VisualizeExperiment:
                 ax.grid(True, alpha=0.3)
                 plt.colorbar(scatter, ax=ax, label='Sharpe Ratio')
                 
-                # 添加标签
+                # Add label
                 for i, txt in enumerate(labels):
                     ax.annotate(txt, (param_values[i][0], param_values[i][1]), fontsize=8, ha='right')
             else:
@@ -337,14 +334,12 @@ class VisualizeExperiment:
         across multiple experiments on a set of key metrics.
         """
         try:
-            # --- 1. 定义雷达图的指标和标签 ---
-            # 指标名称 (用于显示在雷达图的轴上)
+            # Define the target metrics and label for radar chart
+            # Metrics names
             categories = ['CAGR (%)', 'Sharpe Ratio', 'Max Drawdown (%)', 'Win Rate (%)']
-            # 指标键名 (用于从 metrics 字典中提取数据)
+            # Metrics keys
             metric_keys = ['cagr', 'sharpe_ratio', 'max_drawdown', 'win_rate']
-            # 指标处理函数 (如何将原始指标值转换为雷达图上的值)
-            # 例如，Max Drawdown 通常是负数，我们取其绝对值或负值使其“越大越好”
-            # 这里我们取负值，这样数值越大代表风险越小
+            # Build metrics func
             transformations = [
                 lambda x: x * 100,           # CAGR: 转换为百分比
                 lambda x: x,                 # Sharpe: 保持不变
@@ -352,8 +347,8 @@ class VisualizeExperiment:
                 lambda x: x * 100            # Win Rate: 转换为百分比
             ]
 
-            # --- 2. 为每个算法收集性能数据 ---
-            # 结构: {algo_name: {'values': [[exp1_metrics], [exp2_metrics], ...], 'labels': [exp_id1, exp_id2, ...]}}
+            # Collect target data for each algorithm
+            # Structure: {algo_name: {'values': [[exp1_metrics], [exp2_metrics], ...], 'labels': [exp_id1, exp_id2, ...]}}
             algo_data = {}
 
             for record in experiment_records:
@@ -364,18 +359,17 @@ class VisualizeExperiment:
                     record_data = record
 
                 exp_id = record_data.get('experiment_id', 'Unknown')
-                # --- 关键修复：从 'results' 键而不是 'metrics_summary' 键获取数据 ---
+                # Get data from 'results' 
                 results_section = record_data.get('results', {})
-                # 使用已有的辅助函数提取 metrics
                 metrics_summary = self._extract_metrics_from_results(results_section)
 
-                # 遍历该实验的所有模式（算法）
+                # Traverse all algorithm mode
                 for mode_name, metrics in metrics_summary.items():
-                    # 提取并转换指标值
+                    # Get and convert data
                     normalized_values = []
                     for key, transform in zip(metric_keys, transformations):
                         raw_value = metrics.get(key, np.nan)
-                        # 确保原始值是数值类型，如果不是则设为 NaN
+                        # Ensure data type
                         if not isinstance(raw_value, (int, float)) or np.isnan(raw_value):
                             normalized_value = np.nan
                         else:
@@ -385,95 +379,88 @@ class VisualizeExperiment:
                                 normalized_value = np.nan
                         normalized_values.append(normalized_value)
                     
-                    # 将数据存入 algo_data
+                    # Add to algo_data
                     if mode_name not in algo_data:
                         algo_data[mode_name] = {'values': [], 'labels': []}
                     algo_data[mode_name]['values'].append(normalized_values)
                     algo_data[mode_name]['labels'].append(exp_id)
 
-            # --- 3. 检查是否有足够的数据绘制 ---
+            # Check data
             if not algo_data:
                 ax.text(0.5, 0.5, 'No Algorithm Data Available', ha='center', va='center', transform=ax.transAxes)
                 ax.set_title('Algorithm Performance Radar Chart')
                 return
 
-            # --- 4. 计算每个算法的平均性能 ---
-            # 结构: {algo_name: [avg_cagr, avg_sharpe, avg_drawdown, avg_win_rate]}
+            # Calculate average performance for each algorithm
+            # Structure: {algo_name: [avg_cagr, avg_sharpe, avg_drawdown, avg_win_rate]}
             avg_algo_data = {}
-            all_valid_values = [] # 用于计算全局 Y 轴范围
+            all_valid_values = [] # For global Y axis
             for algo_name, data in algo_data.items():
                 values_list = data['values'] # List of lists
                 if not values_list:
                     continue
                 
-                # 转换为 numpy 数组以便计算
+                # Convert to numpy
                 try:
-                    values_array = np.array(values_list, dtype=float) # 强制转换为 float
-                    # 计算每列（每个指标）的均值，忽略 NaN
+                    values_array = np.array(values_list, dtype=float) # Ensure float dtype
+                    # Calculate mean value
                     avg_values = np.nanmean(values_array, axis=0)
                     avg_algo_data[algo_name] = avg_values.tolist()
                     
-                    # 收集所有有效值用于设置 Y 轴范围
+                    # Collect valid values
                     valid_values = values_array[~np.isnan(values_array)]
                     all_valid_values.extend(valid_values)
                     
                 except (ValueError, TypeError) as e:
                     logging.warning(f"VE Module - _plot_algorithm_radar_chart - Error processing data for {algo_name}: {e}")
-                    continue # 跳过这个算法如果数据处理失败
+                    continue 
 
             if not avg_algo_data:
                 ax.text(0.5, 0.5, 'No Valid Algorithm Data to Plot', ha='center', va='center', transform=ax.transAxes)
                 ax.set_title('Algorithm Performance Radar Chart')
                 return
 
-            # --- 5. 设置雷达图角度 ---
+            # Set angles for radar chart
             num_vars = len(categories)
             angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
-            # 为了闭合图形，需要将第一个角度添加到末尾
             angles += angles[:1] 
 
-            # --- 6. 绘制雷达图 ---
-            # 为每个算法绘制一个多边形
+            # Plot radar chart
+            # Plot polygon for each algorithm
             for algo_name, avg_values in avg_algo_data.items():
-                # 为了闭合图形，需要将第一个值添加到末尾
+                # Append the first value to the tail
                 values_to_plot = avg_values + avg_values[:1]
                 ax.plot(angles, values_to_plot, linewidth=2, linestyle='solid', label=algo_name)
                 ax.fill(angles, values_to_plot, alpha=0.25)
 
-            # --- 7. 设置图表标签和样式 ---
-            # 添加特征轴标签
-            ax.set_xticks(angles[:-1]) # 使用不闭合的角度
+            # Plot configuration
+            ax.set_xticks(angles[:-1])
             ax.set_xticklabels(categories)
             
-            # --- 8. 安全地设置 Y 轴范围 ---
-            # 从收集到的有效值中计算 Y 轴上限
+            # Set the range of Y axis
+            # Calculate the upper limit
             if all_valid_values:
                 max_val = np.max(all_valid_values)
                 min_val = np.min(all_valid_values)
-                # 增加一点边距
                 y_range = max_val - min_val
                 margin = y_range * 0.1 if y_range > 0 else 1
-                # 确保 Y 轴下限不高于数据最小值，上限不低于数据最大值
+                # Ensure Y axis range valid
                 y_min = min_val - margin
                 y_max = max_val + margin
-                # 特别处理：如果所有值都是负的，y_max 应该是 0 或一个较小的负数
-                # 如果所有值都是正的，y_min 应该是 0 或一个较小的正数
-                # 这里简化处理，确保范围包含 0 点附近
+                # Ensure range safe
                 y_min_final = min(y_min, 0)
                 y_max_final = max(y_max, 0)
                 
                 try:
                     ax.set_ylim(y_min_final, y_max_final)
                 except ValueError as ve:
-                    # 如果设置失败（例如，由于 matplotlib 内部状态），使用一个默认范围
                     logging.warning(f"VE Module - _plot_algorithm_radar_chart - Failed to set ylim: {ve}. Using default.")
-                    ax.set_ylim(-10, 10) # 使用一个安全的默认范围
+                    ax.set_ylim(-10, 10)
             else:
-                # 如果没有有效值，设置一个默认范围
+                # Fallback to a default range
                 ax.set_ylim(-1, 1)
 
             ax.set_title('Algorithm Performance Radar Chart')
-            # 将图例放在图表外部，避免遮挡
             ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
 
             logging.info("VE Module - Algorithm performance radar chart plotted successfully.")
@@ -610,7 +597,7 @@ class VisualizeExperiment:
 
                 exp_id = record_data.get('experiment_id', 'Unknown')
                 
-                # --- 修复：从 'results' 键而不是 'metrics_summary' 键获取数据 ---
+                # Get data from 'results'
                 results_section = record_data.get('results', {})
                 metrics_summary = self._extract_metrics_from_results(results_section)
 
@@ -663,7 +650,7 @@ class VisualizeExperiment:
 
                 exp_id = record_data.get('experiment_id', 'Unknown')
                 
-                # --- Key Fix: Read results from 'results' ---
+                # Get results from 'results'
                 results_section = record_data.get('results', {})
                 metrics_summary = self._extract_metrics_from_results(results_section)
 
