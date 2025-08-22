@@ -1,7 +1,16 @@
-# src/finbert_trader/visualize/visualize_experiment.py
+# finbert_trader/visualize/visualize_experiment.py
 """
-Experiment Visualization Module for FinBERT-Driven Trading System
-Purpose: Generate comprehensive visualizations for experiment analysis and comparison
+Visualization Module for FinBERT-Driven Trading System Experiment Analysis
+
+Purpose:
+    Generate a single, comprehensive experiment comparison report.
+    This module is the central hub for comparing multiple experiments.
+    It leverages `visualize_backtest.py` for detailed backtest-specific visualizations.
+
+Notes:
+    - This module only generates one report: `experiment_comprehensive_report`.
+    - Other reports (`benchmark_comparison`, `optimization_path`, etc.) are considered redundant and have been removed.
+    - The core functionality of `visualize_backtest.py` is reused to avoid code duplication.
 """
 
 import logging
@@ -11,6 +20,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import pickle
 from datetime import datetime
 from typing import Dict, Any, List, Union, Optional
 
@@ -18,1202 +28,791 @@ from typing import Dict, Any, List, Union, Optional
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Import project modules
-from .visualize_backtest import VisualizeBacktest
+from .visualize_backtest import VisualizeBacktest, generate_all_visualizations_with_benchmark
 from ..config_setup import ConfigSetup
+
 
 class VisualizeExperiment:
     """
-    Class for generating visualizations specific to experiment analysis and comparison.
-    
-    This class extends the basic backtest visualization with experiment-specific
-    analysis including parameter sensitivity, experiment comparison, and optimization paths.
-    It leverages enhanced backtest visualization capabilities for comprehensive analysis.
+    Class for generating the comprehensive experiment comparison report.
+
+    This class is designed to be simple and focused. Its primary responsibility is to
+    orchestrate the creation of a single, unified report that compares multiple experiments.
+    It delegates complex visualization tasks to `VisualizeBacktest`.
     """
-    
+
     def __init__(self, config: ConfigSetup):
         """
         Initialize VisualizeExperiment with unified configuration.
-        
+
         Parameters
         ----------
         config : ConfigSetup
-            Configuration setup instance containing cache directory paths
+            Configuration object containing directory paths and other settings.
         """
         self.config = config
-        self.plot_exper_dir = getattr(config, 'PLOT_EXPER_DIR', 'plot_exper_cache')
-        self.experiment_cache_dir = getattr(config, 'EXPERIMENT_CACHE_DIR', 'exper_cache')
-        
-        # Ensure directories exist
+        self.plot_exper_dir = getattr(self.config, 'PLOT_EXPER_DIR', 'plot_exper_cache')
         os.makedirs(self.plot_exper_dir, exist_ok=True)
-        os.makedirs(self.experiment_cache_dir, exist_ok=True)
-        
-        # Initialize base visualizer
-        self.base_visualizer = VisualizeBacktest(self.config)
-        
-        logging.info("VE Module - Initialized VisualizeExperiment")
-        logging.info(f"VE Module - Plot cache directory: {self.plot_exper_dir}")
-        logging.info(f"VE Module - Experiment cache directory: {self.experiment_cache_dir}")
-    
+        logging.info(f"VE Module - Initialized VisualizeExperiment with plot directory: {self.plot_exper_dir}")
+
+    def _extract_metrics_from_results(self, results_section: Dict) -> Dict[str, Dict]:
+        """
+        Extracts metrics for each mode from the 'results' section of an experiment log.
+
+        Parameters
+        ----------
+        results_section : dict
+            The `results` dictionary from an experiment log file.
+
+        Returns
+        -------
+        dict
+            A dictionary {mode_name: metrics_dict}.
+        """
+        metrics_summary = {}
+        reserved_keys = ['model_path', 'results_path', 'detailed_report']
+        if isinstance(results_section, dict):
+            for mode_name, mode_data in results_section.items():
+                if mode_name in reserved_keys or not isinstance(mode_data, dict):
+                    continue
+                metrics_summary[mode_name] = mode_data.get('metrics', {})
+        return metrics_summary
+
+    def _get_nested_value(self, data_dict: Dict, key_path: str, default=None):
+        """
+        Helper function to safely retrieve a nested value from a dictionary using a dot-separated key path.
+
+        Parameters
+        ----------
+        data_dict : dict
+            The dictionary to search.
+        key_path : str
+            Dot-separated string representing the path to the desired value.
+        default : any, optional
+            The default value to return if the key path is not found.
+
+        Returns
+        -------
+        any
+            The value found at the key path, or the default value.
+        """
+        keys = key_path.split('.')
+        current_data = data_dict
+        try:
+            for key in keys:
+                current_data = current_data[key]
+            return current_data
+        except (KeyError, TypeError):
+            return default
+
+    def _plot_performance_comparison_heatmap(self, experiment_records: List[Union[str, Dict]], ax):
+        """Plot performance comparison heatmap based on experiment metrics."""
+        try:
+            metrics_data = []
+            # Define metrics to display in the heatmap
+            metric_keys = ['cagr', 'sharpe_ratio', 'max_drawdown', 'win_rate']
+
+            for record in experiment_records:
+                if isinstance(record, str):
+                    with open(record, 'r') as f:
+                        record_data = json.load(f)
+                else:
+                    record_data = record
+
+                exp_id = record_data.get('experiment_id', 'Unknown')
+                # --- Key Fix: Read from 'results' instead of 'pipeline_results' ---
+                results_section = record_data.get('results', {})
+                metrics_summary = self._extract_metrics_from_results(results_section)
+
+                for mode_name, metrics in metrics_summary.items():
+                    row_data = {'Experiment': exp_id, 'Algorithm': mode_name}
+                    for key in metric_keys:
+                        value = metrics.get(key, np.nan)
+                        # Convert percentage-based metrics for better readability in heatmap
+                        if key in ['cagr', 'max_drawdown', 'win_rate']:
+                            value = value * 100 if not np.isnan(value) else value
+                        row_data[key] = value
+                    metrics_data.append(row_data)
+
+            if not metrics_data:
+                ax.text(0.5, 0.5, 'No Metrics Data Found', ha='center', va='center', transform=ax.transAxes)
+                ax.set_title('Performance Comparison Heatmap')
+                return
+
+            df = pd.DataFrame(metrics_data)
+            
+            # Create subplots for each metric in the heatmap
+            num_metrics = len(metric_keys)
+            cols = 2
+            rows = (num_metrics + cols - 1) // cols
+            fig_heatmap, axes_heatmap = plt.subplots(rows, cols, figsize=(6 * cols, 4 * rows))
+            axes_heatmap = axes_heatmap.flatten() if num_metrics > 1 else [axes_heatmap]
+
+            for i, metric in enumerate(metric_keys):
+                if metric not in df.columns:
+                    axes_heatmap[i].text(0.5, 0.5, f'Metric {metric} Missing', ha='center', va='center',
+                                         transform=axes_heatmap[i].transAxes)
+                    axes_heatmap[i].set_title(f'{metric.replace("_", " ").title()}')
+                    continue
+
+                # Pivot data for heatmap
+                pivot_df = df.pivot(index='Experiment', columns='Algorithm', values=metric)
+                
+                # Choose colormap based on metric type for better visual interpretation
+                cmap = 'viridis' if metric != 'max_drawdown' else 'viridis_r' # Lower DD is better
+                if metric == 'sharpe_ratio':
+                    cmap = 'RdYlGn' # Higher Sharpe is better
+
+                sns.heatmap(pivot_df, annot=True, fmt='.2f', cmap=cmap, ax=axes_heatmap[i], cbar_kws={'shrink': 0.8})
+                axes_heatmap[i].set_title(f'{metric.replace("_", " ").title()}')
+                axes_heatmap[i].tick_params(axis='x', rotation=45)
+                axes_heatmap[i].tick_params(axis='y', rotation=0)
+
+            # Hide any unused subplots
+            for j in range(i + 1, len(axes_heatmap)):
+                fig_heatmap.delaxes(axes_heatmap[j])
+
+            plt.tight_layout()
+            
+            # Save the separate heatmap figure
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            heatmap_filename = f"performance_heatmap_detailed_{timestamp}.png"
+            heatmap_path = os.path.join(self.plot_exper_dir, heatmap_filename)
+            fig_heatmap.savefig(heatmap_path, dpi=300, bbox_inches='tight')
+            plt.close(fig_heatmap) # Close the separate figure
+
+            # Indicate on the main report subplot where to find the heatmap
+            ax.text(0.5, 0.5, f'Heatmap Generated\nSee: {os.path.basename(heatmap_path)}', ha='center', va='center',
+                    transform=ax.transAxes)
+            ax.set_title('Performance Comparison Heatmap')
+
+        except Exception as e:
+            logging.error(f"VE Module - Error in _plot_performance_comparison_heatmap: {e}", exc_info=True)
+            ax.text(0.5, 0.5, f'Error Generating Heatmap:\n{str(e)[:50]}...', ha='center', va='center',
+                    transform=ax.transAxes)
+            ax.set_title('Performance Comparison Heatmap')
+
+    def _plot_asset_curves_comparison(self, experiment_records: List[Union[str, Dict]], ax):
+        """Plot asset curves comparison by leveraging visualize_backtest.py."""
+        try:
+            # --- 关键：使用 visualize_backtest.py 的功能 ---
+            # 遍历每个实验，加载其 .pkl 文件中的 backtest_results
+            pipeline_results_for_viz = {}
+
+            for record in experiment_records:
+                if isinstance(record, str):
+                    with open(record, 'r') as f:
+                        record_data = json.load(f)
+                else:
+                    record_data = record
+
+                exp_id = record_data.get('experiment_id', 'Unknown')
+                # 从 .json 日志中获取 results_path
+                results_path = record_data.get('results', {}).get('PPO', {}).get('results_path')  # 假设 PPO 是主要模式
+
+                if results_path and os.path.exists(results_path):
+                    # 加载 .pkl 文件中的 backtest_results
+                    with open(results_path, 'rb') as f:
+                        backtest_data = pickle.load(f)  # 假设 backtest_data 包含 'strategy_assets_with_date' 等
+
+                    # 将数据添加到临时的 pipeline_results 字典中
+                    pipeline_results_for_viz[exp_id] = backtest_data
+
+            # --- 关键：调用 visualize_backtest.py 的方法 ---
+            vb = VisualizeBacktest(self.config)
+            # 为了简化，我们假设 benchmark_data 可以从第一个实验中提取
+            benchmark_data = None
+            if pipeline_results_for_viz:
+                first_exp_data = next(iter(pipeline_results_for_viz.values()))
+                benchmark_data = first_exp_data.get('benchmark_prices_with_date', None)
+
+            # 生成资产曲线比较图并保存路径
+            plot_path = vb.generate_asset_curve_comparison(pipeline_results_for_viz, benchmark_data=benchmark_data)
+
+            # 在当前轴上显示占位符或文件名
+            ax.text(0.5, 0.5, f'Asset Curves Plot\nGenerated at: {os.path.basename(plot_path)}', ha='center', va='center', transform=ax.transAxes)
+            ax.set_title('Normalized Asset Curves Comparison')
+            logging.info(f"VE Module - Asset curves comparison plot generated: {plot_path}")
+        except Exception as e:
+            logging.error(f"VE Module - Error in _plot_asset_curves_comparison: {e}", exc_info=True)
+            ax.text(0.5, 0.5, f'Error Generating Asset Curves:\n{str(e)[:50]}...', ha='center', va='center',
+                    transform=ax.transAxes)
+            ax.set_title('Normalized Asset Curves Comparison')
+
+    def _plot_cumulative_excess_return_vs_benchmark(self, experiment_records: List[Union[str, Dict]], ax):
+        """Plot cumulative excess return vs benchmark by leveraging visualize_backtest.py."""
+        try:
+            # --- 关键：使用 visualize_backtest.py 的功能 ---
+            # 构建 pipeline_results_for_viz 和提取 benchmark_returns
+            pipeline_results_for_viz = {}
+            benchmark_returns_array = None
+
+            for record in experiment_records:
+                if isinstance(record, str):
+                    with open(record, 'r') as f:
+                        record_data = json.load(f)
+                else:
+                    record_data = record
+
+                exp_id = record_data.get('experiment_id', 'Unknown')
+                results_path = record_data.get('results', {}).get('PPO', {}).get('results_path')
+
+                if results_path and os.path.exists(results_path):
+                    with open(results_path, 'rb') as f:
+                        backtest_data = pickle.load(f)
+                    pipeline_results_for_viz[exp_id] = backtest_data
+                    # 如果还没有 benchmark_returns，就从这个实验中获取
+                    if benchmark_returns_array is None:
+                        benchmark_returns_array = backtest_data.get('benchmark_returns', None)
+
+            # --- 关键：调用 visualize_backtest.py 的方法 ---
+            vb = VisualizeBacktest(self.config)
+            plot_path = vb.generate_benchmark_relative_performance(pipeline_results_for_viz, benchmark_returns=benchmark_returns_array)
+
+            ax.text(0.5, 0.5, f'Cumulative Excess Return Plot\nGenerated at: {os.path.basename(plot_path)}', ha='center', va='center', transform=ax.transAxes)
+            ax.set_title('Cumulative Excess Return vs QQQ')
+            logging.info(f"VE Module - Cumulative excess return plot generated: {plot_path}")
+        except Exception as e:
+            logging.error(f"VE Module - Error in _plot_cumulative_excess_return_vs_benchmark: {e}", exc_info=True)
+            ax.text(0.5, 0.5, f'Error Generating Excess Return:\n{str(e)[:50]}...', ha='center', va='center',
+                    transform=ax.transAxes)
+            ax.set_title('Cumulative Excess Return vs QQQ')
+
+    def _plot_parameter_sensitivity_2d(self, experiment_records: List[Union[str, Dict]], ax):
+        """Plot parameter sensitivity analysis for two parameters (reward_scaling, cash_penalty_proportion)."""
+        try:
+            param_values = []
+            metric_values = []  # Sharpe Ratio
+            labels = []
+
+            for record in experiment_records:
+                if isinstance(record, str):
+                    with open(record, 'r') as f:
+                        record_data = json.load(f)
+                else:
+                    record_data = record
+
+                exp_id = record_data.get('experiment_id', 'Unknown')
+                # 提取两个参数值
+                reward_scaling = self._get_nested_value(record_data, 'config_params.trading_config.reward_scaling')
+                cash_penalty = self._get_nested_value(record_data, 'config_params.trading_config.cash_penalty_proportion')
+                
+                # 提取 Sharpe Ratio
+                metrics_summary = self._extract_metrics_from_results(record_data.get('results', {}))
+                sharpe_ratios = [metrics.get('sharpe_ratio', np.nan) for metrics in metrics_summary.values()]
+                valid_sharpes = [s for s in sharpe_ratios if not np.isnan(s)]
+                avg_sharpe = np.mean(valid_sharpes) if valid_sharpes else np.nan
+
+                if not np.isnan(reward_scaling) and not np.isnan(cash_penalty) and not np.isnan(avg_sharpe):
+                    param_values.append((reward_scaling, cash_penalty))
+                    metric_values.append(avg_sharpe)
+                    labels.append(exp_id)
+
+            if param_values and metric_values:
+                # 创建散点图
+                scatter = ax.scatter([p[0] for p in param_values], [p[1] for p in param_values], c=metric_values, cmap='viridis', alpha=0.7)
+                ax.set_xlabel('Reward Scaling')
+                ax.set_ylabel('Cash Penalty Proportion')
+                ax.set_title('Parameter Sensitivity: reward_scaling vs cash_penalty_proportion')
+                ax.grid(True, alpha=0.3)
+                plt.colorbar(scatter, ax=ax, label='Sharpe Ratio')
+                
+                # 添加标签
+                for i, txt in enumerate(labels):
+                    ax.annotate(txt, (param_values[i][0], param_values[i][1]), fontsize=8, ha='right')
+            else:
+                ax.text(0.5, 0.5, 'Insufficient Data for Parameter Sensitivity', ha='center', va='center',
+                        transform=ax.transAxes)
+                ax.set_title('Parameter Sensitivity')
+        except Exception as e:
+            logging.error(f"VE Module - Error in _plot_parameter_sensitivity_2d: {e}", exc_info=True)
+            ax.text(0.5, 0.5, f'Error in Parameter Sensitivity:\n{str(e)[:50]}...', ha='center', va='center',
+                    transform=ax.transAxes)
+            ax.set_title('Parameter Sensitivity')
+
+    def _plot_algorithm_radar_chart(self, experiment_records: List[Union[str, Dict]], ax):
+        """
+        Plot radar chart for algorithm performance comparison.
+        This chart compares the average performance of different algorithms (modes)
+        across multiple experiments on a set of key metrics.
+        """
+        try:
+            # --- 1. 定义雷达图的指标和标签 ---
+            # 指标名称 (用于显示在雷达图的轴上)
+            categories = ['CAGR (%)', 'Sharpe Ratio', 'Max Drawdown (%)', 'Win Rate (%)']
+            # 指标键名 (用于从 metrics 字典中提取数据)
+            metric_keys = ['cagr', 'sharpe_ratio', 'max_drawdown', 'win_rate']
+            # 指标处理函数 (如何将原始指标值转换为雷达图上的值)
+            # 例如，Max Drawdown 通常是负数，我们取其绝对值或负值使其“越大越好”
+            # 这里我们取负值，这样数值越大代表风险越小
+            transformations = [
+                lambda x: x * 100,           # CAGR: 转换为百分比
+                lambda x: x,                 # Sharpe: 保持不变
+                lambda x: -x * 100,          # Max Drawdown: 取负值并转为百分比 (风险越小，负值越大)
+                lambda x: x * 100            # Win Rate: 转换为百分比
+            ]
+
+            # --- 2. 为每个算法收集性能数据 ---
+            # 结构: {algo_name: {'values': [[exp1_metrics], [exp2_metrics], ...], 'labels': [exp_id1, exp_id2, ...]}}
+            algo_data = {}
+
+            for record in experiment_records:
+                if isinstance(record, str):
+                    with open(record, 'r') as f:
+                        record_data = json.load(f)
+                else:
+                    record_data = record
+
+                exp_id = record_data.get('experiment_id', 'Unknown')
+                # --- 关键修复：从 'results' 键而不是 'metrics_summary' 键获取数据 ---
+                results_section = record_data.get('results', {})
+                # 使用已有的辅助函数提取 metrics
+                metrics_summary = self._extract_metrics_from_results(results_section)
+
+                # 遍历该实验的所有模式（算法）
+                for mode_name, metrics in metrics_summary.items():
+                    # 提取并转换指标值
+                    normalized_values = []
+                    for key, transform in zip(metric_keys, transformations):
+                        raw_value = metrics.get(key, np.nan)
+                        # 确保原始值是数值类型，如果不是则设为 NaN
+                        if not isinstance(raw_value, (int, float)) or np.isnan(raw_value):
+                            normalized_value = np.nan
+                        else:
+                            try:
+                                normalized_value = transform(raw_value)
+                            except Exception:
+                                normalized_value = np.nan
+                        normalized_values.append(normalized_value)
+                    
+                    # 将数据存入 algo_data
+                    if mode_name not in algo_data:
+                        algo_data[mode_name] = {'values': [], 'labels': []}
+                    algo_data[mode_name]['values'].append(normalized_values)
+                    algo_data[mode_name]['labels'].append(exp_id)
+
+            # --- 3. 检查是否有足够的数据绘制 ---
+            if not algo_data:
+                ax.text(0.5, 0.5, 'No Algorithm Data Available', ha='center', va='center', transform=ax.transAxes)
+                ax.set_title('Algorithm Performance Radar Chart')
+                return
+
+            # --- 4. 计算每个算法的平均性能 ---
+            # 结构: {algo_name: [avg_cagr, avg_sharpe, avg_drawdown, avg_win_rate]}
+            avg_algo_data = {}
+            all_valid_values = [] # 用于计算全局 Y 轴范围
+            for algo_name, data in algo_data.items():
+                values_list = data['values'] # List of lists
+                if not values_list:
+                    continue
+                
+                # 转换为 numpy 数组以便计算
+                try:
+                    values_array = np.array(values_list, dtype=float) # 强制转换为 float
+                    # 计算每列（每个指标）的均值，忽略 NaN
+                    avg_values = np.nanmean(values_array, axis=0)
+                    avg_algo_data[algo_name] = avg_values.tolist()
+                    
+                    # 收集所有有效值用于设置 Y 轴范围
+                    valid_values = values_array[~np.isnan(values_array)]
+                    all_valid_values.extend(valid_values)
+                    
+                except (ValueError, TypeError) as e:
+                    logging.warning(f"VE Module - _plot_algorithm_radar_chart - Error processing data for {algo_name}: {e}")
+                    continue # 跳过这个算法如果数据处理失败
+
+            if not avg_algo_data:
+                ax.text(0.5, 0.5, 'No Valid Algorithm Data to Plot', ha='center', va='center', transform=ax.transAxes)
+                ax.set_title('Algorithm Performance Radar Chart')
+                return
+
+            # --- 5. 设置雷达图角度 ---
+            num_vars = len(categories)
+            angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
+            # 为了闭合图形，需要将第一个角度添加到末尾
+            angles += angles[:1] 
+
+            # --- 6. 绘制雷达图 ---
+            # 为每个算法绘制一个多边形
+            for algo_name, avg_values in avg_algo_data.items():
+                # 为了闭合图形，需要将第一个值添加到末尾
+                values_to_plot = avg_values + avg_values[:1]
+                ax.plot(angles, values_to_plot, linewidth=2, linestyle='solid', label=algo_name)
+                ax.fill(angles, values_to_plot, alpha=0.25)
+
+            # --- 7. 设置图表标签和样式 ---
+            # 添加特征轴标签
+            ax.set_xticks(angles[:-1]) # 使用不闭合的角度
+            ax.set_xticklabels(categories)
+            
+            # --- 8. 安全地设置 Y 轴范围 ---
+            # 从收集到的有效值中计算 Y 轴上限
+            if all_valid_values:
+                max_val = np.max(all_valid_values)
+                min_val = np.min(all_valid_values)
+                # 增加一点边距
+                y_range = max_val - min_val
+                margin = y_range * 0.1 if y_range > 0 else 1
+                # 确保 Y 轴下限不高于数据最小值，上限不低于数据最大值
+                y_min = min_val - margin
+                y_max = max_val + margin
+                # 特别处理：如果所有值都是负的，y_max 应该是 0 或一个较小的负数
+                # 如果所有值都是正的，y_min 应该是 0 或一个较小的正数
+                # 这里简化处理，确保范围包含 0 点附近
+                y_min_final = min(y_min, 0)
+                y_max_final = max(y_max, 0)
+                
+                try:
+                    ax.set_ylim(y_min_final, y_max_final)
+                except ValueError as ve:
+                    # 如果设置失败（例如，由于 matplotlib 内部状态），使用一个默认范围
+                    logging.warning(f"VE Module - _plot_algorithm_radar_chart - Failed to set ylim: {ve}. Using default.")
+                    ax.set_ylim(-10, 10) # 使用一个安全的默认范围
+            else:
+                # 如果没有有效值，设置一个默认范围
+                ax.set_ylim(-1, 1)
+
+            ax.set_title('Algorithm Performance Radar Chart')
+            # 将图例放在图表外部，避免遮挡
+            ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
+
+            logging.info("VE Module - Algorithm performance radar chart plotted successfully.")
+
+        except Exception as e:
+            logging.error(f"VE Module - Error in _plot_algorithm_radar_chart: {e}", exc_info=True)
+            ax.text(0.5, 0.5, f'Error in Algorithm Radar Chart:\n{str(e)[:50]}...', ha='center', va='center',
+                    transform=ax.transAxes)
+            ax.set_title('Algorithm Performance Radar Chart')
+
+    def _plot_experiment_timeline(self, experiment_records: List[Union[str, Dict]], ax):
+        """Plot experiment execution timeline."""
+        try:
+            timestamps = []
+            experiment_ids = []
+
+            for record in experiment_records:
+                if isinstance(record, str):
+                    with open(record, 'r') as f:
+                        record_data = json.load(f)
+                else:
+                    record_data = record
+
+                exp_id = record_data.get('experiment_id', 'Unknown')
+                # Use the timestamp from the log file
+                timestamp_str = record_data.get('timestamp', '')
+                
+                # Attempt to parse the timestamp string into a datetime object
+                # Adjust the format string if your timestamp format is different
+                try:
+                    # Assuming timestamp is in format "YYYYMMDD_HHMMSS"
+                    timestamp = datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S')
+                except ValueError:
+                    try:
+                        # Fallback, if it's a full datetime string like "2025-08-21 20:47:02"
+                        timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+                    except ValueError:
+                        # If parsing fails, use file modification time or current time
+                        if isinstance(record, str) and os.path.exists(record):
+                            file_mtime = os.path.getmtime(record)
+                            timestamp = datetime.fromtimestamp(file_mtime)
+                        else:
+                            timestamp = datetime.now()
+                
+                timestamps.append(timestamp)
+                experiment_ids.append(exp_id)
+
+            if timestamps:
+                # Sort by timestamp to ensure correct order on the plot
+                sorted_data = sorted(zip(timestamps, experiment_ids))
+                sorted_timestamps, sorted_ids = zip(*sorted_data)
+                
+                ax.plot(sorted_timestamps, range(len(sorted_timestamps)), 'o-')
+                ax.set_yticks(range(len(sorted_ids)))
+                ax.set_yticklabels(sorted_ids)
+                ax.set_xlabel('Execution Time')
+                ax.set_title('Experiment Execution Timeline')
+                ax.grid(True, alpha=0.3)
+                fig = ax.get_figure()
+                fig.autofmt_xdate() # Rotate x-axis labels for better readability
+            else:
+                ax.text(0.5, 0.5, 'No Timeline Data Available', ha='center', va='center', transform=ax.transAxes)
+                ax.set_title('Experiment Execution Timeline')
+
+        except Exception as e:
+            logging.error(f"VE Module - Error in _plot_experiment_timeline: {e}", exc_info=True)
+            ax.text(0.5, 0.5, f'Error in Timeline Plot:\n{str(e)[:50]}...', ha='center', va='center',
+                    transform=ax.transAxes)
+            ax.set_title('Experiment Execution Timeline')
+
+    def _plot_metrics_summary(self, experiment_records: List[Union[str, Dict]], ax):
+        """Plot a summary table of key metrics."""
+        try:
+            data = []
+            # Define columns for the summary table
+            columns = ['Experiment', 'Mode', 'CAGR (%)', 'Sharpe', 'Max DD (%)', 'Win Rate (%)']
+
+            for record in experiment_records:
+                if isinstance(record, str):
+                    with open(record, 'r') as f:
+                        record_data = json.load(f)
+                else:
+                    record_data = record
+
+                exp_id = record_data.get('experiment_id', 'Unknown')
+                
+                # --- Key Fix: Read results from 'results' ---
+                results_section = record_data.get('results', {})
+                metrics_summary = self._extract_metrics_from_results(results_section)
+
+                # Populate table rows with metrics for each mode
+                for mode_name, metrics in metrics_summary.items():
+                    row = [
+                        exp_id,
+                        mode_name,
+                        f"{metrics.get('cagr', np.nan) * 100:.2f}" if not np.isnan(metrics.get('cagr', np.nan)) else 'N/A',
+                        f"{metrics.get('sharpe_ratio', np.nan):.2f}" if not np.isnan(metrics.get('sharpe_ratio', np.nan)) else 'N/A',
+                        f"{metrics.get('max_drawdown', np.nan) * 100:.2f}" if not np.isnan(metrics.get('max_drawdown', np.nan)) else 'N/A',
+                        f"{metrics.get('win_rate', np.nan) * 100:.2f}" if not np.isnan(metrics.get('win_rate', np.nan)) else 'N/A',
+                    ]
+                    data.append(row)
+
+            if data:
+                # Create a pandas DataFrame and display it as a table in the plot
+                df_table = pd.DataFrame(data, columns=columns)
+                ax.axis('off') # Turn off axis for table display
+                table = ax.table(cellText=df_table.values, colLabels=df_table.columns, cellLoc='center', loc='center')
+                table.auto_set_font_size(False)
+                table.set_fontsize(9)
+                table.scale(1, 2)
+                ax.set_title('Key Metrics Summary')
+            else:
+                ax.text(0.5, 0.5, 'No Metrics Data for Summary', ha='center', va='center', transform=ax.transAxes)
+                ax.set_title('Key Metrics Summary')
+
+        except Exception as e:
+            logging.error(f"VE Module - Error in _plot_metrics_summary: {e}", exc_info=True)
+            ax.text(0.5, 0.5, f'Error in Metrics Summary:\n{str(e)[:50]}...', ha='center', va='center',
+                    transform=ax.transAxes)
+            ax.set_title('Key Metrics Summary')
+
+    def _plot_average_cagr_comparison(self, experiment_records: List[Union[str, Dict]], ax):
+        """Plot bar chart comparison of average CAGR across experiments."""
+        try:
+            experiments = []
+            avg_cagrs = [] # Using CAGR as the comparison metric
+
+            for record in experiment_records:
+                if isinstance(record, str):
+                    with open(record, 'r') as f:
+                        record_data = json.load(f)
+                else:
+                    record_data = record
+
+                exp_id = record_data.get('experiment_id', 'Unknown')
+                
+                # --- 修复：从 'results' 键而不是 'metrics_summary' 键获取数据 ---
+                results_section = record_data.get('results', {})
+                metrics_summary = self._extract_metrics_from_results(results_section)
+
+                # Aggregate CAGR across modes for each experiment
+                cagrs = [metrics.get('cagr', np.nan) * 100 for metrics in metrics_summary.values()] # Convert to %
+                valid_cagrs = [c for c in cagrs if not np.isnan(c)]
+                if valid_cagrs:
+                    avg_cagr = np.mean(valid_cagrs)
+                    experiments.append(exp_id)
+                    avg_cagrs.append(avg_cagr)
+
+            if experiments and avg_cagrs:
+                # Create bar chart
+                bars = ax.bar(experiments, avg_cagrs, color='skyblue')
+                ax.set_xlabel('Experiment')
+                ax.set_ylabel('Average CAGR (%)')
+                ax.set_title('Average CAGR Comparison')
+                ax.tick_params(axis='x', rotation=45)
+                ax.grid(axis='y', alpha=0.3)
+                
+                # Add value labels on top of bars for clarity
+                for bar, value in zip(bars, avg_cagrs):
+                    ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.1,
+                            f'{value:.2f}%', ha='center', va='bottom', fontsize=9)
+            else:
+                ax.text(0.5, 0.5, 'Insufficient Data for Performance Comparison', ha='center', va='center',
+                        transform=ax.transAxes)
+                ax.set_title('Average CAGR Comparison')
+
+        except Exception as e:
+            logging.error(f"VE Module - Error in _plot_average_cagr_comparison: {e}", exc_info=True)
+            ax.text(0.5, 0.5, f'Error in Performance Comparison Plot:\n{str(e)[:50]}...', ha='center', va='center',
+                    transform=ax.transAxes)
+            ax.set_title('Average CAGR Comparison')
+
+    def _plot_risk_return_tradeoff(self, experiment_records: List[Union[str, Dict]], ax):
+        """Plot risk-return tradeoff analysis."""
+        try:
+            returns = [] # CAGR
+            risks = []   # Volatility
+            labels = []
+            sharpe_ratios = []
+
+            for record in experiment_records:
+                if isinstance(record, str):
+                    with open(record, 'r') as f:
+                        record_data = json.load(f)
+                else:
+                    record_data = record
+
+                exp_id = record_data.get('experiment_id', 'Unknown')
+                
+                # --- Key Fix: Read results from 'results' ---
+                results_section = record_data.get('results', {})
+                metrics_summary = self._extract_metrics_from_results(results_section)
+
+                for mode_name, metrics in metrics_summary.items():
+                    # Get return and risk metrics, converting to percentages for plot
+                    ret = metrics.get('cagr', np.nan) * 100 # Convert to %
+                    risk = metrics.get('volatility', np.nan) * 100 # Convert to %
+                    sharpe = metrics.get('sharpe_ratio', np.nan)
+
+                    # Only plot if both return and risk are valid numbers
+                    if not (np.isnan(ret) or np.isnan(risk)):
+                        returns.append(ret)
+                        risks.append(risk)
+                        labels.append(f"{exp_id}-{mode_name}")
+                        sharpe_ratios.append(sharpe)
+
+            if returns and risks:
+                # Create scatter plot, color-coded by Sharpe Ratio
+                scatter = ax.scatter(risks, returns, c=sharpe_ratios, cmap='viridis', alpha=0.7)
+                ax.set_xlabel('Risk (Volatility %)')
+                ax.set_ylabel('Return (CAGR %)')
+                ax.set_title('Risk-Return Tradeoff')
+                ax.grid(True, alpha=0.3)
+                plt.colorbar(scatter, ax=ax, label='Sharpe Ratio')
+                
+                # Annotate points for identification
+                for i, txt in enumerate(labels):
+                    ax.annotate(txt, (risks[i], returns[i]), fontsize=8, ha='right')
+            else:
+                ax.text(0.5, 0.5, 'Insufficient Data for Risk-Return Analysis', ha='center', va='center',
+                        transform=ax.transAxes)
+                ax.set_title('Risk-Return Tradeoff')
+
+        except Exception as e:
+            logging.error(f"VE Module - Error in _plot_risk_return_tradeoff: {e}", exc_info=True)
+            ax.text(0.5, 0.5, f'Error in Risk-Return Plot:\n{str(e)[:50]}...', ha='center', va='center',
+                    transform=ax.transAxes)
+            ax.set_title('Risk-Return Tradeoff')
+
     def generate_experiment_comparison_report(self, experiment_records: List[Union[str, Dict]]) -> str:
         """
-        Generate comprehensive experiment comparison report with multiple visualization types.
-        
+        Generate the comprehensive experiment comparison report.
+
+        This is the ONLY public method in this module. It creates a single, unified report
+        that combines all relevant analyses into one figure.
+
         Parameters
         ----------
         experiment_records : list
-            List of experiment records (file paths or dictionaries)
-            
+            A list of paths to experiment log JSON files or the loaded dictionaries themselves.
+
         Returns
         -------
         str
-            Path to saved comprehensive report
+            Path to the saved comprehensive report PNG file.
         """
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            
-            # Create comprehensive report with multiple plots
-            fig = plt.figure(figsize=(20, 25))
-            fig.suptitle('Comprehensive Experiment Analysis Report', fontsize=20, fontweight='bold')
-            
-            # Performance Comparison (Top algorithms across experiments)
-            ax1 = plt.subplot(4, 2, 1)
-            self._plot_performance_comparison(experiment_records, ax1)
-            
-            # Parameter Sensitivity Analysis
-            ax2 = plt.subplot(4, 2, 2)
-            self._plot_parameter_sensitivity(experiment_records, 'trading_config.reward_scaling', ax2)
-            
-            # Convergence Analysis
-            ax3 = plt.subplot(4, 2, 3)
-            self._plot_convergence_analysis(experiment_records, ax3)
-            
-            # Risk-Return Tradeoff
-            ax4 = plt.subplot(4, 2, 4)
-            self._plot_risk_return_tradeoff(experiment_records, ax4)
-            
-            # Algorithm Comparison Heatmap
-            ax5 = plt.subplot(4, 2, (5, 6))
-            self._plot_algorithm_comparison_heatmap(experiment_records, ax5)
-            
-            # Experiment Timeline
-            ax6 = plt.subplot(4, 2, 7)
+            plt.figure(figsize=(20, 15))
+
+            # 1. Performance Comparison Heatmap
+            ax1 = plt.subplot(3, 3, 1)
+            self._plot_performance_comparison_heatmap(experiment_records, ax1)
+
+            # 2. Asset Curves Comparison (using visualize_backtest)
+            ax2 = plt.subplot(3, 3, 2)
+            self._plot_asset_curves_comparison(experiment_records, ax2)
+
+            # 3. Risk-Return Tradeoff
+            ax3 = plt.subplot(3, 3, 3)
+            self._plot_risk_return_tradeoff(experiment_records, ax3)
+
+            # 4. Parameter Sensitivity (2D)
+            ax4 = plt.subplot(3, 3, 4)
+            self._plot_parameter_sensitivity_2d(experiment_records, ax4)
+
+            # 5. Average CAGR Comparison
+            ax5 = plt.subplot(3, 3, 5)
+            self._plot_average_cagr_comparison(experiment_records, ax5)
+
+            # 6. Experiment Timeline
+            ax6 = plt.subplot(3, 3, 6)
             self._plot_experiment_timeline(experiment_records, ax6)
-            
-            # Key Metrics Summary
-            ax7 = plt.subplot(4, 2, 8)
+
+            # 7. Key Metrics Summary
+            ax7 = plt.subplot(3, 3, 7)
             self._plot_metrics_summary(experiment_records, ax7)
-            
+
+            # 8. Cumulative Excess Return vs Benchmark (using visualize_backtest)
+            ax8 = plt.subplot(3, 3, 8)
+            self._plot_cumulative_excess_return_vs_benchmark(experiment_records, ax8)
+
+            # 9. Algorithm Performance Radar Chart
+            ax9 = plt.subplot(3, 3, 9)
+            self._plot_algorithm_radar_chart(experiment_records, ax9)
+
             plt.tight_layout()
-            
-            # Save comprehensive report
+
             report_filename = f"experiment_comprehensive_report_{timestamp}.png"
             report_path = os.path.join(self.plot_exper_dir, report_filename)
             plt.savefig(report_path, dpi=300, bbox_inches='tight')
             plt.close()
-            
             logging.info(f"VE Module - Comprehensive experiment report saved: {report_path}")
             return report_path
-            
+
         except Exception as e:
-            logging.error(f"VE Module - Error generating comprehensive report: {e}")
-            plt.close()
-            raise
-    
-    def _plot_performance_comparison(self, experiment_records: List[Union[str, Dict]], ax):
-        """
-        Plot performance comparison across experiments.
-        
-        Parameters
-        ----------
-        experiment_records : list
-            List of experiment records
-        ax : matplotlib.axes.Axes
-            Axes object for plotting
-        """
-        try:
-            comparison_data = []
-            for record in experiment_records:
-                if isinstance(record, str):
-                    with open(record, 'r') as f:
-                        record_data = json.load(f)
-                else:
-                    record_data = record
-                
-                exp_id = record_data.get('experiment_id', 'Unknown')
-                metrics = record_data.get('metrics_summary', {})
-                
-                if isinstance(metrics, dict):
-                    for algo_name, algo_metrics in metrics.items():
-                        if isinstance(algo_metrics, dict):
-                            comparison_data.append({
-                                'Experiment': exp_id,
-                                'Algorithm': algo_name,
-                                'CAGR': algo_metrics.get('cagr', 0) * 100,
-                                'Sharpe_Ratio': algo_metrics.get('sharpe_ratio', 0),
-                                'Max_Drawdown': abs(algo_metrics.get('max_drawdown', 0)) * 100
-                            })
-            
-            if comparison_data:
-                df = pd.DataFrame(comparison_data)
-                # Pivot for better visualization
-                pivot_cagr = df.pivot_table(index='Experiment', columns='Algorithm', values='CAGR', fill_value=0)
-                pivot_cagr.plot(kind='bar', ax=ax)
-                ax.set_title('CAGR Comparison Across Experiments')
-                ax.set_ylabel('CAGR (%)')
-                ax.tick_params(axis='x', rotation=45)
-                ax.grid(True, alpha=0.3)
-                ax.legend(title='Algorithms', bbox_to_anchor=(1.05, 1), loc='upper left')
-            else:
-                ax.text(0.5, 0.5, 'No Data Available', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title('CAGR Comparison Across Experiments')
-            
-        except Exception as e:
-            logging.warning(f"VE Module - Could not plot performance comparison: {e}")
-            ax.text(0.5, 0.5, 'Data Not Available', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('CAGR Comparison Across Experiments')
-    
-    def _plot_parameter_sensitivity(self, experiment_records: List[Union[str, Dict]], 
-                                  parameter_name: str, ax):
-        """
-        Plot parameter sensitivity analysis.
-        
-        Parameters
-        ----------
-        experiment_records : list
-            List of experiment records
-        parameter_name : str
-            Name of parameter to analyze
-        ax : matplotlib.axes.Axes
-            Axes object for plotting
-        """
-        try:
-            param_values = []
-            cagr_values = []
-            
-            for record in experiment_records:
-                if isinstance(record, str):
-                    with open(record, 'r') as f:
-                        record_data = json.load(f)
-                else:
-                    record_data = record
-                
-                config_params = record_data.get('config_params', {})
-                param_value = self._get_nested_value(config_params, parameter_name)
-                if param_value is not None:
-                    param_values.append(param_value)
-                    
-                    metrics = record_data.get('metrics_summary', {})
-                    if metrics:
-                        first_algo_metrics = next(iter(metrics.values()))
-                        if isinstance(first_algo_metrics, dict):
-                            cagr_values.append(first_algo_metrics.get('cagr', 0) * 100)
-            
-            if param_values and cagr_values:
-                # Sort by parameter values
-                sorted_indices = np.argsort(param_values)
-                sorted_params = np.array(param_values)[sorted_indices]
-                sorted_cagr = np.array(cagr_values)[sorted_indices]
-                
-                ax.plot(sorted_params, sorted_cagr, 'o-', linewidth=2, markersize=8)
-                ax.set_xlabel(parameter_name)
-                ax.set_ylabel('CAGR (%)')
-                ax.set_title(f'Parameter Sensitivity: {parameter_name}')
-                ax.grid(True, alpha=0.3)
-            else:
-                ax.text(0.5, 0.5, 'No Data Available', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title(f'Parameter Sensitivity: {parameter_name}')
-            
-        except Exception as e:
-            logging.warning(f"VE Module - Could not plot parameter sensitivity: {e}")
-            ax.text(0.5, 0.5, 'Data Not Available', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title(f'Parameter Sensitivity: {parameter_name}')
-    
-    def _plot_convergence_analysis(self, experiment_records: List[Union[str, Dict]], ax):
-        """
-        Plot convergence analysis based on training steps.
-        
-        Parameters
-        ----------
-        experiment_records : list
-            List of experiment records
-        ax : matplotlib.axes.Axes
-            Axes object for plotting
-        """
-        try:
-            # This would require training metrics data
-            ax.text(0.5, 0.5, 'Convergence Analysis\n(Training Data Required)', 
-                   ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('Training Convergence Analysis')
-            
-        except Exception as e:
-            logging.warning(f"VE Module - Could not plot convergence analysis: {e}")
-            ax.text(0.5, 0.5, 'Data Not Available', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('Training Convergence Analysis')
-    
-    def _plot_risk_return_tradeoff(self, experiment_records: List[Union[str, Dict]], ax):
-        """
-        Plot risk-return tradeoff analysis.
-        
-        Parameters
-        ----------
-        experiment_records : list
-            List of experiment records
-        ax : matplotlib.axes.Axes
-            Axes object for plotting
-        """
-        try:
-            risk_return_data = []
-            for record in experiment_records:
-                if isinstance(record, str):
-                    with open(record, 'r') as f:
-                        record_data = json.load(f)
-                else:
-                    record_data = record
-                
-                metrics = record_data.get('metrics_summary', {})
-                if isinstance(metrics, dict):
-                    for algo_name, algo_metrics in metrics.items():
-                        if isinstance(algo_metrics, dict):
-                            risk_return_data.append({
-                                'Algorithm': algo_name,
-                                'Sharpe_Ratio': algo_metrics.get('sharpe_ratio', 0),
-                                'Max_Drawdown': abs(algo_metrics.get('max_drawdown', 0)) * 100,
-                                'CAGR': algo_metrics.get('cagr', 0) * 100
-                            })
-            
-            if risk_return_data:
-                df = pd.DataFrame(risk_return_data)
-                for algo in df['Algorithm'].unique():
-                    algo_data = df[df['Algorithm'] == algo]
-                    ax.scatter(algo_data['Max_Drawdown'], algo_data['CAGR'], 
-                              label=algo, s=100, alpha=0.7)
-                
-                ax.set_xlabel('Max Drawdown (%)')
-                ax.set_ylabel('CAGR (%)')
-                ax.set_title('Risk-Return Tradeoff Analysis')
-                ax.legend()
-                ax.grid(True, alpha=0.3)
-            else:
-                ax.text(0.5, 0.5, 'No Data Available', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title('Risk-Return Tradeoff Analysis')
-            
-        except Exception as e:
-            logging.warning(f"VE Module - Could not plot risk-return tradeoff: {e}")
-            ax.text(0.5, 0.5, 'Data Not Available', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('Risk-Return Tradeoff Analysis')
-    
-    def _plot_algorithm_comparison_heatmap(self, experiment_records: List[Union[str, Dict]], ax):
-        """
-        Plot algorithm comparison heatmap.
-        
-        Parameters
-        ----------
-        experiment_records : list
-            List of experiment records
-        ax : matplotlib.axes.Axes
-            Axes object for plotting
-        """
-        try:
-            # Extract metrics for heatmap
-            metrics_data = []
-            algorithms = []
-            experiments = []
-            
-            for record in experiment_records:
-                if isinstance(record, str):
-                    with open(record, 'r') as f:
-                        record_data = json.load(f)
-                else:
-                    record_data = record
-                
-                exp_id = record_data.get('experiment_id', 'Unknown')
-                experiments.append(exp_id)
-                metrics = record_data.get('metrics_summary', {})
-                
-                if isinstance(metrics, dict):
-                    for algo_name, algo_metrics in metrics.items():
-                        if algo_name not in algorithms:
-                            algorithms.append(algo_name)
-                        if isinstance(algo_metrics, dict):
-                            metrics_data.append({
-                                'Experiment': exp_id,
-                                'Algorithm': algo_name,
-                                'CAGR': algo_metrics.get('cagr', 0) * 100,
-                                'Sharpe_Ratio': algo_metrics.get('sharpe_ratio', 0)
-                            })
-            
-            if metrics_data:
-                df = pd.DataFrame(metrics_data)
-                # Create pivot table for heatmap
-                pivot_table = df.pivot_table(index='Algorithm', columns='Experiment', 
-                                           values='CAGR', fill_value=0)
-                
-                sns.heatmap(pivot_table, annot=True, cmap='RdYlGn', center=0, 
-                           fmt='.1f', cbar_kws={'shrink': 0.8}, ax=ax)
-                ax.set_title('Algorithm Performance Heatmap (CAGR %)')
-            else:
-                ax.text(0.5, 0.5, 'No Data Available', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title('Algorithm Performance Heatmap (CAGR %)')
-            
-        except Exception as e:
-            logging.warning(f"VE Module - Could not plot algorithm comparison heatmap: {e}")
-            ax.text(0.5, 0.5, 'Data Not Available', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('Algorithm Performance Heatmap (CAGR %)')
-    
-    def _plot_experiment_timeline(self, experiment_records: List[Union[str, Dict]], ax):
-        """
-        Plot experiment timeline and progression.
-        
-        Parameters
-        ----------
-        experiment_records : list
-            List of experiment records
-        ax : matplotlib.axes.Axes
-            Axes object for plotting
-        """
-        try:
-            timeline_data = []
-            for record in experiment_records:
-                if isinstance(record, str):
-                    with open(record, 'r') as f:
-                        record_data = json.load(f)
-                else:
-                    record_data = record
-                
-                timestamp = record_data.get('timestamp', '')
-                exp_id = record_data.get('experiment_id', 'Unknown')
-                
-                # Try to parse timestamp
-                try:
-                    if len(timestamp) >= 8:
-                        # Extract date part for simple timeline
-                        date_part = timestamp[:8]  # YYYYMMDD
-                        timeline_data.append({
-                            'Experiment': exp_id,
-                            'Date': date_part,
-                            'Timestamp': timestamp
-                        })
-                except Exception as parse_error:
-                    logging.debug(f"VE Module - Could not parse timestamp {timestamp}: {parse_error}")
-                    pass
-            
-            if timeline_data:
-                df = pd.DataFrame(timeline_data)
-                ax.barh(range(len(df)), [1] * len(df), height=0.5)
-                ax.set_yticks(range(len(df)))
-                ax.set_yticklabels([f"{row['Experiment']}\n{row['Date']}" for _, row in df.iterrows()])
-                ax.set_title('Experiment Timeline')
-                ax.set_xlabel('Execution Order')
-            else:
-                ax.text(0.5, 0.5, 'No Data Available', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title('Experiment Timeline')
-            
-        except Exception as e:
-            logging.warning(f"VE Module - Could not plot experiment timeline: {e}")
-            ax.text(0.5, 0.5, 'Data Not Available', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('Experiment Timeline')
-    
-    def _plot_metrics_summary(self, experiment_records: List[Union[str, Dict]], ax):
-        """
-        Plot key metrics summary.
-        
-        Parameters
-        ----------
-        experiment_records : list
-            List of experiment records
-        ax : matplotlib.axes.Axes
-            Axes object for plotting
-        """
-        try:
-            summary_data = []
-            for record in experiment_records:
-                if isinstance(record, str):
-                    with open(record, 'r') as f:
-                        record_data = json.load(f)
-                else:
-                    record_data = record
-                
-                exp_id = record_data.get('experiment_id', 'Unknown')
-                metrics = record_data.get('metrics_summary', {})
-                
-                if isinstance(metrics, dict):
-                    for algo_name, algo_metrics in metrics.items():
-                        if isinstance(algo_metrics, dict):
-                            summary_data.append({
-                                'Experiment': exp_id,
-                                'Algorithm': algo_name,
-                                'Metric': 'CAGR',
-                                'Value': algo_metrics.get('cagr', 0) * 100
-                            })
-                            summary_data.append({
-                                'Experiment': exp_id,
-                                'Algorithm': algo_name,
-                                'Metric': 'Sharpe',
-                                'Value': algo_metrics.get('sharpe_ratio', 0)
-                            })
-            
-            if summary_data:
-                df = pd.DataFrame(summary_data)
-                # Group by metric and plot
-                metrics_list = df['Metric'].unique()
-                x_pos = np.arange(len(metrics_list))
-                width = 0.35
-                
-                for i, exp in enumerate(df['Experiment'].unique()[:2]):  # Limit to first 2 for clarity
-                    exp_data = df[df['Experiment'] == exp]
-                    if not exp_data.empty:
-                        values = [exp_data[exp_data['Metric'] == metric]['Value'].mean() 
-                                if not exp_data[exp_data['Metric'] == metric].empty else 0 
-                                for metric in metrics_list]
-                        ax.bar(x_pos + i*width, values, width, label=exp)
-                
-                ax.set_xlabel('Metrics')
-                ax.set_ylabel('Values')
-                ax.set_title('Key Metrics Summary')
-                ax.set_xticks(x_pos + width/2)
-                ax.set_xticklabels(metrics_list)
-                ax.legend()
-                ax.grid(True, alpha=0.3)
-            else:
-                ax.text(0.5, 0.5, 'No Data Available', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title('Key Metrics Summary')
-            
-        except Exception as e:
-            logging.warning(f"VE Module - Could not plot metrics summary: {e}")
-            ax.text(0.5, 0.5, 'Data Not Available', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('Key Metrics Summary')
-    
-    def _get_nested_value(self, dictionary: Dict, key_path: str) -> Any:
-        """
-        Get value from nested dictionary using dot notation.
-        
-        Parameters
-        ----------
-        dictionary : dict
-            Dictionary to search
-        key_path : str
-            Dot-separated path to value (e.g., 'model_params.learning_rate')
-            
-        Returns
-        -------
-        any
-            Value if found, None otherwise
-        """
-        try:
-            keys = key_path.split('.')
-            current = dictionary
-            
-            for key in keys:
-                if isinstance(current, dict) and key in current:
-                    current = current[key]
-                else:
-                    return None
-                    
-            return current
-        except Exception as e:
-            logging.debug(f"VE Module - Error getting nested value for {key_path}: {e}")
-            return None
-    
-    def generate_optimization_path_visualization(self, experiment_records: List[Union[str, Dict]]) -> str:
-        """
-        Generate visualization showing the optimization path across experiments.
-        
-        Parameters
-        ----------
-        experiment_records : list
-            List of experiment records
-            
-        Returns
-        -------
-        str
-            Path to saved optimization path visualization
-        """
-        try:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            
-            fig, ax = plt.subplots(figsize=(15, 10))
-            
-            # Extract optimization path data
-            path_data = []
-            for record in experiment_records:
-                if isinstance(record, str):
-                    with open(record, 'r') as f:
-                        record_data = json.load(f)
-                else:
-                    record_data = record
-                
-                exp_id = record_data.get('experiment_id', 'Unknown')
-                timestamp_str = record_data.get('timestamp', '')
-                metrics = record_data.get('metrics_summary', {})
-                
-                if isinstance(metrics, dict) and metrics:
-                    # Get best performing algorithm in this experiment
-                    best_algo = max(metrics.items(), 
-                                  key=lambda x: x[1].get('cagr', 0) if isinstance(x[1], dict) else 0)
-                    if isinstance(best_algo[1], dict):
-                        path_data.append({
-                            'Experiment': exp_id,
-                            'Timestamp': timestamp_str,
-                            'CAGR': best_algo[1].get('cagr', 0) * 100,
-                            'Sharpe': best_algo[1].get('sharpe_ratio', 0),
-                            'Drawdown': abs(best_algo[1].get('max_drawdown', 0)) * 100
-                        })
-            
-            if path_data:
-                df = pd.DataFrame(path_data)
-                df = df.sort_values('Timestamp')  # Sort by execution order
-                
-                # Plot optimization path
-                ax.plot(range(len(df)), df['CAGR'], 'o-', linewidth=2, markersize=8, label='CAGR (%)')
-                ax.set_xlabel('Experiment Sequence')
-                ax.set_ylabel('CAGR (%)', color='blue')
-                ax.tick_params(axis='y', labelcolor='blue')
-                
-                # Add secondary y-axis for Sharpe ratio
-                ax2 = ax.twinx()
-                ax2.plot(range(len(df)), df['Sharpe'], 's-', linewidth=2, markersize=8, 
-                        color='red', label='Sharpe Ratio')
-                ax2.set_ylabel('Sharpe Ratio', color='red')
-                ax2.tick_params(axis='y', labelcolor='red')
-                
-                # Add experiment labels
-                for i, (idx, row) in enumerate(df.iterrows()):
-                    ax.annotate(row['Experiment'], (i, row['CAGR']), 
-                              textcoords="offset points", xytext=(0,10), ha='center')
-                
-                ax.set_title('Optimization Path Across Experiments')
-                ax.grid(True, alpha=0.3)
-                ax.legend(loc='upper left')
-                ax2.legend(loc='upper right')
-            else:
-                ax.text(0.5, 0.5, 'No Data Available', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title('Optimization Path Across Experiments')
-            
-            plt.tight_layout()
-            
-            # Save optimization path visualization
-            filename = f"optimization_path_{timestamp}.png"
-            filepath = os.path.join(self.plot_exper_dir, filename)
-            plt.savefig(filepath, dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            logging.info(f"VE Module - Optimization path visualization saved: {filepath}")
-            return filepath
-            
-        except Exception as e:
-            logging.error(f"VE Module - Error generating optimization path visualization: {e}")
-            plt.close()
-            raise
-    
-    def generate_parameter_impact_analysis(self, experiment_records: List[Union[str, Dict]], 
-                                        parameter_names: List[str]) -> str:
-        """
-        Generate comprehensive parameter impact analysis.
-        
-        Parameters
-        ----------
-        experiment_records : list
-            List of experiment records
-        parameter_names : list
-            List of parameter names to analyze
-            
-        Returns
-        -------
-        str
-            Path to saved parameter impact analysis
-        """
-        try:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            
-            fig, axes = plt.subplots(len(parameter_names), 2, figsize=(20, 6*len(parameter_names)))
-            if len(parameter_names) == 1:
-                axes = [axes]  # Ensure axes is always a list
-            elif len(parameter_names) == 0:
-                logging.warning("VE Module - No parameter names provided for impact analysis")
-                return ""
-            
-            for i, param_name in enumerate(parameter_names):
-                ax_cagr = axes[i][0]
-                ax_sharpe = axes[i][1]
-                
-                # Extract parameter values and metrics
-                param_values = []
-                cagr_values = []
-                sharpe_values = []
-                
-                for record in experiment_records:
-                    if isinstance(record, str):
-                        with open(record, 'r') as f:
-                            record_data = json.load(f)
-                    else:
-                        record_data = record
-                    
-                    config_params = record_data.get('config_params', {})
-                    param_value = self._get_nested_value(config_params, param_name)
-                    if param_value is not None:
-                        param_values.append(param_value)
-                        
-                        metrics = record_data.get('metrics_summary', {})
-                        if metrics:
-                            first_algo_metrics = next(iter(metrics.values()))
-                            if isinstance(first_algo_metrics, dict):
-                                cagr_values.append(first_algo_metrics.get('cagr', 0) * 100)
-                                sharpe_values.append(first_algo_metrics.get('sharpe_ratio', 0))
-                
-                if param_values and cagr_values:
-                    # Sort by parameter values
-                    sorted_indices = np.argsort(param_values)
-                    sorted_params = np.array(param_values)[sorted_indices]
-                    sorted_cagr = np.array(cagr_values)[sorted_indices]
-                    sorted_sharpe = np.array(sharpe_values)[sorted_indices]
-                    
-                    # CAGR vs Parameter
-                    ax_cagr.plot(sorted_params, sorted_cagr, 'o-', linewidth=2, markersize=8)
-                    ax_cagr.set_xlabel(param_name)
-                    ax_cagr.set_ylabel('CAGR (%)')
-                    ax_cagr.set_title(f'CAGR vs {param_name}')
-                    ax_cagr.grid(True, alpha=0.3)
-                    
-                    # Sharpe vs Parameter
-                    ax_sharpe.plot(sorted_params, sorted_sharpe, 's-', linewidth=2, markersize=8, color='red')
-                    ax_sharpe.set_xlabel(param_name)
-                    ax_sharpe.set_ylabel('Sharpe Ratio')
-                    ax_sharpe.set_title(f'Sharpe Ratio vs {param_name}')
-                    ax_sharpe.grid(True, alpha=0.3)
-                else:
-                    ax_cagr.text(0.5, 0.5, 'No Data Available', ha='center', va='center', transform=ax_cagr.transAxes)
-                    ax_cagr.set_title(f'CAGR vs {param_name}')
-                    ax_sharpe.text(0.5, 0.5, 'No Data Available', ha='center', va='center', transform=ax_sharpe.transAxes)
-                    ax_sharpe.set_title(f'Sharpe Ratio vs {param_name}')
-            
-            plt.tight_layout()
-            
-            # Save parameter impact analysis
-            filename = f"parameter_impact_analysis_{timestamp}.png"
-            filepath = os.path.join(self.plot_exper_dir, filename)
-            plt.savefig(filepath, dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            logging.info(f"VE Module - Parameter impact analysis saved: {filepath}")
-            return filepath
-            
-        except Exception as e:
-            logging.error(f"VE Module - Error generating parameter impact analysis: {e}")
-            plt.close()
+            logging.error(f"VE Module - Error generating comprehensive experiment report: {e}", exc_info=True)
+            plt.close('all')
             raise
 
-    def generate_experiment_comparison_with_benchmark(self, experiment_records: List[Union[str, Dict]],
-                                                    benchmark_name: str = 'Nasdaq-100') -> str:
-        """
-        Generate experiment comparison report with benchmark analysis.
-        
-        Parameters
-        ----------
-        experiment_records : list
-            List of experiment records
-        benchmark_name : str, optional
-            Name of benchmark for display
-            
-        Returns
-        -------
-        str
-            Path to saved benchmark comparison report
-        """
-        try:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            
-            # Create benchmark comparison report
-            fig = plt.figure(figsize=(20, 20))
-            fig.suptitle(f'Experiment Analysis with {benchmark_name} Benchmark', 
-                        fontsize=20, fontweight='bold')
-            
-            # Relative Performance vs Benchmark
-            ax1 = plt.subplot(3, 3, 1)
-            self._plot_relative_performance_vs_benchmark(experiment_records, benchmark_name, ax1)
-            
-            # Information Ratio Analysis
-            ax2 = plt.subplot(3, 3, 2)
-            self._plot_information_ratio_analysis(experiment_records, ax2)
-            
-            # Alpha Analysis
-            ax3 = plt.subplot(3, 3, 3)
-            self._plot_alpha_analysis(experiment_records, ax3)
-            
-            # Benchmark Correlation Analysis
-            ax4 = plt.subplot(3, 3, 4)
-            self._plot_benchmark_correlation(experiment_records, ax4)
-            
-            # Tracking Error Analysis
-            ax5 = plt.subplot(3, 3, 5)
-            self._plot_tracking_error_analysis(experiment_records, ax5)
-            
-            # Excess Return Distribution
-            ax6 = plt.subplot(3, 3, 6)
-            self._plot_excess_return_distribution(experiment_records, ax6)
-            
-            # Performance vs Benchmark Scatter
-            ax7 = plt.subplot(3, 3, (7, 9))
-            self._plot_performance_vs_benchmark_scatter(experiment_records, benchmark_name, ax7)
-            
-            plt.tight_layout()
-            
-            # Save benchmark comparison report
-            filename = f"experiment_benchmark_comparison_{timestamp}.png"
-            filepath = os.path.join(self.plot_exper_dir, filename)
-            plt.savefig(filepath, dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            logging.info(f"VE Module - Experiment benchmark comparison report saved: {filepath}")
-            return filepath
-            
-        except Exception as e:
-            logging.error(f"VE Module - Error generating benchmark comparison report: {e}")
-            plt.close()
-            raise
 
-    def _plot_relative_performance_vs_benchmark(self, experiment_records: List[Union[str, Dict]], 
-                                              benchmark_name: str, ax):
-        """
-        Plot relative performance analysis vs benchmark.
-        
-        Parameters
-        ----------
-        experiment_records : list
-            List of experiment records
-        benchmark_name : str
-            Name of benchmark
-        ax : matplotlib.axes.Axes
-            Axes object for plotting
-        """
-        try:
-            relative_data = []
-            for record in experiment_records:
-                if isinstance(record, str):
-                    with open(record, 'r') as f:
-                        record_data = json.load(f)
-                else:
-                    record_data = record
-                
-                exp_id = record_data.get('experiment_id', 'Unknown')
-                metrics = record_data.get('metrics_summary', {})
-                
-                if isinstance(metrics, dict):
-                    for algo_name, algo_metrics in metrics.items():
-                        if isinstance(algo_metrics, dict):
-                            strategy_cagr = algo_metrics.get('cagr', 0)
-                            benchmark_cagr = algo_metrics.get('benchmark_cagr', 0)
-                            relative_performance = strategy_cagr - benchmark_cagr if benchmark_cagr != 0 else 0
-                            
-                            relative_data.append({
-                                'Experiment': exp_id,
-                                'Algorithm': algo_name,
-                                'Relative_CAGR': relative_performance * 100
-                            })
-            
-            if relative_data:
-                df = pd.DataFrame(relative_data)
-                pivot_data = df.pivot_table(index='Experiment', columns='Algorithm', 
-                                          values='Relative_CAGR', fill_value=0)
-                pivot_data.plot(kind='bar', ax=ax)
-                ax.set_title(f'Relative Performance vs {benchmark_name}')
-                ax.set_ylabel('Relative CAGR (%)')
-                ax.tick_params(axis='x', rotation=45)
-                ax.grid(True, alpha=0.3)
-                ax.legend(title='Algorithms', bbox_to_anchor=(1.05, 1), loc='upper left')
-                ax.axhline(y=0, color='black', linestyle='--', alpha=0.5)
-            else:
-                ax.text(0.5, 0.5, 'No Data Available', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title(f'Relative Performance vs {benchmark_name}')
-            
-        except Exception as e:
-            logging.warning(f"VE Module - Could not plot relative performance: {e}")
-            ax.text(0.5, 0.5, 'Data Not Available', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title(f'Relative Performance vs {benchmark_name}')
+# --- Utility Functions ---
 
-    def _plot_information_ratio_analysis(self, experiment_records: List[Union[str, Dict]], ax):
-        """
-        Plot information ratio analysis.
-        
-        Parameters
-        ----------
-        experiment_records : list
-            List of experiment records
-        ax : matplotlib.axes.Axes
-            Axes object for plotting
-        """
-        try:
-            ir_data = []
-            for record in experiment_records:
-                if isinstance(record, str):
-                    with open(record, 'r') as f:
-                        record_data = json.load(f)
-                else:
-                    record_data = record
-                
-                exp_id = record_data.get('experiment_id', 'Unknown')
-                metrics = record_data.get('metrics_summary', {})
-                
-                if isinstance(metrics, dict):
-                    for algo_name, algo_metrics in metrics.items():
-                        if isinstance(algo_metrics, dict):
-                            ir_data.append({
-                                'Experiment': exp_id,
-                                'Algorithm': algo_name,
-                                'Information_Ratio': algo_metrics.get('information_ratio', 0)
-                            })
-            
-            if ir_data:
-                df = pd.DataFrame(ir_data)
-                pivot_data = df.pivot_table(index='Experiment', columns='Algorithm', 
-                                          values='Information_Ratio', fill_value=0)
-                pivot_data.plot(kind='bar', ax=ax)
-                ax.set_title('Information Ratio Analysis')
-                ax.set_ylabel('Information Ratio')
-                ax.tick_params(axis='x', rotation=45)
-                ax.grid(True, alpha=0.3)
-                ax.legend(title='Algorithms', bbox_to_anchor=(1.05, 1), loc='upper left')
-                ax.axhline(y=0, color='black', linestyle='--', alpha=0.5)
-            else:
-                ax.text(0.5, 0.5, 'No Data Available', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title('Information Ratio Analysis')
-            
-        except Exception as e:
-            logging.warning(f"VE Module - Could not plot information ratio analysis: {e}")
-            ax.text(0.5, 0.5, 'Data Not Available', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('Information Ratio Analysis')
-
-    def _plot_alpha_analysis(self, experiment_records: List[Union[str, Dict]], ax):
-        """
-        Plot alpha analysis.
-        
-        Parameters
-        ----------
-        experiment_records : list
-            List of experiment records
-        ax : matplotlib.axes.Axes
-            Axes object for plotting
-        """
-        try:
-            alpha_data = []
-            for record in experiment_records:
-                if isinstance(record, str):
-                    with open(record, 'r') as f:
-                        record_data = json.load(f)
-                else:
-                    record_data = record
-                
-                exp_id = record_data.get('experiment_id', 'Unknown')
-                metrics = record_data.get('metrics_summary', {})
-                
-                if isinstance(metrics, dict):
-                    for algo_name, algo_metrics in metrics.items():
-                        if isinstance(algo_metrics, dict):
-                            alpha_data.append({
-                                'Experiment': exp_id,
-                                'Algorithm': algo_name,
-                                'Alpha': algo_metrics.get('alpha', 0) * 100  # Convert to percentage
-                            })
-            
-            if alpha_data:
-                df = pd.DataFrame(alpha_data)
-                pivot_data = df.pivot_table(index='Experiment', columns='Algorithm', 
-                                          values='Alpha', fill_value=0)
-                pivot_data.plot(kind='bar', ax=ax)
-                ax.set_title('Alpha Analysis (Annualized)')
-                ax.set_ylabel('Alpha (%)')
-                ax.tick_params(axis='x', rotation=45)
-                ax.grid(True, alpha=0.3)
-                ax.legend(title='Algorithms', bbox_to_anchor=(1.05, 1), loc='upper left')
-                ax.axhline(y=0, color='black', linestyle='--', alpha=0.5)
-            else:
-                ax.text(0.5, 0.5, 'No Data Available', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title('Alpha Analysis (Annualized)')
-            
-        except Exception as e:
-            logging.warning(f"VE Module - Could not plot alpha analysis: {e}")
-            ax.text(0.5, 0.5, 'Data Not Available', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('Alpha Analysis (Annualized)')
-
-    def _plot_benchmark_correlation(self, experiment_records: List[Union[str, Dict]], ax):
-        """
-        Plot benchmark correlation analysis.
-        
-        Parameters
-        ----------
-        experiment_records : list
-            List of experiment records
-        ax : matplotlib.axes.Axes
-            Axes object for plotting
-        """
-        try:
-            correlation_data = []
-            for record in experiment_records:
-                if isinstance(record, str):
-                    with open(record, 'r') as f:
-                        record_data = json.load(f)
-                else:
-                    record_data = record
-                
-                exp_id = record_data.get('experiment_id', 'Unknown')
-                metrics = record_data.get('metrics_summary', {})
-                
-                if isinstance(metrics, dict):
-                    for algo_name, algo_metrics in metrics.items():
-                        if isinstance(algo_metrics, dict):
-                            correlation_data.append({
-                                'Experiment': exp_id,
-                                'Algorithm': algo_name,
-                                'Beta': algo_metrics.get('beta', 0)
-                            })
-            
-            if correlation_data:
-                df = pd.DataFrame(correlation_data)
-                pivot_data = df.pivot_table(index='Experiment', columns='Algorithm', 
-                                          values='Beta', fill_value=0)
-                pivot_data.plot(kind='bar', ax=ax)
-                ax.set_title('Benchmark Beta (Correlation)')
-                ax.set_ylabel('Beta')
-                ax.tick_params(axis='x', rotation=45)
-                ax.grid(True, alpha=0.3)
-                ax.legend(title='Algorithms', bbox_to_anchor=(1.05, 1), loc='upper left')
-                ax.axhline(y=1, color='red', linestyle='--', alpha=0.5, label='Market Beta')
-                ax.axhline(y=0, color='black', linestyle='--', alpha=0.5)
-                ax.legend()
-            else:
-                ax.text(0.5, 0.5, 'No Data Available', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title('Benchmark Beta (Correlation)')
-            
-        except Exception as e:
-            logging.warning(f"VE Module - Could not plot benchmark correlation: {e}")
-            ax.text(0.5, 0.5, 'Data Not Available', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('Benchmark Beta (Correlation)')
-
-    def _plot_tracking_error_analysis(self, experiment_records: List[Union[str, Dict]], ax):
-        """
-        Plot tracking error analysis.
-        
-        Parameters
-        ----------
-        experiment_records : list
-            List of experiment records
-        ax : matplotlib.axes.Axes
-            Axes object for plotting
-        """
-        try:
-            te_data = []
-            for record in experiment_records:
-                if isinstance(record, str):
-                    with open(record, 'r') as f:
-                        record_data = json.load(f)
-                else:
-                    record_data = record
-                
-                exp_id = record_data.get('experiment_id', 'Unknown')
-                metrics = record_data.get('metrics_summary', {})
-                
-                if isinstance(metrics, dict):
-                    for algo_name, algo_metrics in metrics.items():
-                        if isinstance(algo_metrics, dict):
-                            te_data.append({
-                                'Experiment': exp_id,
-                                'Algorithm': algo_name,
-                                'Tracking_Error': algo_metrics.get('tracking_error', 0) * 100
-                            })
-            
-            if te_data:
-                df = pd.DataFrame(te_data)
-                pivot_data = df.pivot_table(index='Experiment', columns='Algorithm', 
-                                          values='Tracking_Error', fill_value=0)
-                pivot_data.plot(kind='bar', ax=ax)
-                ax.set_title('Tracking Error Analysis')
-                ax.set_ylabel('Tracking Error (%)')
-                ax.tick_params(axis='x', rotation=45)
-                ax.grid(True, alpha=0.3)
-                ax.legend(title='Algorithms', bbox_to_anchor=(1.05, 1), loc='upper left')
-            else:
-                ax.text(0.5, 0.5, 'No Data Available', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title('Tracking Error Analysis')
-            
-        except Exception as e:
-            logging.warning(f"VE Module - Could not plot tracking error analysis: {e}")
-            ax.text(0.5, 0.5, 'Data Not Available', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('Tracking Error Analysis')
-
-    def _plot_excess_return_distribution(self, experiment_records: List[Union[str, Dict]], ax):
-        """
-        Plot excess return distribution analysis.
-        
-        Parameters
-        ----------
-        experiment_records : list
-            List of experiment records
-        ax : matplotlib.axes.Axes
-            Axes object for plotting
-        """
-        try:
-            excess_data = []
-            for record in experiment_records:
-                if isinstance(record, str):
-                    with open(record, 'r') as f:
-                        record_data = json.load(f)
-                else:
-                    record_data = record
-                
-                metrics = record_data.get('metrics_summary', {})
-                
-                if isinstance(metrics, dict):
-                    for algo_name, algo_metrics in metrics.items():
-                        if isinstance(algo_metrics, dict):
-                            excess_return = algo_metrics.get('excess_return', 0) * 100
-                            excess_data.append(excess_return)
-            
-            if excess_data:
-                ax.hist(excess_data, bins=20, alpha=0.7, color='skyblue', edgecolor='black')
-                ax.set_title('Excess Return Distribution')
-                ax.set_xlabel('Excess Return (%)')
-                ax.set_ylabel('Frequency')
-                ax.grid(True, alpha=0.3)
-                ax.axvline(np.mean(excess_data), color='red', linestyle='--', 
-                          label=f'Mean: {np.mean(excess_data):.2f}%')
-                ax.legend()
-            else:
-                ax.text(0.5, 0.5, 'No Data Available', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title('Excess Return Distribution')
-            
-        except Exception as e:
-            logging.warning(f"VE Module - Could not plot excess return distribution: {e}")
-            ax.text(0.5, 0.5, 'Data Not Available', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('Excess Return Distribution')
-
-    def _plot_performance_vs_benchmark_scatter(self, experiment_records: List[Union[str, Dict]], 
-                                             benchmark_name: str, ax):
-        """
-        Plot performance vs benchmark scatter analysis.
-        
-        Parameters
-        ----------
-        experiment_records : list
-            List of experiment records
-        benchmark_name : str
-            Name of benchmark
-        ax : matplotlib.axes.Axes
-            Axes object for plotting
-        """
-        try:
-            scatter_data = []
-            for record in experiment_records:
-                if isinstance(record, str):
-                    with open(record, 'r') as f:
-                        record_data = json.load(f)
-                else:
-                    record_data = record
-                
-                metrics = record_data.get('metrics_summary', {})
-                
-                if isinstance(metrics, dict):
-                    for algo_name, algo_metrics in metrics.items():
-                        if isinstance(algo_metrics, dict):
-                            strategy_cagr = algo_metrics.get('cagr', 0) * 100
-                            benchmark_cagr = algo_metrics.get('benchmark_cagr', 0) * 100
-                            
-                            scatter_data.append({
-                                'Algorithm': algo_name,
-                                'Strategy_CAGR': strategy_cagr,
-                                'Benchmark_CAGR': benchmark_cagr
-                            })
-            
-            if scatter_data:
-                df = pd.DataFrame(scatter_data)
-                for algo in df['Algorithm'].unique():
-                    algo_data = df[df['Algorithm'] == algo]
-                    ax.scatter(algo_data['Benchmark_CAGR'], algo_data['Strategy_CAGR'], 
-                              label=algo, s=100, alpha=0.7)
-                
-                # Add 45-degree line (perfect correlation)
-                min_val = min(df['Benchmark_CAGR'].min(), df['Strategy_CAGR'].min())
-                max_val = max(df['Benchmark_CAGR'].max(), df['Strategy_CAGR'].max())
-                ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.5, label='Perfect Correlation')
-                
-                ax.set_xlabel(f'{benchmark_name} CAGR (%)')
-                ax.set_ylabel('Strategy CAGR (%)')
-                ax.set_title('Strategy vs Benchmark Performance')
-                ax.legend()
-                ax.grid(True, alpha=0.3)
-            else:
-                ax.text(0.5, 0.5, 'No Data Available', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title('Strategy vs Benchmark Performance')
-            
-        except Exception as e:
-            logging.warning(f"VE Module - Could not plot performance vs benchmark scatter: {e}")
-            ax.text(0.5, 0.5, 'Data Not Available', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('Strategy vs Benchmark Performance')
-
-# Utility functions
 def create_experiment_visualizer(config: ConfigSetup) -> VisualizeExperiment:
     """
     Create and return a VisualizeExperiment instance.
-    
+
     Parameters
     ----------
     config : ConfigSetup
-        Configuration setup instance
-        
+        Configuration setup instance.
+
     Returns
     -------
     VisualizeExperiment
-        New VisualizeExperiment instance
+        New VisualizeExperiment instance.
     """
     return VisualizeExperiment(config)
 
-def generate_comprehensive_experiment_report(config: ConfigSetup, 
-                                          experiment_records: List[Union[str, Dict]]) -> str:
+
+def generate_comprehensive_experiment_report(config: ConfigSetup, experiment_records: List[Union[str, Dict]]) -> str:
     """
     Generate comprehensive experiment report.
-    
+
     Parameters
     ----------
     config : ConfigSetup
-        Configuration setup instance
+        Configuration setup instance.
     experiment_records : list
-        List of experiment records
-        
+        List of experiment records.
+
     Returns
     -------
     str
-        Path to saved comprehensive report
+        Path to saved comprehensive report.
     """
     try:
         visualizer = VisualizeExperiment(config)
         return visualizer.generate_experiment_comparison_report(experiment_records)
     except Exception as e:
-        logging.error(f"VE Module - Error generating comprehensive experiment report: {e}")
-        raise
-
-def generate_experiment_benchmark_report(config: ConfigSetup, 
-                                       experiment_records: List[Union[str, Dict]],
-                                       benchmark_name: str = 'Nasdaq-100') -> str:
-    """
-    Generate experiment report with benchmark comparison.
-    
-    Parameters
-    ----------
-    config : ConfigSetup
-        Configuration setup instance
-    experiment_records : list
-        List of experiment records
-    benchmark_name : str, optional
-        Name of benchmark for comparison
-        
-    Returns
-    -------
-    str
-        Path to saved benchmark comparison report
-    """
-    try:
-        visualizer = VisualizeExperiment(config)
-        return visualizer.generate_experiment_comparison_with_benchmark(
-            experiment_records, benchmark_name
-        )
-    except Exception as e:
-        logging.error(f"VE Module - Error generating experiment benchmark report: {e}")
+        logging.error(f"VE Module - Error in generate_comprehensive_experiment_report: {e}", exc_info=True)
         raise

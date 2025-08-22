@@ -6,6 +6,8 @@ Purpose: Provide systematic experiment schemes for parameter tuning and validati
 
 import logging
 import os
+import numpy as np
+import matplotlib.pyplot as plt
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
@@ -956,7 +958,7 @@ class ExperimentScheme:
             visualization_results = {}
             try:
                 # --- Enhanced visualizations with benchmark ---
-                from .visualize.visualize_backtest import generate_all_visualizations_with_benchmark
+                from .visualize.visualize_backtest import VisualizeBacktest, generate_all_visualizations_with_benchmark
                 
                 # Pass the correctly structured data and extracted benchmark info
                 enhanced_visualizations = generate_all_visualizations_with_benchmark(
@@ -966,6 +968,20 @@ class ExperimentScheme:
                     benchmark_returns=benchmark_returns_array_for_viz, # Benchmark returns array
                     benchmark_name='QQQ' # Specify the benchmark name
                 )
+
+                # Generate Full Comparison Visualization
+                try:
+                    visualizer_instance = VisualizeBacktest(self.config) # Create instance
+                    full_comparison_plot_path = visualizer_instance.plot_full_comparison_visualization(
+                        pipeline_results=pipeline_results_for_viz,
+                        benchmark_name='QQQ',
+                        experiment_name=experiment_id # Pass the experiment ID as the name
+                    )
+                    if full_comparison_plot_path:
+                         enhanced_visualizations['full_comparison_visualization'] = full_comparison_plot_path
+                         logging.info(f"ES Module - Generated full comparison visualization: {full_comparison_plot_path}")
+                except Exception as full_viz_error:
+                     logging.warning(f"ES Module - Could not generate full comparison visualization: {full_viz_error}", exc_info=True)
                 
                 visualization_results.update(enhanced_visualizations)
                 
@@ -1153,7 +1169,213 @@ class ExperimentScheme:
         except Exception as e:
             logging.error(f"ES Module - Error processing mode {mode_name}: {e}")
             raise
-    
+
+    def run_robustness_test(self, experiment_method, num_runs: int = 5, run_prefix: str = "robustness_run") -> Dict[str, Any]:
+        """
+        Run robustness test by executing the same experiment multiple times.
+
+        Parameters
+        ----------
+        experiment_method : callable
+            The experiment method to run, e.g., self.quick_exper_1
+        num_runs : int, optional
+            Number of times to run the experiment (default is 5).
+        run_prefix : str, optional
+            Prefix for individual run experiment IDs (default is "robustness_run").
+
+        Returns
+        -------
+        dict
+            A dictionary containing:
+            - 'individual_results': List of results from each run.
+            - 'aggregated_metrics': Statistical summary of key metrics.
+            - 'robustness_report_path': Path to the generated summary report (txt/json).
+            - 'robustness_visualization_path': Path to the generated visualization (png).
+        """
+        logging.info(f"ES Module - Starting robustness test: {experiment_method.__name__} for {num_runs} runs.")
+        
+        all_results = []
+        all_metrics = {
+            'cagr': [],
+            'sharpe_ratio': [],
+            'max_drawdown': [],
+            'final_return': [], # As a percentage, e.g., 1.5 for 150%
+        }
+
+        for i in range(num_runs):
+            run_id = f"{run_prefix}_{i+1}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            logging.info(f"ES Module - Robustness Test - Running iteration {i+1}/{num_runs} with ID: {run_id}")
+            
+            try:
+                # --- Execute the experiment ---
+                # We directly call the method, not the wrapper that includes visualization
+                # to avoid redundant plotting overhead during robustness test.
+                run_result = experiment_method() # This calls e.g., self.quick_exper_1()
+                
+                # --- Extract and store metrics ---
+                # Assuming the result structure from _execute_experiment
+                # {mode_name: {metrics: {...}}, ...}
+                run_metrics_summary = {}
+                for mode_name, mode_data in run_result.items():
+                    if mode_name in ['experiment_id', 'setup_config', 'trading_config', 'model_params', 'description', 'notes', 'immediate_visualizations']:
+                        continue # Skip non-mode keys
+                    metrics = mode_data.get('metrics', {})
+                    run_metrics_summary[mode_name] = metrics
+                    
+                    # Collect metrics for statistical analysis (assuming first mode for simplicity)
+                    # You can modify this to analyze all modes or a specific one
+                    if i == 0: # Initialize lists for the first run
+                        for key in all_metrics.keys():
+                            all_metrics[key] = {mode_name: [] for mode_name in run_metrics_summary.keys()}
+                    
+                    for mode, mode_metrics in run_metrics_summary.items():
+                        all_metrics['cagr'][mode].append(mode_metrics.get('cagr', 0) * 100) # Convert to %
+                        all_metrics['sharpe_ratio'][mode].append(mode_metrics.get('sharpe_ratio', 0))
+                        all_metrics['max_drawdown'][mode].append(mode_metrics.get('max_drawdown', 0) * 100) # Convert to %
+                        initial_asset = mode_data.get('backtest_results', {}).get('asset_history', [1.0])[0]
+                        final_asset = mode_metrics.get('final_asset', initial_asset)
+                        final_return_pct = ((final_asset / initial_asset) - 1) * 100 if initial_asset > 0 else 0
+                        all_metrics['final_return'][mode].append(final_return_pct)
+
+                all_results.append({
+                    'run_id': run_id,
+                    'run_result': run_result,
+                    'metrics_summary': run_metrics_summary
+                })
+                logging.info(f"ES Module - Robustness Test - Completed iteration {i+1}/{num_runs}.")
+
+            except Exception as e:
+                logging.error(f"ES Module - Robustness Test - Error in iteration {i+1}: {e}", exc_info=True)
+                # Optionally, append a failure record
+                all_results.append({
+                    'run_id': run_id,
+                    'error': str(e)
+                })
+
+        # --- Aggregate Metrics ---
+        aggregated_stats = {}
+        for mode_name in all_metrics['cagr'].keys(): # Iterate through modes
+            aggregated_stats[mode_name] = {}
+            for metric_name, values_list in all_metrics.items():
+                values = values_list[mode_name]
+                if not values:
+                    aggregated_stats[mode_name][metric_name] = {'mean': np.nan, 'std': np.nan, 'min': np.nan, 'max': np.nan, 'win_rate': np.nan}
+                    continue
+                
+                mean_val = np.mean(values)
+                std_val = np.std(values)
+                min_val = np.min(values)
+                max_val = np.max(values)
+                
+                # Calculate win rate (positive final return)
+                if metric_name == 'final_return':
+                    win_rate = np.mean(np.array(values) > 0) * 100
+                else:
+                    win_rate = np.nan # Not applicable for other metrics
+
+                aggregated_stats[mode_name][metric_name] = {
+                    'mean': mean_val,
+                    'std': std_val,
+                    'min': min_val,
+                    'max': max_val,
+                    'win_rate': win_rate # Only meaningful for final_return
+                }
+
+        # --- Generate Report and Visualization ---
+        report_path = ""
+        viz_path = ""
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            report_filename = f"robustness_test_report_{experiment_method.__name__}_{timestamp}.txt"
+            report_path = os.path.join(self.experiment_cache_dir, report_filename)
+            
+            with open(report_path, 'w') as f:
+                f.write(f"Robustness Test Report for {experiment_method.__name__}\n")
+                f.write("=" * 50 + "\n")
+                f.write(f"Number of Runs: {num_runs}\n")
+                f.write(f"Timestamp: {timestamp}\n\n")
+                
+                for mode_name, stats in aggregated_stats.items():
+                    f.write(f"\n--- Metrics Summary for {mode_name} ---\n")
+                    for metric, stat_dict in stats.items():
+                        f.write(f"{metric.replace('_', ' ').title()}:\n")
+                        f.write(f"  Mean: {stat_dict['mean']:.4f}\n")
+                        f.write(f"  Std Dev: {stat_dict['std']:.4f}\n")
+                        f.write(f"  Min: {stat_dict['min']:.4f}\n")
+                        f.write(f"  Max: {stat_dict['max']:.4f}\n")
+                        if not np.isnan(stat_dict['win_rate']):
+                            f.write(f"  Win Rate (% of Positive Final Returns): {stat_dict['win_rate']:.2f}%\n")
+            
+            logging.info(f"ES Module - Robustness Test - Report saved to {report_path}")
+
+            # --- Visualization ---
+            viz_filename = f"robustness_test_viz_{experiment_method.__name__}_{timestamp}.png"
+            viz_path = os.path.join(self.plot_exper_dir, viz_filename)
+            
+            num_modes = len(aggregated_stats)
+            fig, axes = plt.subplots(2, 2, figsize=(15, 10 * num_modes))
+            if num_modes == 1:
+                axes = axes[np.newaxis, :] # Make it 2D for consistent indexing
+            
+            metric_names = ['cagr', 'sharpe_ratio', 'max_drawdown', 'final_return']
+            y_labels = ['CAGR (%)', 'Sharpe Ratio', 'Max Drawdown (%)', 'Final Return (%)']
+            
+            for i, mode_name in enumerate(aggregated_stats.keys()):
+                mode_metrics_data = all_metrics # This is already mode-specific
+                for j, (metric, ylabel) in enumerate(zip(metric_names, y_labels)):
+                    ax = axes[i, j] if num_modes > 1 else axes[j]
+                    data_to_plot = mode_metrics_data[metric][mode_name]
+                    if data_to_plot:
+                        ax.boxplot(data_to_plot, labels=[mode_name])
+                        ax.set_title(f'{mode_name} - {ylabel} Distribution')
+                        ax.set_ylabel(ylabel)
+                        ax.grid(True, alpha=0.3)
+                    else:
+                        ax.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax.transAxes)
+                        ax.set_title(f'{mode_name} - {ylabel} Distribution')
+
+            plt.tight_layout()
+            plt.savefig(viz_path, dpi=300, bbox_inches='tight')
+            plt.close(fig)
+            logging.info(f"ES Module - Robustness Test - Visualization saved to {viz_path}")
+
+        except Exception as viz_error:
+            logging.error(f"ES Module - Robustness Test - Error generating report/visualization: {viz_error}", exc_info=True)
+            plt.close('all') # Ensure any open plots are closed on error
+
+
+        logging.info(f"ES Module - Robustness test for {experiment_method.__name__} completed.")
+        return {
+            'individual_results': all_results,
+            'aggregated_metrics': aggregated_stats,
+            'robustness_report_path': report_path,
+            'robustness_visualization_path': viz_path
+        }
+
+    def run_quick_exper_1_robustness(self, num_runs: int = 5) -> Dict[str, Any]:
+        """
+        Convenience method to run robustness test on quick_exper_1.
+        """
+        return self.run_robustness_test(self.quick_exper_1, num_runs, "quick_exper_1_run")
+
+    def run_quick_exper_2_robustness(self, num_runs: int = 5) -> Dict[str, Any]:
+        """
+        Convenience method to run robustness test on quick_exper_2.
+        """
+        return self.run_robustness_test(self.quick_exper_2, num_runs, "quick_exper_2_run")
+
+    def run_quick_exper_3_robustness(self, num_runs: int = 5) -> Dict[str, Any]:
+        """
+        Convenience method to run robustness test on quick_exper_3.
+        """
+        return self.run_robustness_test(self.quick_exper_3, num_runs, "quick_exper_3_run")
+
+    def run_quick_exper_4_robustness(self, num_runs: int = 5) -> Dict[str, Any]:
+        """
+        Convenience method to run robustness test on quick_exper_4.
+        """
+        return self.run_robustness_test(self.quick_exper_4, num_runs, "quick_exper_4_run")
+
     def run_experiment_sequence(self, experiment_names: List[str], 
                           symbols: List[str] = None) -> Dict[str, Dict[str, Any]]:
         """
@@ -1214,6 +1436,151 @@ class ExperimentScheme:
             logging.warning(f"ES Module - Could not generate experiment visualizations: {e}")
         
         return results
+    
+    def run_and_visualize_quick_experiments_sequence(self, symbols: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Execute all quick experiments in sequence and generate the comprehensive visualization report.
+
+        This function runs quick_exper_1 to quick_exper_4, then creates a single,
+        unified experiment comparison report using the refactored VisualizeExperiment module.
+
+        Parameters
+        ----------
+        symbols : list of str, optional
+            List of stock symbols to use for the experiments.
+
+        Returns
+        -------
+        dict
+            A dictionary containing experiment results and paths to the generated visualization.
+            {
+                'experiment_results': {...}, # Results from run_experiment_sequence
+                'visualizations': {
+                    'comprehensive_report': 'path/to/experiment_comprehensive_report_YYYYMMDD_HHMMSS.png',
+                }
+            }
+        """
+        logging.info("ES Module - Running and visualizing quick experiment sequence...")
+        results = {}
+
+        try:
+            # 1. Run all quick experiments
+            all_quick_results = self.run_experiment_sequence(
+                ['quick_exper_1', 'quick_exper_2', 'quick_exper_3', 'quick_exper_4'],
+                symbols
+            )
+            results['experiment_results'] = all_quick_results
+            logging.info("ES Module - All quick experiments completed.")
+
+            # 2. Generate the single comprehensive visualization report
+            visualizations = {}
+            
+            # --- 关键修改：正确收集 experiment log files (.json) ---
+            experiment_files = []
+            if os.path.exists(self.experiment_cache_dir):
+                # 只收集 .json 文件，避免 .pkl 文件干扰
+                for file in os.listdir(self.experiment_cache_dir):
+                    if file.startswith('experiment_log_') and file.endswith('.json'):
+                        experiment_files.append(os.path.join(self.experiment_cache_dir, file))
+            
+            # --- 日志记录收集到的文件 ---
+            logging.info(f"ES Module - Collected {len(experiment_files)} experiment log files for visualization.")
+
+            if experiment_files:
+                logging.info(f"ES Module - Found {len(experiment_files)} experiment records for visualization.")
+                
+                # --- 关键修改：只调用新的、唯一的综合报告生成函数 ---
+                try:
+                    # 1. 导入新的可视化函数
+                    from .visualize.visualize_experiment import generate_comprehensive_experiment_report
+
+                    # 2. 调用新的函数生成唯一的综合报告
+                    #    generate_comprehensive_experiment_report 是一个模块级别的函数，
+                    #    它需要 config 和 experiment_files 作为参数
+                    comprehensive_report_path = generate_comprehensive_experiment_report(self.config, experiment_files)
+                    
+                    # 3. 记录生成的报告路径
+                    visualizations['comprehensive_report'] = comprehensive_report_path
+                    logging.info(f"ES Module - Comprehensive experiment report generated: {comprehensive_report_path}")
+
+                except Exception as e:
+                    logging.error(f"ES Module - Failed to generate comprehensive experiment report: {e}", exc_info=True)
+                    # 可以选择将错误信息也存入 visualizations 字典
+                    # visualizations['comprehensive_report_error'] = str(e)
+                    
+            else:
+                logging.warning("ES Module - No experiment records found for visualization.")
+                
+            results['visualizations'] = visualizations
+
+        except Exception as e:
+            logging.error(f"ES Module - Error in run_and_visualize_quick_experiments_sequence: {e}", exc_info=True)
+            results['error'] = str(e)
+
+        logging.info("ES Module - Run and visualize quick experiment sequence completed.")
+        return results
+
+
+    # --- 替换 exper_scheme.py 中的 generate_experiment_visualizations_from_cache 方法 ---
+    def generate_experiment_visualizations_from_cache(self) -> Dict[str, str]:
+        """
+        Generate the comprehensive visualization report based on existing experiment logs in the cache.
+
+        This is useful for re-analyzing results without re-running experiments.
+        It only generates the single, unified comprehensive report.
+
+        Returns
+        -------
+        dict
+            A dictionary containing the path to the generated visualization file.
+            {
+                'comprehensive_report': 'path/to/experiment_comprehensive_report_YYYYMMDD_HHMMSS.png',
+            }
+        """
+        logging.info("ES Module - Generating comprehensive experiment visualization from cache...")
+        visualizations = {}
+
+        try:
+            # --- 关键修改：正确收集 experiment log files (.json) ---
+            experiment_files = []
+            if os.path.exists(self.experiment_cache_dir):
+                # 只收集 .json 文件，避免 .pkl 文件干扰
+                for file in os.listdir(self.experiment_cache_dir):
+                    if file.startswith('experiment_log_') and file.endswith('.json'):
+                        experiment_files.append(os.path.join(self.experiment_cache_dir, file))
+
+            # --- 日志记录收集到的文件 ---
+            logging.info(f"ES Module - Collected {len(experiment_files)} experiment log files from cache for visualization.")
+
+            if experiment_files:
+                logging.info(f"ES Module - Found {len(experiment_files)} experiment records for visualization.")
+                
+                # --- 关键修改：只调用新的、唯一的综合报告生成函数 ---
+                try:
+                    # 1. 导入新的可视化函数
+                    from .visualize.visualize_experiment import generate_comprehensive_experiment_report
+
+                    # 2. 调用新的函数生成唯一的综合报告
+                    comprehensive_report_path = generate_comprehensive_experiment_report(self.config, experiment_files)
+                    
+                    # 3. 记录生成的报告路径
+                    visualizations['comprehensive_report'] = comprehensive_report_path
+                    logging.info(f"ES Module - Comprehensive experiment report generated from cache: {comprehensive_report_path}")
+
+                except Exception as e:
+                    logging.error(f"ES Module - Failed to generate comprehensive experiment report from cache: {e}", exc_info=True)
+                    # visualizations['comprehensive_report_error'] = str(e)
+                    
+            else:
+                logging.warning("ES Module - No experiment records found in cache for visualization.")
+                
+        except Exception as e:
+            logging.error(f"ES Module - Error in generate_experiment_visualizations_from_cache: {e}", exc_info=True)
+            visualizations['error'] = str(e)
+
+        logging.info("ES Module - Comprehensive experiment visualization from cache generation completed.")
+        return visualizations
+
 
 # Utility functions for easy access
 def create_experiment_scheme(config: ConfigSetup) -> ExperimentScheme:
