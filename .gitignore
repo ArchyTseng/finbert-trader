@@ -62,6 +62,9 @@ config_cache/
 tensorboard/
 tensorboard_cache/
 
+# benchmark_cache
+benchmark_cache/
+
 # logs
 logs/
 

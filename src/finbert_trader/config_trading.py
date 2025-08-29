@@ -6,7 +6,7 @@
 # Extensibility: Add new models to SUPPORTED_MODELS and _model_defaults; enables easy switching for experiments.
 # Robustness: Validate model; fallback to default 'PPO'; log selections.
 # Reusability: get_model_params() returns dict for direct use in RL libs.
-# Updates: Added 'CPPO' support with CVaR params (alpha, lambda, beta), reference from FinRL_DeepSeek (4.1.2 CVaR-PPO formula); added infusion_strength for LLM/FinBERT injection tuning (0.001-0.1, reference from FinRL_DeepSeek 5.3); added risk_mode flag for risk assessment prompt.
+# Updates: Added 'CPPO' support with CVaR params (alpha, lambda, beta).
 
 import logging
 import numpy as np
@@ -17,13 +17,13 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 class ConfigTrading:
     # Supported models for switching
-    SUPPORTED_MODELS = ['PPO', 'A2C', 'DDPG', 'TD3', 'SAC', 'CPPO']  # Added 'CPPO' for risk-sensitive, reference from FinRL_DeepSeek (4.1.2)
+    SUPPORTED_MODELS = ['PPO', 'A2C', 'DDPG', 'TD3', 'SAC', 'CPPO']  # Added 'CPPO' for risk-sensitive, reference from FinRL_DeepSeek
 
     # Default params per model (reference: FinRL for PPO, Stable-Baselines3 for others; extended for CPPO)
     _model_params = {
         'PPO': {  # From FinRL rl_model.py
             "n_steps": 2048,
-            "ent_coef": 0.1,   # Increased to encourage action entropy, from 0.01 -> 0.02 -> 0.05 -> 0.2, prevent zero-action policies
+            "ent_coef": 0.1,   # Increased to encourage action entropy, from 0.01 -> 0.02 -> 0.05 -> 0.2 -> 0.1, prevent zero-action policies
             "learning_rate": 0.00025,
             "batch_size": 64,
         },
@@ -48,14 +48,19 @@ class ConfigTrading:
             "batch_size": 128,
             "buffer_size": 1000000,
         },
-        'CPPO': {  # Extended from PPO with CVaR params, reference from FinRL_DeepSeek (4.1.2: alpha=0.05, lambda=1.0, beta=0.01)
+        'CPPO': {  # Extended from PPO with CVaR params, reference from FinRL_DeepSeek
             "n_steps": 2048,
             "ent_coef": 0.1,
             "learning_rate": 0.00025,
             "batch_size": 64,
-            "alpha": 0.05,  # CVaR confidence level (worst 5%)
-            "lambda_": 0.5,  # Reduced from 1.0 to 0.5 for lighter CVaR penalty, prevent excessive negative rewards, reference from FinRL_DeepSeek (4.1.2: tune lambda for balance)
-            "beta": 0.005,   # Reduced from 0.01 for same reason
+            # Confidence level for CVaR calculation (e.g., 0.05 for the worst 5% of returns).
+            "alpha": 0.05,      # Inspired by the alpha parameter in FinRL-DeepSeek's CVaR-PPO formulation.
+            # Weighting factor for the CVaR penalty term in the reward function.
+            "lambda_": 0.5,     # Balances the influence of risk sensitivity (higher lambda = more risk averse).
+                                # A simplified approach to incorporating risk constraints, distinct from the dynamic Lagrangian multiplier update in the full CVaR-PPO algorithm.
+            # Scaling factor for the CVaR penalty, acting as a risk tolerance threshold.
+            "beta": 0.005,      # Influences the magnitude of the penalty applied based on calculated CVaR.
+                                # Inspired by the beta parameter's role in the constraint bound in FinRL-DeepSeek, but adapted for use in a static penalty term within reward shaping.
         },
     }
 
@@ -70,6 +75,7 @@ class ConfigTrading:
     }
 
     # config default directory
+    BENCHMARK_CACHE_DIR = 'benchmark_cache'
     SCALER_CACHE_DIR = 'scaler_cache'
     MODEL_CACHE_DIR = 'model_cache'
     TENSORBOARD_LOG_DIR = 'tensorboard_cache'
@@ -151,7 +157,8 @@ class ConfigTrading:
                              'use_risk_factor',
                              'use_senti_features',
                              'use_risk_features',
-                             'use_dynamic_ind_threshold']
+                             'use_dynamic_ind_threshold',
+                             'use_experiment_sequence']
             for param in shared_params:
                 if hasattr(upstream_config, param):  # Check if param exists in upstream
                     setattr(self, param, getattr(upstream_config, param))  # Inherit to maintain consistency
@@ -170,10 +177,10 @@ class ConfigTrading:
         self.cash_penalty_proportion = 0.01  # Penalty proportion for low cash to encourage balanced portfolios
 
         # Set risk and training hyperparameters with references for reproducibility
-        self.risk_aversion = 0.0  # Default no aversion; can be tuned for conservative strategies
+        self.risk_penalty_strength = 0.0001  # Control the strength of risk sensitivity
         self.total_timesteps = 2e6  # Increased to 2M for stability, reference from FinRL_DeepSeek (5.2: 2M steps for convergence)
         self.cvar_factor = 0.05 # Weight for CVaR downside risk adjustment, reference from FinRL_DeepSeek (4.1.2: CVaR shaping)
-        self.cvar_alpha = 0.05  # CVaR confidence level, reference from FinRL_DeepSeek (4.1.2: alpha=0.05)
+        self.cvar_alpha = 0.05  # CVaR confidence level, reference from FinRL_DeepSeek (4.1.2: CVaR=0.05)
         self.cvar_min_history = 30 # CVaR minimum history, reference from FinRL_DeepSeek
         self.risk_mode = True  # Enable risk assessment prompt, reference from FinRL_DeepSeek (3: Risk Prompt)
         self.infusion_strength = 0.001  # Default 0.1% for subtle injection, tunable 0.001-0.1, reference from FinRL_DeepSeek (5.3: 0.1% vs 10%)

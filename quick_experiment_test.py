@@ -93,7 +93,7 @@ custom_setup_config = {
     'test_start_date': '2022-01-01',
     'test_end_date': '2023-12-31',
     'exper_mode': {
-        'rl_algorithm': ['PPO']  # Test single algorithm
+        'rl_algorithm': ['PPO', 'CPPO']  # Test single algorithm
     },
     'window_size': 50,  # Initial small window size
     'window_factor': 2,
@@ -149,20 +149,20 @@ print("Quick Experiment 1 completed!")
 print(f"Results keys: {list(quick_exper_1_results.keys())}")
 
 # View experiment results metrics
-if 'PPO' in quick_exper_1_results:
-    metrics = quick_exper_1_results['PPO'].get('metrics', {})
-    print("\nKey Metrics from Quick Experiment 1:")
-    print(f"  CAGR: {metrics.get('cagr', 0)*100:.2f}%")
-    print(f"  Sharpe Ratio: {metrics.get('sharpe_ratio', 0):.4f}")
-    print(f"  Max Drawdown: {metrics.get('max_drawdown', 0)*100:.2f}%")
-    print(f"  Win Rate: {metrics.get('win_rate', 0)*100:.2f}%")
-    print(f"  Final Asset: ${metrics.get('final_asset', 0):,.2f}")
+# for mode_name in quick_exper_1_results:
+#     metrics = quick_exper_1_results[mode_name].get('metrics', {})
+#     print(f"\n{mode_name} - Key Metrics from Quick Experiment 1:")
+#     print(f"  CAGR: {metrics.get('cagr', 0)*100:.2f}%")
+#     print(f"  Sharpe Ratio: {metrics.get('sharpe_ratio', 0):.4f}")
+#     print(f"  Max Drawdown: {metrics.get('max_drawdown', 0)*100:.2f}%")
+#     print(f"  Win Rate: {metrics.get('win_rate', 0)*100:.2f}%")
+#     print(f"  Final Asset: ${metrics.get('final_asset', 0):,.2f}")
     
-    # Benchmark comparison metrics
-    if 'benchmark_cagr' in metrics:
-        print(f"  Benchmark CAGR: {metrics.get('benchmark_cagr', 0)*100:.2f}%")
-        print(f"  Information Ratio: {metrics.get('information_ratio', 0):.4f}")
-        print(f"  Alpha: {metrics.get('alpha', 0)*100:.2f}%")
+#     # Benchmark comparison metrics
+#     if 'benchmark_cagr' in metrics:
+#         print(f"  Benchmark CAGR: {metrics.get('benchmark_cagr', 0)*100:.2f}%")
+#         print(f"  Information Ratio: {metrics.get('information_ratio', 0):.4f}")
+#         print(f"  Alpha: {metrics.get('alpha', 0)*100:.2f}%")
 
 # %%
 """
@@ -180,19 +180,19 @@ quick_exper_2_results = experiment_scheme.quick_exper_2()
 print("Quick Experiment 2 completed!")
 
 # Compare two experiment results
-if 'PPO' in quick_exper_1_results and 'PPO' in quick_exper_2_results:
-    metrics_1 = quick_exper_1_results['PPO'].get('metrics', {})
-    metrics_2 = quick_exper_2_results['PPO'].get('metrics', {})
+# for mode_name in quick_exper_1_results and mode_name in quick_exper_2_results:
+#     metrics_1 = quick_exper_1_results[mode_name].get('metrics', {})
+#     metrics_2 = quick_exper_2_results[mode_name].get('metrics', {})
     
-    print("\nComparison between Quick Experiment 1 and 2:")
-    print(f"  CAGR: {metrics_1.get('cagr', 0)*100:.2f}% -> {metrics_2.get('cagr', 0)*100:.2f}%")
-    print(f"  Sharpe Ratio: {metrics_1.get('sharpe_ratio', 0):.4f} -> {metrics_2.get('sharpe_ratio', 0):.4f}")
-    print(f"  Max Drawdown: {metrics_1.get('max_drawdown', 0)*100:.2f}% -> {metrics_2.get('max_drawdown', 0)*100:.2f}%")
+#     print("\nComparison between Quick Experiment 1 and 2:")
+#     print(f"  CAGR: {metrics_1.get('cagr', 0)*100:.2f}% -> {metrics_2.get('cagr', 0)*100:.2f}%")
+#     print(f"  Sharpe Ratio: {metrics_1.get('sharpe_ratio', 0):.4f} -> {metrics_2.get('sharpe_ratio', 0):.4f}")
+#     print(f"  Max Drawdown: {metrics_1.get('max_drawdown', 0)*100:.2f}% -> {metrics_2.get('max_drawdown', 0)*100:.2f}%")
     
-    # Benchmark comparison
-    if 'benchmark_cagr' in metrics_1 and 'benchmark_cagr' in metrics_2:
-        print(f"  Benchmark CAGR: {metrics_1.get('benchmark_cagr', 0)*100:.2f}% -> {metrics_2.get('benchmark_cagr', 0)*100:.2f}%")
-        print(f"  Information Ratio: {metrics_1.get('information_ratio', 0):.4f} -> {metrics_2.get('information_ratio', 0):.4f}")
+#     # Benchmark comparison
+#     if 'benchmark_cagr' in metrics_1 and 'benchmark_cagr' in metrics_2:
+#         print(f"  Benchmark CAGR: {metrics_1.get('benchmark_cagr', 0)*100:.2f}% -> {metrics_2.get('benchmark_cagr', 0)*100:.2f}%")
+#         print(f"  Information Ratio: {metrics_1.get('information_ratio', 0):.4f} -> {metrics_2.get('information_ratio', 0):.4f}")
 
 # %%
 """
@@ -210,20 +210,20 @@ quick_exper_3_results = experiment_scheme.quick_exper_2()
 print("Quick Experiment 3 completed!")
 
 # Compare two experiment results
-if 'PPO' in quick_exper_1_results and 'PPO' in quick_exper_2_results and 'PPO' in quick_exper_3_results :
-    metrics_1 = quick_exper_1_results['PPO'].get('metrics', {})
-    metrics_2 = quick_exper_2_results['PPO'].get('metrics', {})
-    metrics_3 = quick_exper_3_results['PPO'].get('metrics', {})
+# for mode_name in quick_exper_1_results and mode_name in quick_exper_2_results and mode_name in quick_exper_3_results :
+#     metrics_1 = quick_exper_1_results[mode_name].get('metrics', {})
+#     metrics_2 = quick_exper_2_results[mode_name].get('metrics', {})
+#     metrics_3 = quick_exper_3_results[mode_name].get('metrics', {})
     
-    print("\nComparison between Quick Experiment 1 and 2:")
-    print(f"  CAGR: {metrics_1.get('cagr', 0)*100:.2f}% -> {metrics_2.get('cagr', 0)*100:.2f}%")
-    print(f"  Sharpe Ratio: {metrics_1.get('sharpe_ratio', 0):.4f} -> {metrics_2.get('sharpe_ratio', 0):.4f}")
-    print(f"  Max Drawdown: {metrics_1.get('max_drawdown', 0)*100:.2f}% -> {metrics_2.get('max_drawdown', 0)*100:.2f}%")
+#     print("\nComparison between Quick Experiment 1 and 2:")
+#     print(f"  CAGR: {metrics_1.get('cagr', 0)*100:.2f}% -> {metrics_2.get('cagr', 0)*100:.2f}%")
+#     print(f"  Sharpe Ratio: {metrics_1.get('sharpe_ratio', 0):.4f} -> {metrics_2.get('sharpe_ratio', 0):.4f}")
+#     print(f"  Max Drawdown: {metrics_1.get('max_drawdown', 0)*100:.2f}% -> {metrics_2.get('max_drawdown', 0)*100:.2f}%")
     
-    # Benchmark comparison
-    if 'benchmark_cagr' in metrics_1 and 'benchmark_cagr' in metrics_2:
-        print(f"  Benchmark CAGR: {metrics_1.get('benchmark_cagr', 0)*100:.2f}% -> {metrics_2.get('benchmark_cagr', 0)*100:.2f}%")
-        print(f"  Information Ratio: {metrics_1.get('information_ratio', 0):.4f} -> {metrics_2.get('information_ratio', 0):.4f}")
+#     # Benchmark comparison
+#     if 'benchmark_cagr' in metrics_1 and 'benchmark_cagr' in metrics_2:
+#         print(f"  Benchmark CAGR: {metrics_1.get('benchmark_cagr', 0)*100:.2f}% -> {metrics_2.get('benchmark_cagr', 0)*100:.2f}%")
+#         print(f"  Information Ratio: {metrics_1.get('information_ratio', 0):.4f} -> {metrics_2.get('information_ratio', 0):.4f}")
 
 # %%
 """

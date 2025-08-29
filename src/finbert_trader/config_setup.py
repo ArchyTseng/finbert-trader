@@ -5,7 +5,7 @@
 # Linkage: Passed to DataResource/Preprocessing; inherited by ConfigTrading.
 # Robustness: Validate dates/order/format; ensure non-empty symbols list.
 # Reusability: get_defaults for export.
-# Updates: Modified exper_mode to include 'rl_algorithm' for RL comparison (PPO, CPPO, A2C, DDPG); retained indicator/news for extensibility; added 'risk_prompt' for news risk assessment, reference from FinRL_DeepSeek (3: Risk Assessment Prompt).
+# Updates: Modified exper_mode to include 'rl_algorithm' for RL comparison (PPO, CPPO, A2C, DDPG); retained indicator/news for extensibility; 
 import os
 import numpy as np
 import json
@@ -64,7 +64,6 @@ class ConfigSetup:
         - exper_mode groups for multi-experiments; added 'rl_algorithm' with 'CPPO' for risk-sensitive RL (ref: FinRL_DeepSeek 4.3).
         - For split_mode='ratio', computes fallback dates based on global start/end.
         - Validates date sequence, chunksize, split_ratio, symbols; raises ValueError on issues.
-        - risk_mode enables risk_prompt (ref: FinRL_DeepSeek 3).
         """
         # Default values centralized here
         self.symbols = self.nasdaq_100_tickers_july_17_2023[:5]  # Example S&P500 symbols; extensible list, defense coding.
@@ -188,6 +187,8 @@ class ConfigSetup:
         # self.use_dynamic_infusion = False   # Control dynamic infusion_strength mechanism
 
         self.use_symbol_name = False     # Control saved filename rule
+
+        self.use_experiment_sequence = False # Control full experiment or single experiment for visualization
 
         if custom_config:
             # Apply overrides from dict for flexibility
@@ -448,6 +449,7 @@ class ConfigSetup:
             'use_risk_threshold': False,
             # 'use_dynamic_infusion': False,
             'use_symbol_name': True,
+            'use_experiment_sequence': False,
             'exper_mode': {
                 'indicator/news': ['benchmark',
                                    'title_only',

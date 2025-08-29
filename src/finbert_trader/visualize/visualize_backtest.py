@@ -86,72 +86,60 @@ class VisualizeBacktest:
                 plt.close()
                 return ""
 
-            # Plot for first mode
-            target_mode_name = None
-            target_backtest_data = None
+            # Plot for each mode
             strategy_assets_series = None
             benchmark_prices_series_from_data = None # Get benchmark from backtest_data
+            final_benchmark_series = None
+            # Initialize dict for modes data collection
+            valid_strategies_data = {}
 
             for mode_name, backtest_data in pipeline_results.items():
                 # backtest_data is the dict returned by TradingBacktest.run_backtest()
                 # e.g. {'metrics': ..., 'strategy_assets_with_date': pd.Series, ...}
-                target_mode_name = mode_name
-                target_backtest_data = backtest_data
                 strategy_assets_series = backtest_data.get('strategy_assets_with_date')
-                
                 if strategy_assets_series is not None and not strategy_assets_series.empty:
-                    # If get the data from first strategy
+                    # Get strategy asset data
+                    # Ensure strategy asset series index dtype and sorted
+                    strategy_assets_series.index = pd.to_datetime(strategy_assets_series.index)
+                    strategy_assets_series.sort_index(inplace=True)
+                    # Add mode data
+                    valid_strategies_data[mode_name] = strategy_assets_series
                     logging.debug(f"VB Module - generate_asset_curve_comparison - Found valid strategy data for mode {mode_name}.")
-                    # Try to get benchmark
-                    benchmark_prices_series_from_data = backtest_data.get('benchmark_prices_with_date')
-                    break
+                    # Handle benchmark data for once
+                    if benchmark_prices_series_from_data is None:
+                        benchmark_prices_series_from_data = backtest_data.get('benchmark_prices_with_date')
+                        if benchmark_prices_series_from_data is not None:
+                            benchmark_prices_series_from_data.index = pd.to_datetime(benchmark_prices_series_from_data.index)
+                            benchmark_prices_series_from_data.sort_index(inplace=True)
+                            logging.debug(f"VB Module - generate_asset_curve_comparison - Retrieved and processed benchmark data from backtest results.")
                 else:
                     logging.warning(f"VB Module - generate_asset_curve_comparison - 'strategy_assets_with_date' not found or empty for mode {mode_name}. Checking next mode.")
-                    target_mode_name = None
-                    target_backtest_data = None
-                    strategy_assets_series = None
 
             # Veryfy
-            if strategy_assets_series is None or strategy_assets_series.empty:
+            if not valid_strategies_data:
                 logging.error("VB Module - generate_asset_curve_comparison - Critical: Pre-aligned 'strategy_assets_with_date' (pandas Series) is missing or empty for all modes. Cannot plot accurately.")
                 plt.close()
                 return ""
-
-            # Get strategy asset data
-            # Ensure strategy asset series index dtype and sorted
-            strategy_assets_series.index = pd.to_datetime(strategy_assets_series.index)
-            strategy_assets_series.sort_index(inplace=True)
-
-            # Normalize cumulative strategy asset
-            initial_strategy_asset = strategy_assets_series.iloc[0] if len(strategy_assets_series) > 0 else 1.0
-            if initial_strategy_asset > 0:
-                strategy_cumulative = (strategy_assets_series / initial_strategy_asset)
-            else:
-                logging.warning("VB Module - generate_asset_curve_comparison - Initial strategy asset is non-positive. Plotting raw asset values.")
-                strategy_cumulative = strategy_assets_series
             
             # Handle benchmark data
-            # Get benchmark data from backtest_data
-            final_benchmark_series = None
             if benchmark_prices_series_from_data is not None and not benchmark_prices_series_from_data.empty:
-                logging.debug(f"VB Module - generate_asset_curve_comparison - Using benchmark data from backtest results for mode {target_mode_name}.")
+                logging.debug(f"VB Module - generate_asset_curve_comparison - Using benchmark data from backtest results for mode {mode_name}.")
                 final_benchmark_series = benchmark_prices_series_from_data
             # Get from benchmark_data insted
             elif benchmark_data is not None:
-                logging.info("VB Module - generate_asset_curve_comparison - Using provided benchmark_data as fallback.")
+                logging.warning("VB Module - generate_asset_curve_comparison - Using provided benchmark_data as fallback.")
                 if isinstance(benchmark_data, pd.Series):
-                    final_benchmark_series = benchmark_data
+                    final_benchmark_series = benchmark_data.coppy()
+                    final_benchmark_series = pd.to_datetime(final_benchmark_series.index)
+                    final_benchmark_series.sort_index(inplace=True)
                 elif isinstance(benchmark_data, (list, np.ndarray)):
-                    # Use strategy date index for alignment if same length
-                    if len(benchmark_data) == len(strategy_cumulative):
-                        final_benchmark_series = pd.Series(benchmark_data, index=strategy_cumulative.index)
-                        logging.warning("VB Module - generate_asset_curve_comparison - Created benchmark Series using strategy dates (lengths matched). "
-                                        "Ensure this is logically correct.")
-                    else:
-                        logging.warning("VB Module - generate_asset_curve_comparison - benchmark_data list length mismatch with strategy. "
-                                        "Plotting without benchmark or using integer index might be inaccurate.")
-                        # If not same length, ignore
-                        final_benchmark_series = None 
+                    final_benchmark_series = pd.Series(benchmark_data)
+                    logging.warning("VB Module - generate_asset_curve_comparison - Created benchmark Series using benchmark data dates. ")
+                else:
+                    logging.warning("VB Module - generate_asset_curve_comparison - benchmark_data list length mismatch with strategy. "
+                                    "Plotting without benchmark or using integer index might be inaccurate.")
+                    # If not same length, ignore
+                    final_benchmark_series = None 
                 # Ensure index dtype and sorted if we created/finalized a series
                 if final_benchmark_series is not None:
                     final_benchmark_series.index = pd.to_datetime(final_benchmark_series.index)
@@ -159,46 +147,113 @@ class VisualizeBacktest:
             else:
                 logging.info("VB Module - generate_asset_curve_comparison - No benchmark data available or provided.")
 
-            plot_strategy_cum = strategy_cumulative
-            plot_benchmark_cum = None
-
-            # Align with benchmark Series
-            if final_benchmark_series is not None and not final_benchmark_series.empty:
-                # Ensure index dtype and sorted
-                final_benchmark_series.index = pd.to_datetime(final_benchmark_series.index)
-                final_benchmark_series.sort_index(inplace=True)
-
-                # Implemet Pandas concat and inner join to ensure alignment effective
-                combined_df = pd.concat([strategy_cumulative, final_benchmark_series], axis=1, join='inner', keys=['strategy', 'benchmark'])
-                if not combined_df.empty:
-                    plot_strategy_cum = combined_df['strategy']
-                    aligned_benchmark_prices = combined_df['benchmark']
-                    
-                    # Calculate benchmark cumulative price and normalize
-                    initial_benchmark_price = aligned_benchmark_prices.iloc[0] if len(aligned_benchmark_prices) > 0 else 1.0
-                    if initial_benchmark_price > 0:
-                        plot_benchmark_cum = (aligned_benchmark_prices / initial_benchmark_price)
-                    else:
-                        logging.warning("VB Module - generate_asset_curve_comparison - Initial benchmark price is non-positive. Plotting raw benchmark values.")
-                        plot_benchmark_cum = aligned_benchmark_prices
-
-                    # Plot benchmark curve
-                    plt.plot(plot_benchmark_cum.index, plot_benchmark_cum.values, label=benchmark_name, linewidth=2)
-                    logging.info(f"VB Module - generate_asset_curve_comparison - Plotted aligned benchmark curve: {benchmark_name}")
+            # Align benchmark data and plot
+            x_axis_index = None
+            benchmark_has_been_plotted = False
+            for mode_name, strategy_assets_series in valid_strategies_data.items():
+                # Normalize cumulative strategy asset
+                initial_strategy_asset = 1.0
+                initial_strategy_asset_raw = strategy_assets_series.iloc[0] if len(strategy_assets_series) > 0 else 1.0
+                if isinstance(initial_strategy_asset_raw, pd.Series):
+                    # Use .item() to get scalar
+                    try:
+                        initial_strategy_asset = initial_strategy_asset_raw.item()
+                        logging.debug(f"VB Module - generate_asset_curve_comparison - Extracted scalar {initial_benchmark_price} from Series using .item().")
+                    except ValueError:
+                        # Fallback
+                        logging.warning(f"VB Module - generate_asset_curve_comparison - .item() failed on Series. Falling back to .iloc[0] of the Series.")
+                        initial_strategy_asset = initial_strategy_asset_raw.iloc[0]
+                        # Double check
+                        if isinstance(initial_benchmark_price, pd.Series):
+                            logging.error(f"VB Module - generate_asset_curve_comparison - Still got a Series after fallback. Using 1.0.")
+                            initial_strategy_asset = 1.0
+                elif isinstance(initial_strategy_asset_raw, (int, float, np.number)):
+                    initial_strategy_asset = initial_strategy_asset_raw
                 else:
-                    logging.warning("VB Module - generate_asset_curve_comparison - No overlapping dates found between strategy and benchmark after alignment. Benchmark not plotted.")
-            else:
-                logging.info("VB Module - generate_asset_curve_comparison - No valid benchmark data available for plotting.")
+                    logging.warning(f"VB Module - generate_asset_curve_comparison - initial_benchmark_price_raw is of unexpected type {type(initial_benchmark_price_raw)}. Using 1.0.")
+                    initial_strategy_asset = 1.0
+                if initial_strategy_asset > 0:
+                    strategy_cumulative = (strategy_assets_series / initial_strategy_asset)
+                else:
+                    logging.warning("VB Module - generate_asset_curve_comparison - Initial strategy asset is non-positive. Plotting raw asset values.")
+                    strategy_cumulative = strategy_assets_series
 
-            # Plot strategy curve
-            plt.plot(plot_strategy_cum.index, plot_strategy_cum.values, label=f'{target_mode_name} Strategy', linewidth=2)
-            logging.info(f"VB Module - generate_asset_curve_comparison - Plotted aligned strategy curve for mode {target_mode_name}.")
+                plot_strategy_cum = strategy_cumulative
+                plot_benchmark_cum = None
+
+                # Align with benchmark Series
+                if final_benchmark_series is not None and not final_benchmark_series.empty:
+                    # Implemet Pandas concat and inner join to ensure alignment effective
+                    logging.warning(f"VB Module - generate_asset_curve_comparison - Print final_benchmark_series: {final_benchmark_series.head()}")
+                    combined_df = pd.concat([strategy_cumulative, final_benchmark_series], axis=1, join='inner', keys=['strategy', 'benchmark'])
+                    if not combined_df.empty:
+                        plot_strategy_cum = combined_df['strategy']
+                        aligned_benchmark_prices = combined_df['benchmark']
+                        logging.warning(f"VB Module - generate_asset_curve_comparison - aligned_benchmark_prices: {aligned_benchmark_prices.head()}")
+                        logging.warning(f"VB Module - generate_asset_curve_comparison - aligned_benchmark_prices.iloc[0]: {aligned_benchmark_prices.iloc[0]}")
+                        # Fetch x axis index after alignment
+                        if x_axis_index is None:
+                            x_axis_index = combined_df.index
+                        # Calculate benchmark cumulative price and normalize
+                        initial_benchmark_price = 1.0
+                        initial_benchmark_price_raw = aligned_benchmark_prices.iloc[0] if len(aligned_benchmark_prices) > 0 else 1.0
+                        logging.warning(f"VB Module - generate_asset_curve_comparison - Debug: Type of initial_benchmark_price: {type(initial_benchmark_price)}")
+                        logging.warning(f"VB Module - generate_asset_curve_comparison - Debug: Value of initial_benchmark_price: {initial_benchmark_price}")
+                        if isinstance(initial_benchmark_price_raw, pd.Series):
+                            # Use .item() to get scalar
+                            try:
+                                initial_benchmark_price = initial_benchmark_price_raw.item()
+                                logging.debug(f"VB Module - generate_asset_curve_comparison - Extracted scalar {initial_benchmark_price} from Series using .item().")
+                            except ValueError:
+                                # Fallback
+                                logging.warning(f"VB Module - generate_asset_curve_comparison - .item() failed on Series. Falling back to .iloc[0] of the Series.")
+                                initial_benchmark_price = initial_benchmark_price_raw.iloc[0]
+                                # Double check
+                                if isinstance(initial_benchmark_price, pd.Series):
+                                    logging.error(f"VB Module - generate_asset_curve_comparison - Still got a Series after fallback. Using 1.0.")
+                                    initial_benchmark_price = 1.0
+                        elif isinstance(initial_benchmark_price_raw, (int, float, np.number)):
+                            initial_benchmark_price = initial_benchmark_price_raw
+                        else:
+                            logging.warning(f"VB Module - generate_asset_curve_comparison - initial_benchmark_price_raw is of unexpected type {type(initial_benchmark_price_raw)}. Using 1.0.")
+                            initial_benchmark_price = 1.0
+                        if initial_benchmark_price > 0:
+                            plot_benchmark_cum = (aligned_benchmark_prices / initial_benchmark_price)
+                        else:
+                            logging.warning("VB Module - generate_asset_curve_comparison - Initial benchmark price is non-positive. Plotting raw benchmark values.")
+                            plot_benchmark_cum = aligned_benchmark_prices
+                            if x_axis_index is None and not plot_benchmark_cum.empty:
+                                x_axis_index = plot_benchmark_cum.index
+
+                        # Plot strategy curve
+                        plt.plot(plot_strategy_cum.index, plot_strategy_cum.values, label=f'{mode_name} Strategy Asset', linewidth=2)
+                        logging.info(f"VB Module - generate_asset_curve_comparison - Plotted aligned strategy curve for mode {mode_name}.")
+                        
+                        # Plot benchmark curve
+                        if not benchmark_has_been_plotted and plot_benchmark_cum is not None:
+                            plt.plot(plot_benchmark_cum.index, plot_benchmark_cum.values, label=benchmark_name, linewidth=2, linestyle='--')
+                            benchmark_has_been_plotted = True
+                            logging.info(f"VB Module - generate_asset_curve_comparison - Plotted aligned benchmark curve: {benchmark_name}")
+                    else:
+                        logging.warning("VB Module - generate_asset_curve_comparison - No overlapping dates found between strategy and benchmark after alignment. Benchmark not plotted.")
+                        plt.plot(plot_strategy_cum.index, plot_strategy_cum.values, label=f'{mode_name} Strategy(Unaligned)', linewidth=2, alpha=0.8)
+                        if x_axis_index is None:
+                            x_axis_index = plot_strategy_cum.index
+                else:
+                    logging.info("VB Module - generate_asset_curve_comparison - No valid benchmark data available for plotting.")
+                    plt.plot(plot_strategy_cum.index, plot_strategy_cum.values, label=f'{mode_name} Strategy Asset', linewidth=2)
+                    if x_axis_index is None:
+                        x_axis_index = plot_strategy_cum.index
+
+            if not benchmark_has_been_plotted and final_benchmark_series is not None and not final_benchmark_series.empty:
+                logging.info("VB Module - generate_asset_curve_comparison - Attempting to plot benchmark without specific alignment")
+                plt.plot(final_benchmark_series.index, final_benchmark_series.values, label=benchmark_name, linewidth=2, linestyle='--')
 
             # Plot configuration
             plt.title("Asset Curve Comparison", fontsize=16, fontweight='bold')
             
             # Automatically set x axis
-            x_axis = strategy_cumulative.index # Also could use aligned_strategy_cum.index after alignment
+            x_axis = x_axis_index # Also could use aligned_strategy_cum.index after alignment
             if len(x_axis) > 0 and isinstance(x_axis[0], (pd.Timestamp, datetime)):
                 plt.xlabel("Date", fontsize=12)
                 # Automatically set date as x axis
@@ -210,7 +265,7 @@ class VisualizeBacktest:
                 # Fallback to integer index if not date index
                 plt.xlabel("Trading Days", fontsize=12)
 
-            plt.ylabel("Cumulative Return (Initial Value = 1.0)", fontsize=12) # 或 "Normalized Portfolio Value"
+            plt.ylabel("Cumulative Return (Initial Value = 1.0)", fontsize=12) # or "Normalized Portfolio Value"
             plt.legend()
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
@@ -572,48 +627,45 @@ class VisualizeBacktest:
             sns.set_style("whitegrid")
 
             # Get data from nested pipeline_results
-            # Plot first mode
-            target_mode_name = None
-            target_backtest_data = None
+            # Plot for each mode
             strategy_assets_series = None
             benchmark_returns_array_from_data = None
+            final_benchmark_returns_array = None
+            # Initialize dict for modes data collection
+            valid_strategies_returns = {}
 
             for mode_name, backtest_data in pipeline_results.items():
                 # backtest_data is the dict returned by TradingBacktest.run_backtest()
-                target_mode_name = mode_name
-                target_backtest_data = backtest_data
                 strategy_assets_series = backtest_data.get('strategy_assets_with_date')
 
                 if strategy_assets_series is not None and not strategy_assets_series.empty:
                     logging.debug(f"VB Module - generate_benchmark_relative_performance - Found valid strategy data for mode {mode_name}.")
+                    # Calculate strategy assets retuns
+                    # Ensure index dtype and sorted
+                    strategy_assets_series.index = pd.to_datetime(strategy_assets_series.index)
+                    strategy_assets_series.sort_index(inplace=True)
+                    # Calculate strategy returns based on the aligned Series
+                    strategy_returns_series = strategy_assets_series.pct_change().fillna(0)
+                    # Add mode data
+                    valid_strategies_returns[mode_name] = strategy_returns_series
                     # Get benchmark returns
-                    benchmark_returns_array_from_data = backtest_data.get('benchmark_returns')
-                    break
+                    if benchmark_returns_array_from_data is None:
+                        benchmark_returns_array_from_data = backtest_data.get('benchmark_returns')
+                        if benchmark_returns_array_from_data is not None:
+                            logging.debug(f"VB Module - generate_benchmark_relative_performance - Retrieve benchmark returns from mode {mode_name}")
                 else:
                     logging.warning(f"VB Module - generate_benchmark_relative_performance - 'strategy_assets_with_date' not found or empty for mode {mode_name}. Checking next mode.")
-                    target_mode_name = None
-                    target_backtest_data = None
-                    strategy_assets_series = None
 
             # Verify data
-            if strategy_assets_series is None or strategy_assets_series.empty:
+            if not valid_strategies_returns:
                 logging.error("VB Module - generate_benchmark_relative_performance - Critical: Pre-aligned 'strategy_assets_with_date' (pandas Series) is missing or empty. Cannot plot accurately.")
                 plt.close()
                 return ""
 
-            # Calculate strategy assets retuns
-            # Ensure index dtype and sorted
-            strategy_assets_series.index = pd.to_datetime(strategy_assets_series.index)
-            strategy_assets_series.sort_index(inplace=True)
-
-            # Calculate strategy returns based on the aligned Series
-            strategy_returns_series = strategy_assets_series.pct_change().fillna(0)
-
             # Get data and calculate benchmark returns
             # Get benchmark returns from backtest_data
-            final_benchmark_returns_array = None
             if benchmark_returns_array_from_data is not None and len(benchmark_returns_array_from_data) > 0:
-                logging.debug(f"VB Module - generate_benchmark_relative_performance - Using benchmark returns array from backtest results for mode {target_mode_name}.")
+                logging.debug(f"VB Module - generate_benchmark_relative_performance - Using benchmark returns array from backtest results.")
                 final_benchmark_returns_array = benchmark_returns_array_from_data
             elif benchmark_returns is not None and len(benchmark_returns) > 0:
                 logging.info("VB Module - generate_benchmark_relative_performance - Using provided benchmark_returns array as fallback.")
@@ -623,34 +675,47 @@ class VisualizeBacktest:
                 plt.close()
                 return ""
 
-            # Align strategy returns with benchmark returns
-            # Strategy returns: Pandas Series (with date index)
-            # Benchmark returns: Numpy array (assume aligned with date)
-            # Ensure they aligned by dates
-            min_len = min(len(strategy_returns_series), len(final_benchmark_returns_array))
-            aligned_strategy_returns = strategy_returns_series.iloc[:min_len]
-            aligned_benchmark_returns = final_benchmark_returns_array[:min_len]
+            # Align strategy returns with benchmark returns and plot
+            x_axis_index = None
+            plot_any_fig = False
+            for mode_name, strategy_returns_series in valid_strategies_returns.items():
+                # Strategy returns: Pandas Series (with date index)
+                # Benchmark returns: Numpy array (assume aligned with date)
+                # Ensure they aligned by dates
+                min_len = min(len(strategy_returns_series), len(final_benchmark_returns_array))
+                if min_len == 0:
+                    logging.warning(f"VB Module - generate_benchmark_relative_performance - No valid data for mode {mode_name}. Skipping relative performance plot for this mode.")
+                    continue
+                aligned_strategy_returns = strategy_returns_series.iloc[:min_len]
+                aligned_benchmark_returns = final_benchmark_returns_array[:min_len]
 
-            # Create benchmark Series
-            bench_returns_series = pd.Series(aligned_benchmark_returns, index=aligned_strategy_returns.index)
+                # Create benchmark Series
+                bench_returns_series = pd.Series(aligned_benchmark_returns, index=aligned_strategy_returns.index)
 
-            # Calculate excess returns(Strategy - Benchmark)
-            excess_returns_series = aligned_strategy_returns - bench_returns_series
-            # Cumulatively sum from 0
-            cumulative_excess_series = excess_returns_series.cumsum()
+                # Calculate excess returns(Strategy - Benchmark)
+                excess_returns_series = aligned_strategy_returns - bench_returns_series
+                # Cumulatively sum from 0
+                cumulative_excess_series = excess_returns_series.cumsum()
 
-            # Plot
-            plt.plot(cumulative_excess_series.index, cumulative_excess_series.values, 
-                    label=f"{target_mode_name} vs {benchmark_name}", linewidth=2, color='purple')
-            plt.axhline(y=0, color='black', linestyle='--', linewidth=1, alpha=0.7)
-            logging.info(f"VB Module - generate_benchmark_relative_performance - Plotted relative performance (cumulative excess returns).")
+                if x_axis_index is None and not cumulative_excess_series.empty:
+                    x_axis_index = cumulative_excess_series.index
+
+                # Plot
+                plt.plot(cumulative_excess_series.index, cumulative_excess_series.values, 
+                        label=f"{mode_name} vs {benchmark_name}", linewidth=2)
+                plot_any_fig = True
+                logging.info(f"VB Module - generate_benchmark_relative_performance - Plotted relative performance (cumulative excess returns).")
+            # Debug
+            if not plot_any_fig:
+                logging.warning("VB Module - generate_benchmark_relative_performance - No valid data series were plotted.")
 
             # Plot configuration
             plt.title("Relative Performance vs Benchmark (Cumulative Excess Returns)", fontsize=16, fontweight='bold')
             
+            plt.axhline(y=0, color='black', linestyle='--', linewidth=1, alpha=0.7)
             # Automatically set x axis
-            x_axis = cumulative_excess_series.index
-            if len(x_axis) > 0 and isinstance(x_axis[0], (pd.Timestamp, datetime)):
+            x_axis = x_axis_index
+            if x_axis is not None and len(x_axis) > 0 and isinstance(x_axis[0], (pd.Timestamp, datetime)):
                 plt.xlabel("Date", fontsize=12)
                 plt.gca().xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d'))
                 plt.setp(plt.gca().xaxis.get_majorticklabels(), rotation=45, ha='right')
@@ -713,69 +778,69 @@ class VisualizeBacktest:
             sns.set_style("whitegrid")
 
             # Get data from nested pipeline_results
-            # Plot first mode
-            target_mode_name = None
-            target_backtest_data = None
+            # Plot for each mode
             strategy_assets_series = None
             benchmark_prices_series_from_data = None
+            final_benchmark_series = None
+            # Initialize dict for modes data collection
+            valid_strategies_drawdown = {}
 
             for mode_name, backtest_data in pipeline_results.items():
                 # backtest_data is the dict returned by TradingBacktest.run_backtest()
-                target_mode_name = mode_name
-                target_backtest_data = backtest_data
                 strategy_assets_series = backtest_data.get('strategy_assets_with_date')
-
                 if strategy_assets_series is not None and not strategy_assets_series.empty:
                     logging.debug(f"VB Module - generate_drawdown_comparison - Found valid strategy data for mode {mode_name}.")
+                    # Calculate strategy drawdown
+                    # Ensure index dtype and sorted
+                    strategy_assets_series.index = pd.to_datetime(strategy_assets_series.index)
+                    strategy_assets_series.sort_index(inplace=True)
+
+                    # Calculate drawdown based on the aligned Series
+                    assets = strategy_assets_series.values
+                    rolling_max = np.maximum.accumulate(assets)
+                    # Avoid division by zero
+                    drawdown_denominator = np.where(rolling_max > 0, rolling_max, 1e-8)
+                    strategy_drawdown = (assets - rolling_max) / drawdown_denominator * 100 # Percentage
+                    # Create a Series for drawdown with the same index as the asset series
+                    strategy_drawdown_series = pd.Series(strategy_drawdown, index=strategy_assets_series.index)
+                    # Add mode data
+                    valid_strategies_drawdown[mode_name] = strategy_drawdown_series
                     # Get benchmark returns
-                    benchmark_prices_series_from_data = backtest_data.get('benchmark_prices_with_date')
-                    break
+                    if benchmark_prices_series_from_data is None:
+                        benchmark_prices_series_from_data = backtest_data.get('benchmark_prices_with_date')
+                        if benchmark_prices_series_from_data is not None:
+                            benchmark_prices_series_from_data.index = pd.to_datetime(benchmark_prices_series_from_data.index)
+                            benchmark_prices_series_from_data.sort_index(inplace=True)
+                            logging.debug(f"VB Module - generate_drawdown_comparison - Retrieved and processed benchmark data from backtest results.")
                 else:
                     logging.warning(f"VB Module - generate_drawdown_comparison - 'strategy_assets_with_date' not found or empty for mode {mode_name}. Checking next mode.")
-                    target_mode_name = None
-                    target_backtest_data = None
-                    strategy_assets_series = None
 
             # Verify data
-            if strategy_assets_series is None or strategy_assets_series.empty:
+            if not valid_strategies_drawdown:
                 logging.error("VB Module - generate_drawdown_comparison - Critical: Pre-aligned 'strategy_assets_with_date' (pandas Series) is missing or empty. Cannot plot accurately.")
                 plt.close()
                 return ""
 
-            # Calculate strategy drawdown
-            # Ensure index dtype and sorted
-            strategy_assets_series.index = pd.to_datetime(strategy_assets_series.index)
-            strategy_assets_series.sort_index(inplace=True)
-
-            # Calculate drawdown based on the aligned Series
-            assets = strategy_assets_series.values
-            rolling_max = np.maximum.accumulate(assets)
-            # Avoid division by zero
-            drawdown_denominator = np.where(rolling_max > 0, rolling_max, 1e-8)
-            strategy_drawdown = (assets - rolling_max) / drawdown_denominator * 100 # Percentage
-            # Create a Series for drawdown with the same index as the asset series
-            strategy_drawdown_series = pd.Series(strategy_drawdown, index=strategy_assets_series.index)
-
             # Handle benchmark data
             # Get benchmark data from backtest_data
-            final_benchmark_series = None
             if benchmark_prices_series_from_data is not None and not benchmark_prices_series_from_data.empty:
-                logging.debug(f"VB Module - generate_drawdown_comparison - Using benchmark data from backtest results for mode {target_mode_name}.")
+                logging.debug(f"VB Module - generate_asset_curve_comparison - Using benchmark data from backtest results for mode {mode_name}.")
                 final_benchmark_series = benchmark_prices_series_from_data
+            # Get from benchmark_data insted
             elif benchmark_data is not None:
-                logging.info("VB Module - generate_drawdown_comparison - Using provided benchmark_data as fallback.")
+                logging.info("VB Module - generate_asset_curve_comparison - Using provided benchmark_data as fallback.")
                 if isinstance(benchmark_data, pd.Series):
-                    final_benchmark_series = benchmark_data
+                    final_benchmark_series = benchmark_data.copy()
+                    final_benchmark_series = pd.to_datetime(final_benchmark_series.index)
+                    final_benchmark_series.sort_index(inplace=True)
                 elif isinstance(benchmark_data, (list, np.ndarray)):
-                    # Use strategy date index for alignment if same length
-                    if len(benchmark_data) == len(strategy_drawdown_series):
-                        final_benchmark_series = pd.Series(benchmark_data, index=strategy_drawdown_series.index)
-                        logging.warning("VB Module - generate_drawdown_comparison - Created benchmark Series using strategy dates (lengths matched). "
-                                        "Ensure this is logically correct.")
-                    else:
-                        logging.warning("VB Module - generate_drawdown_comparison - benchmark_data list length mismatch with strategy. "
-                                        "Plotting without benchmark or using integer index might be inaccurate.")
-                        final_benchmark_series = None
+                    final_benchmark_series = pd.Series(benchmark_data)
+                    logging.warning("VB Module - generate_asset_curve_comparison - Created benchmark Series using benchmark data dates. ")
+                else:
+                    logging.warning("VB Module - generate_asset_curve_comparison - benchmark_data list length mismatch with strategy. "
+                                    "Plotting without benchmark or using integer index might be inaccurate.")
+                    # If not same length, ignore
+                    final_benchmark_series = None 
                 # Ensure index dtype and sorted if we created/finalized a series
                 if final_benchmark_series is not None:
                     final_benchmark_series.index = pd.to_datetime(final_benchmark_series.index)
@@ -784,42 +849,50 @@ class VisualizeBacktest:
                 logging.info("VB Module - generate_drawdown_comparison - No benchmark data available or provided.")
 
             # Align strategy data with benchmark data
-            if final_benchmark_series is not None and not final_benchmark_series.empty:
-                # Ensure index dtype and sorted
-                final_benchmark_series.index = pd.to_datetime(final_benchmark_series.index)
-                final_benchmark_series.sort_index(inplace=True)
+            x_axis_index = None
+            benchmark_has_been_plotted = False
+            for mode_name, strategy_drawdown_series in valid_strategies_drawdown.items():
+                # Align with benchmark Series
+                if final_benchmark_series is not None and not final_benchmark_series.empty:
+                    # Implement Pandas concat and inner join to ensure aligned by dates
+                    combined_df = pd.concat([strategy_drawdown_series, final_benchmark_series], axis=1, join='inner', keys=['strategy', 'benchmark'])
+                    if not combined_df.empty:
+                        aligned_strategy_drawdown = combined_df['strategy']
+                        aligned_benchmark_prices = combined_df['benchmark']
+                        # Fetch x axis index after alignment
+                        if x_axis_index is None:
+                            x_axis_index = combined_df.index
+                        # Plot strategy drawdown
+                        plt.plot(aligned_strategy_drawdown.index, aligned_strategy_drawdown.values, label=f'{mode_name} Strategy Drawdown', linewidth=2)
+                        logging.info(f"VB Module - generate_drawdown_comparison - Plotted strategy drawdown curve for mode {mode_name}.")
 
-                # Align strategy data with benchmark data
-                # Implement Pandas concat and inner join to ensure aligned by dates
-                combined_df = pd.concat([strategy_drawdown_series, final_benchmark_series], axis=1, join='inner', keys=['strategy', 'benchmark'])
-                if not combined_df.empty:
-                    aligned_strategy_drawdown = combined_df['strategy']
-                    aligned_benchmark_prices = combined_df['benchmark']
-
-                    # Calculate benchmark drawdown
-                    benchmark_assets = aligned_benchmark_prices.values
-                    benchmark_rolling_max = np.maximum.accumulate(benchmark_assets)
-                    benchmark_drawdown_denominator = np.where(benchmark_rolling_max > 0, benchmark_rolling_max, 1e-8)
-                    benchmark_drawdown = (benchmark_assets - benchmark_rolling_max) / benchmark_drawdown_denominator * 100
-                    benchmark_drawdown_series = pd.Series(benchmark_drawdown, index=aligned_benchmark_prices.index)
-
-                    # Plot benchmark drawdown
-                    plt.plot(benchmark_drawdown_series.index, benchmark_drawdown_series.values, label=benchmark_name, linewidth=2)
-                    logging.info(f"VB Module - generate_drawdown_comparison - Plotted benchmark drawdown curve: {benchmark_name}")
+                        if not benchmark_has_been_plotted and not aligned_benchmark_prices.empty:
+                            # Calculate benchmark drawdown
+                            benchmark_assets = aligned_benchmark_prices.values
+                            benchmark_rolling_max = np.maximum.accumulate(benchmark_assets)
+                            benchmark_drawdown_denominator = np.where(benchmark_rolling_max > 0, benchmark_rolling_max, 1e-8)
+                            benchmark_drawdown = (benchmark_assets - benchmark_rolling_max) / benchmark_drawdown_denominator * 100
+                            benchmark_drawdown_series = pd.Series(benchmark_drawdown, index=aligned_benchmark_prices.index)
+                            # Plot benchmark drawdown
+                            plt.plot(benchmark_drawdown_series.index, benchmark_drawdown_series.values, label=benchmark_name, linewidth=2)
+                            logging.info(f"VB Module - generate_drawdown_comparison - Plotted benchmark drawdown curve: {benchmark_name}")
+                            benchmark_has_been_plotted = True
+                    else:
+                        logging.warning("VB Module - generate_drawdown_comparison - No overlapping dates found between strategy and benchmark after alignment. Benchmark not plotted.")
+                        plt.plot(strategy_drawdown_series.index, strategy_drawdown_series.values, label=f'{mode_name} Strategy Drawdown', linewidth=2)
+                        if x_axis_index is None:
+                            x_axis_index = strategy_drawdown_series.index
                 else:
-                    logging.warning("VB Module - generate_drawdown_comparison - No overlapping dates found between strategy and benchmark after alignment. Benchmark not plotted.")
-            else:
-                logging.info("VB Module - generate_drawdown_comparison - No valid benchmark data available for plotting.")
-
-            # Plot strategy drawdown
-            plt.plot(strategy_drawdown_series.index, strategy_drawdown_series.values, label=f'{target_mode_name} Strategy', linewidth=2)
-            logging.info(f"VB Module - generate_drawdown_comparison - Plotted strategy drawdown curve for mode {target_mode_name}.")
-
+                    logging.info("VB Module - generate_drawdown_comparison - No valid benchmark data available for plotting.")
+                    plt.plot(strategy_drawdown_series.index, strategy_drawdown_series.values, label=f'{mode_name} Strategy Drawdown', linewidth=2)
+                    if x_axis_index is None:
+                        x_axis_index = strategy_drawdown_series.index
+            
             # Plot configuration
             plt.title("Drawdown Comparison", fontsize=16, fontweight='bold')
             
             # Automatically set x axis
-            x_axis = strategy_drawdown_series.index
+            x_axis = x_axis_index
             if len(x_axis) > 0 and isinstance(x_axis[0], (pd.Timestamp, datetime)):
                 plt.xlabel("Date", fontsize=12)
                 # Automatically set dates as x axis
@@ -860,10 +933,10 @@ class VisualizeBacktest:
             Normalized pandas Series.
         """
         if asset_series is None or asset_series.empty:
-            return pd.Series(dtype='float64')
+            return pd.Series(dtype='float32')
         asset_series = asset_series.dropna()
         if asset_series.empty:
-            return pd.Series(dtype='float64')
+            return pd.Series(dtype='float32')
         initial_value = asset_series.iloc[0]
         if initial_value > 0:
             return asset_series / initial_value
@@ -884,10 +957,10 @@ class VisualizeBacktest:
             Drawdown pandas Series in percentage.
         """
         if asset_series is None or asset_series.empty:
-            return pd.Series(dtype='float64')
+            return pd.Series(dtype='float32')
         asset_series = asset_series.dropna()
         if asset_series.empty:
-            return pd.Series(dtype='float64')
+            return pd.Series(dtype='float32')
         assets = asset_series.values
         rolling_max = np.maximum.accumulate(assets)
         # Avoid division by zero
@@ -933,100 +1006,115 @@ class VisualizeBacktest:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
             # --- Data Extraction (Prioritize aligned data from pipeline_results) ---
-            target_mode_name = None
             strategy_assets_series = None
             benchmark_prices_series_from_data = None
             benchmark_returns_array_from_data = None
 
+            # Initialize dict for modes data collection
+            valid_strategies_data = {}
+
             for mode_name, backtest_data in pipeline_results.items():
                 strategy_assets_series = backtest_data.get('strategy_assets_with_date')
                 if strategy_assets_series is not None and not strategy_assets_series.empty:
-                    target_mode_name = mode_name
-                    benchmark_prices_series_from_data = backtest_data.get('benchmark_prices_with_date')
-                    benchmark_returns_array_from_data = backtest_data.get('benchmark_returns')
-                    logging.debug(f"VB Module - plot_full_comparison_visualization - Found valid data for mode {mode_name}.")
-                    break
+                    # Ensure index dtype and sorted
+                    strategy_assets_series.index = pd.to_datetime(strategy_assets_series.index)
+                    strategy_assets_series.sort_index(inplace=True)
+                    # Store raw data for this mode
+                    valid_strategies_data[mode_name] = {'raw_assets': strategy_assets_series}
+                    # Get benchmark data from the first available mode
+                    if benchmark_prices_series_from_data is None:
+                        benchmark_prices_series_from_data = backtest_data.get('benchmark_prices_with_date')
+                        if benchmark_prices_series_from_data is not None:
+                            benchmark_prices_series_from_data.index = pd.to_datetime(benchmark_prices_series_from_data.index)
+                            benchmark_prices_series_from_data.sort_index(inplace=True)
+                            logging.debug(f"VB Module - plot_full_comparison_visualization - Retrieved benchmark prices from mode {mode_name}.")
+                    if benchmark_returns_array_from_data is None:
+                        benchmark_returns_array_from_data = backtest_data.get('benchmark_returns')
+                        if benchmark_returns_array_from_data is not None:
+                            logging.debug(f"VB Module - plot_full_comparison_visualization - Retrieved benchmark returns from mode {mode_name}.")
                 else:
                     logging.warning(f"VB Module - plot_full_comparison_visualization - 'strategy_assets_with_date' not found or empty for mode {mode_name}.")
 
-            if strategy_assets_series is None or strategy_assets_series.empty:
+            if not valid_strategies_data:
                 logging.error("VB Module - plot_full_comparison_visualization - Critical: Pre-aligned 'strategy_assets_with_date' is missing or empty.")
                 return ""
-
-            # Ensure index dtype and sorted
-            strategy_assets_series.index = pd.to_datetime(strategy_assets_series.index)
-            strategy_assets_series.sort_index(inplace=True)
-
-            # --- Prepare Data for Plotting ---
-            # Normalized Strategy
-            normalized_strategy_series = self._calculate_normalized_series(strategy_assets_series)
-
-            # Benchmark Data Handling & Normalization
-            final_benchmark_series = None
-            if benchmark_prices_series_from_data is not None and not benchmark_prices_series_from_data.empty:
-                final_benchmark_series = benchmark_prices_series_from_data
-            # No fallback to external benchmark_data like in other methods, as we rely on aligned data
-
+            
+            # Prepare benchmark data for plotting
             normalized_benchmark_series = None
-            if final_benchmark_series is not None:
-                final_benchmark_series.index = pd.to_datetime(final_benchmark_series.index)
-                final_benchmark_series.sort_index(inplace=True)
-                # Align strategy and benchmark
-                combined_df_norm = pd.concat([normalized_strategy_series, final_benchmark_series], axis=1, join='inner', keys=['strategy', 'benchmark'])
-                if not combined_df_norm.empty:
-                    plot_normalized_strategy = combined_df_norm['strategy']
-                    aligned_benchmark_prices = combined_df_norm['benchmark']
-                    normalized_benchmark_series = self._calculate_normalized_series(aligned_benchmark_prices)
+            benchmark_drawdown_series = None
+            benchmark_daily_returns_for_hist = None
+
+            if benchmark_prices_series_from_data is not None and not benchmark_prices_series_from_data.empty:
+                normalized_benchmark_series = self._calculate_normalized_series(benchmark_prices_series_from_data)
+                benchmark_drawdown_series = self._calculate_drawdown_series(benchmark_prices_series_from_data)
+
+            if benchmark_returns_array_from_data is not None and not len(benchmark_returns_array_from_data) > 0:
+                benchmark_daily_returns_for_hist = benchmark_returns_array_from_data * 100 # Convert to percentage
+
+            # Calculate each strategy data for plotting
+            for mode_name, raw_data in valid_strategies_data.items():
+                raw_assets_series = raw_data['raw_assets']
+
+                # Normalized performance
+                plot_normalized_strategy = None
+                if normalized_benchmark_series is not None and not normalized_benchmark_series.empty:
+                    # Align strategy and benchmark for normalized plotting
+                    combined_df_norm = pd.concat([raw_assets_series, benchmark_prices_series_from_data], axis=1, join='inner', keys=['strategy_assets', 'benchmark_prices'])
+                    if not combined_df_norm.empty:
+                        aligned_strategy_assets_for_norm = combined_df_norm['strategy_assets']
+                        plot_normalized_strategy = self._calculate_normalized_series(aligned_strategy_assets_for_norm)
+                    else:
+                        logging.warning("VB Module - plot_full_comparison_visualization - No overlapping dates for normalization alignment.")
+                        # Fallback to unaligned if necessary, or plot only strategy
+                        plot_normalized_strategy = self._calculate_normalized_series(raw_assets_series)
                 else:
-                    logging.warning("VB Module - plot_full_comparison_visualization - No overlapping dates for normalization alignment.")
-                    # Fallback to unaligned if necessary, or plot only strategy
-                    plot_normalized_strategy = normalized_strategy_series
-            else:
-                plot_normalized_strategy = normalized_strategy_series
-                logging.info("VB Module - plot_full_comparison_visualization - No benchmark data for normalization.")
+                    plot_normalized_strategy = self._calculate_normalized_series(raw_assets_series)
 
-            # Relative Performance (Excess Returns)
-            strategy_returns_series = plot_normalized_strategy.pct_change().fillna(0) # Use aligned normalized series index
-            final_benchmark_returns_array = None
-            relative_performance_series = pd.Series(dtype='float64')
-            if benchmark_returns_array_from_data is not None and len(benchmark_returns_array_from_data) > 0:
-                final_benchmark_returns_array = benchmark_returns_array_from_data
-            # No fallback like in other methods
+                raw_data['normalized_assets'] = plot_normalized_strategy
 
-            if final_benchmark_returns_array is not None and normalized_benchmark_series is not None:
-                min_len_rel = min(len(strategy_returns_series), len(final_benchmark_returns_array))
-                aligned_strategy_returns_rel = strategy_returns_series.iloc[:min_len_rel]
-                aligned_benchmark_returns_rel = final_benchmark_returns_array[:min_len_rel]
-                bench_returns_series_rel = pd.Series(aligned_benchmark_returns_rel, index=aligned_strategy_returns_rel.index)
-                excess_returns_series_rel = aligned_strategy_returns_rel - bench_returns_series_rel
-                relative_performance_series = excess_returns_series_rel.cumsum()
-            else:
-                logging.info("VB Module - plot_full_comparison_visualization - Insufficient data for relative performance calculation.")
-
-            # Drawdown Calculation (Aligned)
-            strategy_drawdown_series = pd.Series(dtype='float64')
-            benchmark_drawdown_series = pd.Series(dtype='float64')
-            if normalized_benchmark_series is not None and not normalized_benchmark_series.empty:
-                # Use the aligned benchmark series index for drawdown calc
-                combined_df_dd = pd.concat([strategy_assets_series, normalized_benchmark_series], axis=1, join='inner', keys=['strategy_assets', 'benchmark_prices'])
-                if not combined_df_dd.empty:
-                    aligned_strategy_assets_for_dd = combined_df_dd['strategy_assets']
-                    aligned_benchmark_prices_for_dd = combined_df_dd['benchmark_prices']
-                    strategy_drawdown_series = self._calculate_drawdown_series(aligned_strategy_assets_for_dd)
-                    benchmark_drawdown_series = self._calculate_drawdown_series(aligned_benchmark_prices_for_dd)
+                # Relative performance
+                relative_performance_series = None
+                if benchmark_returns_array_from_data is not None and len(benchmark_returns_array_from_data) > 0:
+                    # Use the normalized strategy series' index for returns calculation to maintain alignment context
+                    strategy_returns_series = plot_normalized_strategy.pct_change().fillna(0)
+                    min_len_rel = min(len(strategy_returns_series), len(benchmark_returns_array_from_data))
+                    if min_len_rel > 0:
+                        aligned_strategy_returns_rel = strategy_returns_series.iloc[:min_len_rel]
+                        aligned_benchmark_returns_rel = benchmark_returns_array_from_data[:min_len_rel]
+                        bench_returns_series_rel = pd.Series(aligned_benchmark_returns_rel, index=aligned_strategy_returns_rel.index)
+                        excess_returns_series_rel = aligned_strategy_returns_rel - bench_returns_series_rel
+                        relative_performance_series = excess_returns_series_rel.cumsum()
+                    else:
+                        logging.warning(f"VB Module - plot_full_comparison_visualization - Insufficient data for relative performance calculation for mode {mode_name}.")
                 else:
-                    # Fallback if alignment fails after normalization
-                    strategy_drawdown_series = self._calculate_drawdown_series(strategy_assets_series)
-            else:
-                # Only strategy drawdown if no benchmark
-                strategy_drawdown_series = self._calculate_drawdown_series(strategy_assets_series)
+                    logging.info(f"VB Module - plot_full_comparison_visualization - Insufficient benchmark returns data for relative performance calculation for mode {mode_name}.")
+                
+                raw_data['relative_performance'] = relative_performance_series
 
+                # Drawdown analysis
+                strategy_drawdown_series = None
+                if benchmark_prices_series_from_data is not None and not benchmark_prices_series_from_data.empty:
+                    # Align strategy and benchmark assets for drawdown calculation
+                    combined_df_dd = pd.concat([raw_assets_series, benchmark_prices_series_from_data], axis=1, join='inner', keys=['strategy_assets', 'benchmark_prices'])
+                    if not combined_df_dd.empty:
+                        aligned_strategy_assets_for_dd = combined_df_dd['strategy_assets']
+                        strategy_drawdown_series = self._calculate_drawdown_series(aligned_strategy_assets_for_dd)
+                    else:
+                        # Fallback if alignment fails
+                        logging.warning(f"VB Module - plot_full_comparison_visualization - No overlapping dates for drawdown alignment for mode {mode_name}. Using unaligned strategy data.")
+                        strategy_drawdown_series = self._calculate_drawdown_series(raw_assets_series)
+                else:
+                    # Only strategy drawdown if no benchmark
+                    strategy_drawdown_series = self._calculate_drawdown_series(raw_assets_series)
+                
+                raw_data['drawdown'] = strategy_drawdown_series
 
-            # Daily Returns for Histogram (Aligned)
-            strategy_daily_returns_for_hist = strategy_returns_series.values * 100 # Convert to %
-            benchmark_daily_returns_for_hist = np.array([])
-            if final_benchmark_returns_array is not None:
-                benchmark_daily_returns_for_hist = final_benchmark_returns_array * 100 # Convert to %
+                # Daily returns for histogram
+                strategy_daily_returns_for_hist = None
+                # Use the normalized strategy series' index for returns calculation to maintain alignment context
+                temp_strategy_returns_series = plot_normalized_strategy.pct_change().fillna(0)
+                strategy_daily_returns_for_hist = temp_strategy_returns_series.values * 100 # Convert to percentage
+                raw_data['daily_returns_hist'] = strategy_daily_returns_for_hist
 
             # Plot configuration
             sns.set_style("whitegrid")
@@ -1038,99 +1126,153 @@ class VisualizeBacktest:
             else:
                 fig.suptitle('Asset Performance Comparison', fontsize=16, fontweight='bold')
 
-            # --- (0, 0) Normalized Performance ---
-            if not plot_normalized_strategy.empty:
-                axes[0, 0].plot(plot_normalized_strategy.index, plot_normalized_strategy.values,
-                                linewidth=2, label=f'{target_mode_name} Strategy')
+            # Plot data for each strategy
+            for mode_name, raw_data in valid_strategies_data.items():
+                plot_normalized_strategy = raw_data.get('normalized_assets')
+                relative_performance_series = raw_data.get('relative_performance')
+                strategy_drawdown_series = raw_data.get('drawdown')
+                strategy_daily_returns_for_hist = raw_data.get('daily_returns_hist')
+
+                # (0, 0) Normalized Performance 
+                if plot_normalized_strategy is not None and not plot_normalized_strategy.empty:
+                    axes[0, 0].plot(plot_normalized_strategy.index, plot_normalized_strategy.values,
+                                    linewidth=2, label=f'{mode_name} Strategy')
+
+                # (0, 1) Relative Performance 
+                if relative_performance_series is not None and not relative_performance_series.empty:
+                    axes[0, 1].plot(relative_performance_series.index, relative_performance_series.values,
+                                    linewidth=2, label=f"{mode_name} vs {benchmark_name}") # Color will be automatic
+
+                # (1, 0) Drawdown Analysis 
+                if strategy_drawdown_series is not None and not strategy_drawdown_series.empty:
+                    axes[1, 0].plot(strategy_drawdown_series.index, strategy_drawdown_series.values,
+                                    linewidth=2, label=f'{mode_name} Strategy')
+                    axes[1, 0].fill_between(strategy_drawdown_series.index, strategy_drawdown_series.values, 0,
+                                            alpha=0.2) # Fill area under curve with lower alpha
+                    
+            # Plot Benchmark Data 
+            # (0, 0) Normalized Performance - Benchmark 
             if normalized_benchmark_series is not None and not normalized_benchmark_series.empty:
                 axes[0, 0].plot(normalized_benchmark_series.index, normalized_benchmark_series.values,
-                                linewidth=2, label=benchmark_name)
+                                linewidth=2, label=benchmark_name, linestyle='--') # Dashed line for benchmark
+
+            # (1, 0) Drawdown Analysis - Benchmark 
+            if benchmark_drawdown_series is not None and not benchmark_drawdown_series.empty:
+                axes[1, 0].plot(benchmark_drawdown_series.index, benchmark_drawdown_series.values,
+                                linewidth=2, label=benchmark_name, linestyle='--')
+                axes[1, 0].fill_between(benchmark_drawdown_series.index, benchmark_drawdown_series.values, 0,
+                                        alpha=0.2, linestyle='--')
+
+            # --- (0, 0) Normalized Performance - Finalize ---
             axes[0, 0].set_title('Normalized Performance (Starting Value = 1.0)')
             axes[0, 0].set_ylabel('Normalized Value')
             axes[0, 0].grid(True, alpha=0.3)
             axes[0, 0].axhline(y=1.0, color='black', linestyle='--', alpha=0.5)
             axes[0, 0].legend()
 
-            # --- (0, 1) Relative Performance ---
-            if not relative_performance_series.empty:
-                axes[0, 1].plot(relative_performance_series.index, relative_performance_series.values,
-                                linewidth=2, color='purple', label=f"{target_mode_name} vs {benchmark_name}")
-                axes[0, 1].axhline(y=0, color='black', linestyle='--', linewidth=1, alpha=0.7)
-                axes[0, 1].set_title('Relative Performance (Cumulative Excess Returns)')
-                axes[0, 1].set_ylabel('Cumulative Excess Return')
-                axes[0, 1].grid(True, alpha=0.3)
-                axes[0, 1].legend()
-            else:
-                axes[0, 1].text(0.5, 0.5, 'Data Insufficient', horizontalalignment='center',
-                                verticalalignment='center', transform=axes[0, 1].transAxes)
-                axes[0, 1].set_title('Relative Performance (Cumulative Excess Returns)')
+            # --- (0, 1) Relative Performance - Finalize ---
+            axes[0, 1].axhline(y=0, color='black', linestyle='--', linewidth=1, alpha=0.7)
+            axes[0, 1].set_title('Relative Performance (Cumulative Excess Returns)')
+            axes[0, 1].set_ylabel('Cumulative Excess Return')
+            axes[0, 1].grid(True, alpha=0.3)
+            axes[0, 1].legend()
 
-            # --- (1, 0) Drawdown Analysis ---
-            # Plot strategy drawdown (ensure it's from aligned data if benchmark was used)
-            if not strategy_drawdown_series.empty:
-                axes[1, 0].plot(strategy_drawdown_series.index, strategy_drawdown_series.values,
-                                linewidth=2, label=f'{target_mode_name} Strategy')
-                axes[1, 0].fill_between(strategy_drawdown_series.index, strategy_drawdown_series.values, 0,
-                                        alpha=0.3) # Fill area under curve
-
-            # Plot benchmark drawdown (ensure it's from aligned data)
-            if not benchmark_drawdown_series.empty:
-                axes[1, 0].plot(benchmark_drawdown_series.index, benchmark_drawdown_series.values,
-                                linewidth=2, label=benchmark_name)
-                axes[1, 0].fill_between(benchmark_drawdown_series.index, benchmark_drawdown_series.values, 0,
-                                        alpha=0.3) # Fill area under curve
-
+            # --- (1, 0) Drawdown Analysis - Finalize ---
             axes[1, 0].set_title('Drawdown Analysis')
             axes[1, 0].set_ylabel('Drawdown (%)')
             axes[1, 0].grid(True, alpha=0.3)
             axes[1, 0].axhline(y=0, color='black', linestyle='-', alpha=0.5)
             axes[1, 0].legend()
 
-            # --- (1, 1) Daily Returns Distribution ---
-            # Ensure there's data to plot
-            has_strategy_hist_data = len(strategy_daily_returns_for_hist) > 0
-            has_benchmark_hist_data = len(benchmark_daily_returns_for_hist) > 0
+            # --- (1, 1) Daily Returns Distribution - Plot All ---
+            # Collect all data first
+            all_strategy_returns_data = [data['daily_returns_hist'] for data in valid_strategies_data.values() if data.get('daily_returns_hist') is not None]
+            has_strategy_hist_data = len(all_strategy_returns_data) > 0
+            has_benchmark_hist_data = benchmark_daily_returns_for_hist is not None and len(benchmark_daily_returns_for_hist) > 0
+
+                        # --- (1, 1) Daily Returns Distribution ---
+            # Collect all data first
+            all_strategy_returns_data = [data['daily_returns_hist'] for data in valid_strategies_data.values() if data.get('daily_returns_hist') is not None]
+            has_strategy_hist_data = len(all_strategy_returns_data) > 0
+            has_benchmark_hist_data = benchmark_daily_returns_for_hist is not None and len(benchmark_daily_returns_for_hist) > 0
 
             if has_strategy_hist_data or has_benchmark_hist_data:
                 bins = 50
-                if has_strategy_hist_data:
-                    axes[1, 1].hist(strategy_daily_returns_for_hist, bins=bins, alpha=0.7,
-                                    label=f'{target_mode_name} Strategy', edgecolor='black')
-                if has_benchmark_hist_data:
-                    axes[1, 1].hist(benchmark_daily_returns_for_hist, bins=bins, alpha=0.7,
-                                    label=benchmark_name, edgecolor='black')
+                
+                # Plot all strategy histograms with unique labels
+                for i, (mode_name, returns_data) in enumerate(zip(valid_strategies_data.keys(), all_strategy_returns_data)):
+                    if len(returns_data) > 0:
+                        color = plt.cm.tab10(i % 10)  # Automatically allocate color
+                        axes[1, 1].hist(returns_data, bins=bins, alpha=0.6, 
+                                        label=f'{mode_name} Strategy', edgecolor='black', linewidth=0.5, color=color)
 
+                # Plot benchmark histogram with its label
+                if has_benchmark_hist_data:
+                    # Allocate Benchmark
+                    bench_color = 'orange'
+                    axes[1, 1].hist(benchmark_daily_returns_for_hist, bins=bins, alpha=0.6,
+                                    label=benchmark_name, edgecolor='black', linewidth=0.5, color=bench_color)
+
+                # Add mean lines for each strategy and the benchmark, using their respective labels
+                for i, (mode_name, returns_data) in enumerate(zip(valid_strategies_data.keys(), all_strategy_returns_data)):
+                    if len(returns_data) > 0:
+                        strat_mean = np.mean(returns_data)
+                        line_color = plt.cm.tab10(i % 10)
+                        axes[1, 1].axvline(strat_mean, color=line_color, linestyle='--', linewidth=1,
+                                         label=f'{mode_name} Mean: {strat_mean:.3f}%')
+
+                # Add benchmark mean line
+                if has_benchmark_hist_data:
+                    bench_mean = np.mean(benchmark_daily_returns_for_hist)
+                    axes[1, 1].axvline(bench_mean, color='orange', linestyle='--', linewidth=1,
+                                      label=f'{benchmark_name} Mean: {bench_mean:.3f}%')
+
+                # Add a central line at x=0 for reference
+                axes[1, 1].axvline(0, color='black', linestyle='-', linewidth=0.8, alpha=0.8,
+                                 label='Zero Return')
+
+                # Set title, labels, and grid
                 axes[1, 1].set_title('Daily Returns Distribution')
                 axes[1, 1].set_xlabel('Daily Return (%)')
                 axes[1, 1].set_ylabel('Frequency')
                 axes[1, 1].grid(True, alpha=0.3)
-                # Add mean lines if data exists
-                if has_strategy_hist_data:
-                    strat_mean = np.mean(strategy_daily_returns_for_hist)
-                    axes[1, 1].axvline(strat_mean, color='blue', linestyle='--',
-                                    label=f'{target_mode_name} Mean: {strat_mean:.3f}%')
-                if has_benchmark_hist_data:
-                    bench_mean = np.mean(benchmark_daily_returns_for_hist)
-                    axes[1, 1].axvline(bench_mean, color='orange', linestyle='--',
-                                    label=f'{benchmark_name} Mean: {bench_mean:.3f}%')
-                axes[1, 1].legend()
+
+                # Display the legend, which will include all elements with a 'label' attribute
+                axes[1, 1].legend(loc='upper right', fontsize='small')
+
             else:
                 axes[1, 1].text(0.5, 0.5, 'Data Insufficient', horizontalalignment='center',
                                 verticalalignment='center', transform=axes[1, 1].transAxes)
                 axes[1, 1].set_title('Daily Returns Distribution')
 
-
-            # --- Finalize Plot ---
+            # --- Finalize Plot Layout and Axes ---
             for ax in axes.flat:
                 # Automatically set date formatting if index is datetime
-                # Check one of the series used for plotting
+                # Find a sample series with data in this subplot to check its index
                 sample_series = None
-                if ax == axes[0, 0] and not plot_normalized_strategy.empty:
-                    sample_series = plot_normalized_strategy
-                elif ax == axes[0, 1] and not relative_performance_series.empty:
-                    sample_series = relative_performance_series
-                elif ax == axes[1, 0] and not strategy_drawdown_series.empty:
-                    sample_series = strategy_drawdown_series
+                if ax == axes[0, 0]:
+                    # Check strategy or benchmark series
+                    for mode_data in valid_strategies_data.values():
+                        ns = mode_data.get('normalized_strategy')
+                        if ns is not None and not ns.empty:
+                            sample_series = ns
+                            break
+                    if sample_series is None and normalized_benchmark_series is not None:
+                        sample_series = normalized_benchmark_series
+                elif ax == axes[0, 1]:
+                    for mode_data in valid_strategies_data.values():
+                        rp = mode_data.get('relative_performance')
+                        if rp is not None and not rp.empty:
+                            sample_series = rp
+                            break
+                elif ax == axes[1, 0]:
+                    for mode_data in valid_strategies_data.values():
+                        dd = mode_data.get('drawdown')
+                        if dd is not None and not dd.empty:
+                            sample_series = dd
+                            break
+                    if sample_series is None and benchmark_drawdown_series is not None:
+                        sample_series = benchmark_drawdown_series
 
                 if sample_series is not None and len(sample_series.index) > 0 and isinstance(sample_series.index[0], (pd.Timestamp, datetime)):
                     ax.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d'))
@@ -1230,11 +1372,14 @@ def generate_all_visualizations_with_benchmark(pipeline_results: Dict[str, Any],
             benchmark_data=benchmark_data,
             benchmark_name=benchmark_name)
         
+        # Performance heatmap
         heatmap_plot = visualizer.generate_performance_heatmap(pipeline_results)
         
+        # Dawdown comparison
         drawdown_plot = visualizer.generate_drawdown_comparison(
             pipeline_results, benchmark_data, benchmark_name)
         
+        # Relative performance
         relative_performance_plot = ""
         if benchmark_returns is not None:
             relative_performance_plot = visualizer.generate_benchmark_relative_performance(

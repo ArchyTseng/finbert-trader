@@ -137,6 +137,7 @@ class TradingAgent:
                     **model_params
                 )
             else:
+                # Could add other algorithm model for extension
                 raise ValueError(f"TA Module - Model creation not implemented for: {model_name}")
 
             # Log successful creation

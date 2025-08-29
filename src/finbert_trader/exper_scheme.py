@@ -7,6 +7,7 @@ Purpose: Provide systematic experiment schemes for parameter tuning and validati
 import logging
 import os
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -45,6 +46,7 @@ class ExperimentScheme:
         self.config = config
         self.symbols = self.config.symbols
         self.filter_ind = self.config.filter_ind
+        self.use_experiment_sequence = getattr(self.config, 'use_experiment_sequence', False)
         
         # Use unified cache directories from ConfigSetup
         self.config_cache_dir = getattr(config, 'CONFIG_CACHE_DIR', 'config_cache')
@@ -141,6 +143,8 @@ class ExperimentScheme:
             'use_risk_factor': False,
             'use_senti_features': True,
             'use_risk_features': True,
+            # Config for visualization
+            'use_experiment_sequence': self.config.use_experiment_sequence,
             # Configuration for Initializing cache dir
             'CONFIG_CACHE_DIR': self.config_cache_dir,
             'RAW_DATA_DIR': self.raw_data_dir,
@@ -163,11 +167,23 @@ class ExperimentScheme:
             'cash_penalty_proportion': 0.0001,
             'commission_rate': 0.0001
         }
+
+        model_params = {
+            'PPO': {
+                "n_steps": 2048,
+                "ent_coef": 0.02,
+                "learning_rate": 0.0003,
+                "batch_size": 64,
+                "gamma": 0.99,
+                "gae_lambda": 0.95
+            },
+        }
         
         return self._execute_experiment_with_visualization(
             experiment_id='quick_exper_1',
             setup_config=setup_config,
             trading_config=trading_config,
+            model_params=model_params,
             description="Quick validation of basic parameters and pipeline",
             notes="No indicator signal strategy, No sent/risk factor, Basic Benchmark"
         )
@@ -230,6 +246,8 @@ class ExperimentScheme:
             'use_risk_factor': False,
             'use_senti_features': True,
             'use_risk_features': True,
+            # Config for visualization
+            'use_experiment_sequence': self.config.use_experiment_sequence,
             # Configuration for Initializing cache dir
             'CONFIG_CACHE_DIR': self.config_cache_dir,
             'RAW_DATA_DIR': self.raw_data_dir,
@@ -252,11 +270,23 @@ class ExperimentScheme:
             'cash_penalty_proportion': 0.0001,
             'commission_rate': 0.0001
         }
+
+        model_params = {
+            'PPO': {
+                "n_steps": 2048,
+                "ent_coef": 0.02,
+                "learning_rate": 0.0003,
+                "batch_size": 64,
+                "gamma": 0.99,
+                "gae_lambda": 0.95
+            },
+        }
         
         return self._execute_experiment_with_visualization(
             experiment_id='quick_exper_2',
             setup_config=setup_config,
             trading_config=trading_config,
+            model_params=model_params,
             description="Quick optimization of reward function parameters",
             notes="Use indicator signal strategy. No senti/risk factor. Indicator Benchmark"
         )
@@ -320,6 +350,8 @@ class ExperimentScheme:
             'use_risk_factor': True,
             'use_senti_features': True,
             'use_risk_features': True,
+            # Config for visualization
+            'use_experiment_sequence': self.config.use_experiment_sequence,
             # Configuration for Initializing cache dir
             'CONFIG_CACHE_DIR': self.config_cache_dir,
             'RAW_DATA_DIR': self.raw_data_dir,
@@ -343,10 +375,22 @@ class ExperimentScheme:
             'commission_rate': 0.0001
         }
         
+        model_params = {
+            'PPO': {
+                "n_steps": 2048,
+                "ent_coef": 0.02,
+                "learning_rate": 0.0003,
+                "batch_size": 64,
+                "gamma": 0.99,
+                "gae_lambda": 0.95
+            },
+        }
+
         return self._execute_experiment_with_visualization(
             experiment_id='quick_exper_3',
             setup_config=setup_config,
             trading_config=trading_config,
+            model_params=model_params,
             description="Quick validation of basic parameters and pipeline",
             notes="No indicator signal strategy. Use senti/rik factor. Sentiment Benchmark"
         )
@@ -409,6 +453,8 @@ class ExperimentScheme:
             'use_risk_factor': True,
             'use_senti_features': True,
             'use_risk_features': True,
+            # Config for visualization
+            'use_experiment_sequence': self.config.use_experiment_sequence,
             # Configuration for Initializing cache dir
             'CONFIG_CACHE_DIR': self.config_cache_dir,
             'RAW_DATA_DIR': self.raw_data_dir,
@@ -432,11 +478,22 @@ class ExperimentScheme:
             'commission_rate': 0.0001
         }
         
-        
+        model_params = {
+            'PPO': {
+                "n_steps": 2048,
+                "ent_coef": 0.02,
+                "learning_rate": 0.0003,
+                "batch_size": 64,
+                "gamma": 0.99,
+                "gae_lambda": 0.95
+            },
+        }
+
         return self._execute_experiment_with_visualization(
             experiment_id='quick_exper_4',
             setup_config=setup_config,
             trading_config=trading_config,
+            model_params=model_params,
             description="Quick tuning of RL hyperparameters",
             notes="Use indicator signal. Use senti/risk factor. Full mode test."
         )
@@ -502,6 +559,8 @@ class ExperimentScheme:
             'use_risk_factor': True,
             'use_senti_features': True,
             'use_risk_features': True,
+            # Config for visualization
+            'use_experiment_sequence': self.config.use_experiment_sequence,
             # Configuration for Initializing cache dir
             'CONFIG_CACHE_DIR': self.config_cache_dir,
             'RAW_DATA_DIR': self.raw_data_dir,
@@ -594,6 +653,8 @@ class ExperimentScheme:
             'use_risk_factor': True,
             'use_senti_features': True,
             'use_risk_features': True,
+            # Config for visualization
+            'use_experiment_sequence': self.config.use_experiment_sequence,
             # Configuration for Initializing cache dir
             'CONFIG_CACHE_DIR': self.config_cache_dir,
             'RAW_DATA_DIR': self.raw_data_dir,
@@ -708,6 +769,8 @@ class ExperimentScheme:
             'use_risk_factor': True,
             'use_senti_features': True,
             'use_risk_features': True,
+            # Config for visualization
+            'use_experiment_sequence': self.config.use_experiment_sequence,
             # Configuration for Initializing cache dir
             'CONFIG_CACHE_DIR': self.config_cache_dir,
             'RAW_DATA_DIR': self.raw_data_dir,
@@ -843,7 +906,6 @@ class ExperimentScheme:
                   f"config_trading.test_end_date: {config_setup.test_end_date}")
                 # Process training, validation, and testing
                 mode_results = self._process_mode(mode_name, mode_data, config_trading)
-                # ... (在 _process_mode 之后)
                 print(f"ES Module - _execute_experiment - mode_results keys: {list(mode_results.keys())}")
                 pipeline_results[mode_name] = mode_results
             
@@ -959,15 +1021,16 @@ class ExperimentScheme:
             try:
                 # --- Enhanced visualizations with benchmark ---
                 from .visualize.visualize_backtest import VisualizeBacktest, generate_all_visualizations_with_benchmark
-                
-                # Pass the correctly structured data and extracted benchmark info
-                enhanced_visualizations = generate_all_visualizations_with_benchmark(
-                    pipeline_results=pipeline_results_for_viz, # Correctly structured data
-                    config_trading=self.config,                # Pass the config for directories etc.
-                    benchmark_data=benchmark_prices_series_for_viz, # Benchmark prices with date index
-                    benchmark_returns=benchmark_returns_array_for_viz, # Benchmark returns array
-                    benchmark_name='QQQ' # Specify the benchmark name
-                )
+                enhanced_visualizations = {}
+                if not self.use_experiment_sequence:
+                    # Pass the correctly structured data and extracted benchmark info
+                    enhanced_visualizations = generate_all_visualizations_with_benchmark(
+                        pipeline_results=pipeline_results_for_viz, # Correctly structured data
+                        config_trading=self.config,                # Pass the config for directories etc.
+                        benchmark_data=benchmark_prices_series_for_viz, # Benchmark prices with date index
+                        benchmark_returns=benchmark_returns_array_for_viz, # Benchmark returns array
+                        benchmark_name='QQQ' # Specify the benchmark name
+                    )
 
                 # Generate Full Comparison Visualization
                 try:
@@ -1112,13 +1175,37 @@ class ExperimentScheme:
             # Fetch benchmark data from results for visualization
             benchmark_prices_with_date = backtest_results.get('benchmark_prices_with_date', None)
             benchmark_returns = backtest_results.get('benchmark_returns', None)
-            
+
+            # Ensure benchmark data is 1D before putting it back or using it elsewhere
+            # This prevents errors in np.polyfit and pd.Series construction in visualization
+            if benchmark_prices_with_date is not None:
+                if isinstance(benchmark_prices_with_date, np.ndarray) and benchmark_prices_with_date.ndim > 1:
+                    logging.debug(f"ES Module - _process_mode - Flattening benchmark_prices_with_date from {benchmark_prices_with_date.shape} to 1D.")
+                    backtest_results['benchmark_prices_with_date'] = benchmark_prices_with_date.ravel()
+                # If it's a DataFrame/Series, ravel() usually works or is already 1D for Series values
+                elif hasattr(benchmark_prices_with_date, 'values') and hasattr(benchmark_prices_with_date.values, 'ravel'):
+                    flattened_prices = benchmark_prices_with_date.values.ravel()
+                    # Create a new Series with the same index if it was a Series/DataFrame
+                    if hasattr(benchmark_prices_with_date, 'index'):
+                        backtest_results['benchmark_prices_with_date'] = pd.Series(flattened_prices, index=benchmark_prices_with_date.index)
+                    else:
+                         backtest_results['benchmark_prices_with_date'] = flattened_prices
+
+            if benchmark_returns is not None:
+                if isinstance(benchmark_returns, np.ndarray) and benchmark_returns.ndim > 1:
+                    logging.debug(f"ES Module - _process_mode - Flattening benchmark_returns from {benchmark_returns.shape} to 1D.")
+                    backtest_results['benchmark_returns'] = benchmark_returns.ravel()
+                elif hasattr(benchmark_returns, 'values') and hasattr(benchmark_returns.values, 'ravel'):
+                     flattened_returns = benchmark_returns.values.ravel()
+                     # benchmark_returns is typically expected to be an array, so just assign the flattened array
+                     backtest_results['benchmark_returns'] = flattened_returns
+
             # Log for debugging
             logging.info(f"ES Module - Mode {mode_name} - Benchmark data handling completed.")
             if benchmark_prices_with_date is not None:
-                logging.debug(f"  - Benchmark prices series length: {len(benchmark_prices_with_date)}")
+                logging.warning(f"ES Module - _process_mode - Benchmark prices series shape: {getattr(benchmark_prices_with_date, 'shape', 'No shape attr')}")
             if benchmark_returns is not None:
-                logging.debug(f"  - Benchmark returns array length: {len(benchmark_returns)}")
+                logging.warning(f"ES Module - _process_mode - Benchmark returns array shape: {getattr(benchmark_returns, 'shape', 'No shape attr')}")
             
             # Generate detailed report
             detailed_report = backtester.generate_detailed_report(backtest_results)

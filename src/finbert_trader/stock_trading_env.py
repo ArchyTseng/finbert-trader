@@ -1366,7 +1366,7 @@ class StockTradingEnv(gym.Env):
                         signal = signals[symbol]
                         action = final_actions[i] if i < len(final_actions) else 0.0
                         # Get holding threshold for consistency check
-                        hold_threshold = float(getattr(self.config, 'hold_threshold', 0.1)) # 或 'action_threshold'
+                        hold_threshold = float(getattr(self.config, 'hold_threshold', 0.1))
                         # Reward when actions align with strong signals (but with very weak weight)
                         if signal['type'] == 'buy' and action > hold_threshold:
                             # Core improvement: Combine strength and confidence
@@ -1389,7 +1389,7 @@ class StockTradingEnv(gym.Env):
                 pos_senti_thr = self.senti_threshold.get(self.env_type, {}).get('pos_threshold', 0.0)
                 neg_senti_thr = self.senti_threshold.get(self.env_type, {}).get('neg_threshold', 0.0)
                 
-                sentiment_reward_strength = float(getattr(self.config, 'sentiment_reward_strength', 0.0001)) # 可配置的奖励系数
+                sentiment_reward_strength = float(getattr(self.config, 'sentiment_reward_strength', 0.0001))
 
                 for i in range(self.action_dim):
                     action = final_actions[i]

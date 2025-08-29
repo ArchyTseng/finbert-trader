@@ -5,7 +5,7 @@
 # Linkage: Called by FeatureEngineer to clean and compute sentiment.
 # Robustness: Weighted score for nuanced sentiment; config-driven text_cols; increased noise std for low var; min_var threshold.
 # Updates: Increased noise_std to 0.2; added min_variance=0.1, if below warn and amplify noise.
-# Updates: Added compute_risk method using config.risk_prompt, similar to compute_sentiment but for risk (1-5 scale, weighted probs); reference from FinRL_DeepSeek (3: Risk Prompt, 4.3: risk_score 1-5 -> perturbation 0.9-1.1).
+# Updates: Added senti_mode = senti/risk method using config.
 
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import pandas as pd

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # ---
 # jupyter:
 #   jupytext:
@@ -87,7 +88,7 @@ custom_setup_config = {
     'test_start_date': '2022-01-01',
     'test_end_date': '2023-12-31',
     'exper_mode': {
-        'rl_algorithm': ['PPO']  # Test single algorithm
+        'rl_algorithm': ['PPO', 'A2C']  # Test single algorithm
     },
     'window_size': 50,  # Initial small window size
     'window_factor': 2,
@@ -101,6 +102,7 @@ custom_setup_config = {
     'force_fuse_data': False,
     'force_normalize_features': True,    # Ensure normalize target columns
     'filter_ind': [],
+    'use_experiment_sequence': True,
     # Cache path config
     'CONFIG_CACHE_DIR': 'config_cache',
     'RAW_DATA_DIR': 'raw_data_cache',
@@ -215,6 +217,51 @@ else:
 # Perform a robustness test on a specific experiment to assess its stability.
 
 # %%
+# Run all quick experiment sequence robustness test
+quick_exper_list = [
+    ('quick_exper_1', experiment_scheme.quick_exper_1),
+    ('quick_exper_2', experiment_scheme.quick_exper_2),
+    ('quick_exper_3', experiment_scheme.quick_exper_3),
+    ('quick_exper_4', experiment_scheme.quick_exper_4),
+]
+
+try:
+    for i, choice in enumerate(quick_exper_list):
+        experiment_name, experiment_method = choice
+        num_runs = 10
+            
+        print(f"\nRunning robustness test for {experiment_name} ({num_runs} runs)...")
+        
+        # Run robustness test
+        robustness_results = experiment_scheme.run_robustness_test(
+            experiment_method=experiment_method,
+            num_runs=num_runs,
+            run_prefix=f"{experiment_name}_robustness_run"
+        )
+        
+        # Display results
+        print("\n" + "-" * 40)
+        print("Robustness Test Completed!")
+        print("-" * 40)
+        
+        aggregated_metrics = robustness_results.get('aggregated_metrics', {})
+        report_path = robustness_results.get('robustness_report_path', 'N/A')
+        viz_path = robustness_results.get('robustness_visualization_path', 'N/A')
+        
+        print("\n--- Aggregated Robustness Metrics ---")
+        import pprint
+        pprint.pprint(aggregated_metrics)
+        
+        print(f"\n--- Generated Files ---")
+        print(f"Robustness Report: {report_path}")
+        print(f"Robustness Visualization: {viz_path}")
+        
+        print("\nRobustness test analysis complete. Please review the generated report and visualization.")
+
+except Exception as e:
+    logging.error(f"Error running robustness test for {experiment_name}: {e}", exc_info=True)
+
+# %%
 # --- Step 4: (Optional) Run Robustness Test ---
 run_robustness_test = input("\nDo you want to run a Robustness Test on an experiment? (y/n): ").strip().lower()
 
@@ -307,3 +354,248 @@ print(f"  - Experiment logs: {config_setup.EXPERIMENT_CACHE_DIR}")
 print(f"  - Plots: {config_setup.PLOT_EXPER_DIR}")
 print(f"  - Results: {config_setup.RESULTS_CACHE_DIR}")
 print("="*60)
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+999nm;l.'''''''m  '''
+
+# %%
+
+# %%
+M QÀ""" """ KJO0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000u00o-89i"7 """ """
+
+# %%
+NH?DVB
+
+# %%

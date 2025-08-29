@@ -68,6 +68,12 @@ class TradingBacktest:
         self.results_cache_dir = getattr(self.config, 'RESULTS_CACHE_DIR', 'results_cache')
         # Create directory if not exists for robust file handling
         os.makedirs(self.results_cache_dir, exist_ok=True)
+        # Set benchmark data cache directory, default to 'benchmark_cache'
+        self.benchmark_cache_dir = getattr(self.config, 'BENCHMARK_CACHE_DIR', 'benchmark_cache')
+        # Create directory if not exists for robust file handling
+        os.makedirs(self.benchmark_cache_dir, exist_ok=True)
+
+        self.proxy = "127.0.0.1:7897"
 
         # Initialize result containers as empty
         self.metrics = {}
@@ -97,15 +103,32 @@ class TradingBacktest:
             Nasdaq-100 ETF price series
         """
         try:
+            nasdaq_data = None
             # Default get QQQ benchmark
             ticker = "QQQ"
             start = getattr(self.config, 'test_start_date', self.config.start)
             end = getattr(self.config, 'test_end_date', self.config.end)
+
+            start_format = str(start).split()[0]
+            end_format = str(end).split()[0]
+            # Fetch Nasdaq-100 ETF (QQQ) data from cache
+            if not os.path.exists(self.benchmark_cache_dir):
+                os.makedirs(self.benchmark_cache_dir)
+                logging.info(f"TB Module - _get_nasdaq100_benchmark - Created cache directory: {self.benchmark_cache_dir}")
+            benchmark_file_list = os.listdir(self.benchmark_cache_dir)
+            if len(benchmark_file_list) > 0:
+                logging.info(f"TB Module - _get_nasdaq100_benchmark - Existed benchmark data {benchmark_file_list}")
+                for file in benchmark_file_list:
+                    if file == f"{ticker}_{start_format}_{end_format}.csv":
+                        nasdaq_data = pd.read_csv(f"{self.benchmark_cache_dir}/{file}", index_col=0, parse_dates=True)
+                        logging.info(f"TB Module - _get_nasdaq100_benchmark - Fetched Nasdaq-100 data from cache: {nasdaq_data.head()}")
+                        return nasdaq_data
+                    
             # Fetch Nasdaq-100 ETF (QQQ) data by yfinance
-            nasdaq_data = yf.download(ticker, start=start, end=end)
+            nasdaq_data = yf.download(ticker, start=start, end=end, proxy=self.proxy)
             
             if nasdaq_data.empty:
-                logging.warning("TB Module - Failed to fetch Nasdaq-100 data, using fallback")
+                logging.warning("TB Module - _get_nasdaq100_benchmark - Failed to fetch Nasdaq-100 data, using fallback")
                 return None
             
             # Initial DataResource instance for cleaning raw data
@@ -115,12 +138,13 @@ class TradingBacktest:
             # Clean raw data, convert columns name to ['Adj_Close_QQQ', ...]
             nasdaq_data = dr.clean_yf_ohlcv(nasdaq_data, ticker)
             nasdaq_data = nasdaq_data[f"Adj_Close_{ticker}"]
-            logging.debug(f"TB Module - Nasdaq-100 benchmark data: {nasdaq_data.head()}")
-            # Return Adj_Close price
+            logging.debug(f"TB Module - _get_nasdaq100_benchmark - Downloaded Nasdaq-100 benchmark data: {nasdaq_data.head()}")
+            # Save and return Adj_Close price
+            nasdaq_data.to_csv(f"{self.benchmark_cache_dir}/{ticker}_{start_format}_{end_format}.csv", index=True)
             return nasdaq_data
             
         except Exception as e:
-            logging.error(f"TB Module - Error fetching Nasdaq-100 benchmark: {e}")
+            logging.error(f"TB Module -  _get_nasdaq100_benchmark - Error fetching Nasdaq-100 benchmark: {e}")
             return None
 
     def _calculate_benchmark_returns(self, benchmark_prices: pd.Series) -> np.ndarray:
@@ -346,7 +370,7 @@ class TradingBacktest:
             self.metrics = metrics
 
             # Update results dict
-
+            logging.warning(f"TB Module - run_backtest - Before return results, print {benchmark_prices_with_date.head()}")
             results = {
                 'metrics': metrics,
                 'trade_history': self.trade_history if record_trades else [],
@@ -540,6 +564,19 @@ class TradingBacktest:
 
                 # Alpha and Beta compute
                 if len(aligned_strategy_returns) > 1 and np.std(aligned_benchmark_returns) > 0:
+                    if isinstance(aligned_benchmark_returns, np.ndarray):
+                        logging.warning(f"TB Module - _compute_metrics - Sample of aligned_benchmark_returns: {aligned_benchmark_returns[:5] if len(aligned_benchmark_returns) >= 5 else aligned_benchmark_returns}")
+                    if isinstance(aligned_strategy_returns, np.ndarray):
+                        logging.warning(f"TB Module - _compute_metrics - Sample of aligned_strategy_returns: {aligned_strategy_returns[:5] if len(aligned_strategy_returns) >= 5 else aligned_strategy_returns}")
+                    
+                    # Ensure shape is 1D array
+                    if hasattr(aligned_benchmark_returns, 'ravel'):
+                        aligned_benchmark_returns = aligned_benchmark_returns.ravel()
+                    if hasattr(aligned_strategy_returns, 'ravel'):
+                        aligned_strategy_returns = aligned_strategy_returns.ravel()
+                    
+                    logging.warning(f"TB Module - _compute_metrics - After ravel - Shape of aligned_benchmark_returns: {getattr(aligned_benchmark_returns, 'shape', 'No shape attr')}")
+                    logging.warning(f"TB Module - _compute_metrics - After ravel - Shape of aligned_strategy_returns: {getattr(aligned_strategy_returns, 'shape', 'No shape attr')}")
                     # Calculate Alpha and Beta using linear regression
                     beta, alpha = np.polyfit(aligned_benchmark_returns, aligned_strategy_returns, 1)
                     alpha_annualized = alpha * 252  # Calculate annualized Alpha
