@@ -906,7 +906,7 @@ class VisualizeBacktest:
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
 
-            # --- 保存图表 ---
+            # --- Save Plot ---
             plot_filename = f"drawdown_comparison_{timestamp}.png"
             plot_path = os.path.join(self.plot_exper_dir, plot_filename)
             os.makedirs(self.plot_exper_dir, exist_ok=True)

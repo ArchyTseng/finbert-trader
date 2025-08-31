@@ -315,10 +315,10 @@ class TradingBacktest:
                                 f"Date range: {strategy_assets_series.index.min()} to {strategy_assets_series.index.max()}")
                 except Exception as e:
                     logging.error(f"TB Module - Failed to create strategy asset series: {e}")
-                    strategy_assets_series = pd.Series(dtype=np.float32) # 返回空的 Series
+                    strategy_assets_series = pd.Series(dtype=np.float32) # Return empty Series
             else:
                 logging.warning("TB Module - Could not create strategy asset series due to missing or mismatched final data.")
-                strategy_assets_series = pd.Series(dtype=np.float32) # 返回空的 Series
+                strategy_assets_series = pd.Series(dtype=np.float32) # Return empty Series
 
             # Calculate benchmark returns for metrics
             benchmark_returns_for_metrics = None  # Pass to _compute_metrics()

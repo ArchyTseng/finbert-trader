@@ -1639,7 +1639,6 @@ class ExperimentScheme:
 
                 except Exception as e:
                     logging.error(f"ES Module - Failed to generate comprehensive experiment report from cache: {e}", exc_info=True)
-                    # visualizations['comprehensive_report_error'] = str(e)
                     
             else:
                 logging.warning("ES Module - No experiment records found in cache for visualization.")

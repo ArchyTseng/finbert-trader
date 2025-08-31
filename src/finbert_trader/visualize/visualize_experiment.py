@@ -341,10 +341,10 @@ class VisualizeExperiment:
             metric_keys = ['cagr', 'sharpe_ratio', 'max_drawdown', 'win_rate']
             # Build metrics func
             transformations = [
-                lambda x: x * 100,           # CAGR: 转换为百分比
-                lambda x: x,                 # Sharpe: 保持不变
-                lambda x: -x * 100,          # Max Drawdown: 取负值并转为百分比 (风险越小，负值越大)
-                lambda x: x * 100            # Win Rate: 转换为百分比
+                lambda x: x * 100,           # CAGR: conver to percentage
+                lambda x: x,                 # Sharpe: default
+                lambda x: -x * 100,          # Max Drawdown: Negate and convert to percentage (lower risk = higher negative value)
+                lambda x: x * 100            # Win Rate: conver to percentage
             ]
 
             # Collect target data for each algorithm

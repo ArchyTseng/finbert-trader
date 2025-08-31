@@ -61,7 +61,7 @@ class ConfigSetup:
         -----
         - Defaults centralized for easy maintenance; overrides logged for traceability.
         - Derived: timeperiods from ind_mode, indicators with dynamic tp, features_dim_per_stock.
-        - exper_mode groups for multi-experiments; added 'rl_algorithm' with 'CPPO' for risk-sensitive RL (ref: FinRL_DeepSeek 4.3).
+        - exper_mode groups for multi-experiments; added 'rl_algorithm' with 'CPPO' for risk-sensitive RL (ref: FinRL_DeepSeek).
         - For split_mode='ratio', computes fallback dates based on global start/end.
         - Validates date sequence, chunksize, split_ratio, symbols; raises ValueError on issues.
         """
@@ -96,7 +96,7 @@ class ConfigSetup:
         self.k_folds = None  # If >1, enable cross-val on train data
         self.split_mode = 'date'  # 'date' (default) or 'ratio' for fallback splitting
         self.cross_valid_mode = 'time_series'  # 'time_series' (default for TimeSeriesSplit) or 'kfold'
-        self.risk_mode = True  # Enable risk assessment prompt, reference from FinRL_DeepSeek (3: Risk Prompt)
+        self.risk_mode = True  # Enable risk factor injection
 
         # Date params reference from FinRL
         self.train_start_date = '2015-01-01'  # Train period start

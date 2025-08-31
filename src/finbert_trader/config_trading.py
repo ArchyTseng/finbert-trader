@@ -118,7 +118,7 @@ class ConfigTrading:
         -----
         - Supported models are defined in self.SUPPORTED_MODELS (class attribute).
         - Inherited parameters include 'symbols', 'indicators', etc., for pipeline consistency.
-        - References: FinRL_DeepSeek for parameters like total_timesteps (2M for convergence),
+        - References: FinRL_DeepSeek for parameters
           infusion_strength (0.001-0.1 for subtle risk injection), and risk_mode.
         - State dimension is calculated as (window_size * num_flattened_features) + 3 (e.g., for cash, positions, etc.).
         - Action dimension equals the number of symbols (multi-stock setup).
@@ -178,12 +178,12 @@ class ConfigTrading:
 
         # Set risk and training hyperparameters with references for reproducibility
         self.risk_penalty_strength = 0.0001  # Control the strength of risk sensitivity
-        self.total_timesteps = 2e6  # Increased to 2M for stability, reference from FinRL_DeepSeek (5.2: 2M steps for convergence)
-        self.cvar_factor = 0.05 # Weight for CVaR downside risk adjustment, reference from FinRL_DeepSeek (4.1.2: CVaR shaping)
-        self.cvar_alpha = 0.05  # CVaR confidence level, reference from FinRL_DeepSeek (4.1.2: CVaR=0.05)
+        self.total_timesteps = 2e6  # Increased to 2M for stability, reference from FinRL_DeepSeek
+        self.cvar_factor = 0.05 # Weight for CVaR downside risk adjustment, reference from FinRL_DeepSeek
+        self.cvar_alpha = 0.05  # CVaR confidence level, reference from FinRL_DeepSeek
         self.cvar_min_history = 30 # CVaR minimum history, reference from FinRL_DeepSeek
-        self.risk_mode = True  # Enable risk assessment prompt, reference from FinRL_DeepSeek (3: Risk Prompt)
-        self.infusion_strength = 0.001  # Default 0.1% for subtle injection, tunable 0.001-0.1, reference from FinRL_DeepSeek (5.3: 0.1% vs 10%)
+        self.risk_mode = True  # Enable risk factor injection
+        self.infusion_strength = 0.001  # Default 0.1% for subtle injection, tunable 0.001-0.1, reference from FinRL_DeepSeek
 
         # Set model and load params with fallback for unsupported models
         self.model = model
